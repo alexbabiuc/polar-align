@@ -6,6 +6,34 @@ an assumption that has not been verified against a real product, that is marked
 
 ---
 
+## What "10 arcminutes" means
+
+**10 arcminutes is a success indication, not an error budget.** It is the point at
+which the UI tells the user their alignment is good enough to stop turning bolts.
+It is not a tolerance the software is allowed to accumulate error up to.
+
+The measurement itself must be far better than that, because the actual figure is
+always on screen and the user acts on it. The roadmap asks for 0.1′ recovery from
+the fit (Phase 1), 1′ end to end through the solver (Phase 2), and better than 2′
+on a real night (Phase 4).
+
+So when a decision below weighs an error source, the number to beat is roughly
+**0.1 arcminute — 6 arcseconds — on the reported altitude and azimuth error**, not
+10 arcminutes.
+
+One asymmetry is worth knowing, because it recurs: errors that amount to a
+rotation *about* the celestial pole are largely self-cancelling here, while errors
+that *move* the pole are not. A clock or UT1 error rotates the whole sky about the
+polar axis, which leaves the pole itself fixed in the local horizon frame and
+perturbs the measured misalignment only at second order — the product of the
+misalignment ρ and the rotation δθ. Two seconds of clock error against a 2°
+misalignment is about 1 arcsecond of error in the result. Polar motion, by
+contrast, genuinely moves the pole relative to the ground, but only by a few
+tenths of an arcsecond. Both are comfortably inside the 6 arcsecond budget; they
+are not the same kind of safe, and only the first stays safe as the numbers grow.
+
+---
+
 ## D1 — Platform: Windows ships, macOS builds
 
 Windows x64 is the only supported release target for v1. The codebase must
@@ -81,18 +109,20 @@ hand-written in managed C#, using the truncated IAU 2000B nutation series
 (~77 terms, vs. ~1365 for full IAU 2000A).
 
 **Why.** J2000 to apparent place is roughly 22 arcminutes of general precession
-at the current epoch — more than twice the 10 arcminute success threshold. Getting
-precession, nutation, aberration and refraction right is not optional. IAU 2000B
-is accurate to well under an arcsecond, roughly 1000x better than the threshold
-this project actually needs, and comfortably clears the Phase 0 exit criterion
-(<1 arcsec agreement with Astropy).
+at the current epoch — over 200 times the 0.1 arcminute accuracy the reported
+figure needs. Getting precession, nutation, aberration and refraction right is not
+optional. IAU 2000B is accurate to well under an arcsecond, comfortably inside
+that 6 arcsecond budget, and clears the Phase 0 exit criterion (<1 arcsec
+agreement with Astropy) — measured at 0.14 arcsec worst case across 400
+randomized epochs, sites and declinations.
 
 **Why not ASCOM's Transform.** It would pull a Windows dependency into the math
 core, violating D1.
 
 **Why not liberfa (P/Invoke).** liberfa (BSD-3, the open release of IAU SOFA)
 was the initial default and remains more accurate and less code to write. But
-that headroom buys nothing here given the 10 arcminute threshold, while it costs
+that headroom buys nothing against a 6 arcsecond accuracy target IAU 2000B
+already beats by more than an order of magnitude, while it costs
 prebuilt native binaries and per-RID packaging (`win-x64`, `osx-arm64`, and every
 future RID in Phase 6) — a recurring cost for accuracy the project doesn't need.
 Rejected on that basis; see O2.
@@ -244,9 +274,15 @@ against Watney's actual database tiering, which may not slice exactly this way.
 
 ## D14 — Site position accuracy is a hard requirement
 
-Latitude error maps 1:1 into polar altitude error. To stay well inside a 10
-arcminute threshold, latitude must be good to about 0.1 arcminute — roughly 200 m.
-System clock within a second or two.
+Latitude error maps 1:1 into the reported polar altitude error, so latitude must
+be good to about 0.1 arcminute — roughly 200 m — to match the accuracy of the
+number the user is shown and acts on. This is not about clearing the 10 arcminute
+success indication; it is about the figure itself being right.
+
+The system clock is far more forgiving: within a second or two is ample, because a
+clock error rotates the sky about the polar axis rather than moving the pole, and
+so cancels to second order (see "What 10 arcminutes means" above). Latitude and
+clock are not symmetric requirements, and it is latitude that carries the risk.
 
 **Sources**, in order of preference: mount driver site properties, serial NMEA GPS,
 manual entry. Manual entry must show the derived uncertainty so a user typing a

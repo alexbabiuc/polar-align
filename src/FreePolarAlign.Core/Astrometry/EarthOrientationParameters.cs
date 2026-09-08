@@ -8,14 +8,20 @@ namespace FreePolarAlign.Core.Astrometry;
 ///
 /// Omitting them (<see cref="Zero"/>) costs about 14 arcseconds of pointing at
 /// worst: UT1-UTC stays within roughly +/-0.9 s because of the leap second
-/// rules, and the Earth turns 15.041 arcsec per second of UT1; polar motion
-/// adds a few tenths of an arcsecond. That is immaterial against this
-/// project's 10 arcminute alignment threshold (D5, D14) -- polar alignment
-/// measures the *difference* between the mount axis and the pole from plate
-/// solves, and a common rotation offset largely cancels -- so the shipping
-/// product does not need an IERS feed. It matters only when reproducing
-/// another implementation to sub-arcsecond agreement, as the Phase 0 exit
-/// criterion does.
+/// rules, and the Earth turns 15.041 arcsec per second of UT1.
+///
+/// For polar alignment specifically that is far cheaper than it looks, and the
+/// reason matters. A UT1 error is a rotation *about* the polar axis, so it does
+/// not move the pole in the local horizon frame at all; it perturbs the measured
+/// misalignment only at second order, as the product of the misalignment and the
+/// rotation. Even a 2 degree misalignment with 2 seconds of clock error yields
+/// about 1 arcsecond of error in the result. Polar motion does move the pole
+/// relative to the ground, but only by a few tenths of an arcsecond. Both sit
+/// inside the roughly 6 arcsecond accuracy this project needs on the reported
+/// figure, so the shipping product does not need an IERS feed.
+///
+/// Supplying real values matters when reproducing another implementation to
+/// sub-arcsecond *pointing* agreement, as the Phase 0 exit criterion does.
 /// </summary>
 /// <param name="Ut1MinusUtcSeconds">UT1 - UTC, seconds. Bounded to within about +/-0.9 s in practice (leap seconds keep it there).</param>
 /// <param name="PolarMotionXArcsec">Polar motion x (toward the Greenwich meridian), arcseconds. Typically a few tenths of an arcsecond.</param>

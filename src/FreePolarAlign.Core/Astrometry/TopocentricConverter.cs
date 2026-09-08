@@ -30,9 +30,10 @@ public readonly record struct HorizontalCoordinates(double AzimuthDegrees, doubl
 /// Polar motion and UT1-UTC are measured inputs
 /// (<see cref="EarthOrientationParameters"/>). They default to
 /// <see cref="EarthOrientationParameters.Zero"/>, which costs at most about 14
-/// arcseconds of pointing -- immaterial against this project's 10 arcminute
-/// threshold (D5, D14), but the caller must supply real IERS values to
-/// reproduce another implementation to sub-arcsecond agreement.
+/// arcseconds of pointing but only a fraction of an arcsecond in a polar
+/// alignment result, for the reason given on that type. Callers reproducing
+/// another implementation to sub-arcsecond pointing agreement must supply real
+/// IERS values.
 /// </summary>
 public static class TopocentricConverter
 {

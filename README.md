@@ -59,7 +59,7 @@ hardware).
 ```
 
 The device layer is a **runtime plugin contract**, not a compile-time reference.
-`FreePolarAlign.Devices.Ascom` targets `net8.0-windows`, implements `IDeviceProvider`,
+`FreePolarAlign.Devices.Ascom` targets `net10.0-windows`, implements `IDeviceProvider`,
 and is copied into `plugins/` by the Windows build only. The application assembly
 has no knowledge of it and no `#if WINDOWS` anywhere. On macOS you get the
 simulator provider; on Windows, simulator plus ASCOM.
@@ -71,15 +71,15 @@ Alpaca, INDI and the native vendor SDKs drop in later without touching the app.
 
 | Project | TFM | Purpose |
 |---|---|---|
-| `FreePolarAlign.Core` | `net8.0` | Coordinate transforms, circle fit, error model, correction vectors. Pure functions, no I/O. |
-| `FreePolarAlign.Imaging` | `net8.0` | FITS read/write, TAN WCS parsing, star detection. |
-| `FreePolarAlign.Solving` | `net8.0` | `ISolver`, Watney adapter, ASTAP subprocess adapter. |
-| `FreePolarAlign.Devices` | `net8.0` | `ICamera`, `IMount`, `IDeviceProvider` contracts only. |
-| `FreePolarAlign.Devices.Simulated` | `net8.0` | Virtual observatory. See below. |
-| `FreePolarAlign.Devices.Ascom` | `net8.0-windows` | ASCOM COM provider. Windows build only. |
-| `FreePolarAlign.Session` | `net8.0` | Orchestration state machine. |
-| `FreePolarAlign.App` | `net8.0` | Avalonia UI. |
-| `FreePolarAlign.Tests.*` | `net8.0` | Unit and end-to-end tests. Must pass on macOS. |
+| `FreePolarAlign.Core` | `net10.0` | Coordinate transforms, circle fit, error model, correction vectors. Pure functions, no I/O. |
+| `FreePolarAlign.Imaging` | `net10.0` | FITS read/write, TAN WCS parsing, star detection. |
+| `FreePolarAlign.Solving` | `net10.0` | `ISolver`, Watney adapter, ASTAP subprocess adapter. |
+| `FreePolarAlign.Devices` | `net10.0` | `ICamera`, `IMount`, `IDeviceProvider` contracts only. |
+| `FreePolarAlign.Devices.Simulated` | `net10.0` | Virtual observatory. See below. |
+| `FreePolarAlign.Devices.Ascom` | `net10.0-windows` | ASCOM COM provider. Windows build only. |
+| `FreePolarAlign.Session` | `net10.0` | Orchestration state machine. |
+| `FreePolarAlign.App` | `net10.0` | Avalonia UI. |
+| `FreePolarAlign.Tests.*` | `net10.0` | Unit and end-to-end tests. Must pass on macOS. |
 
 ### The virtual observatory
 

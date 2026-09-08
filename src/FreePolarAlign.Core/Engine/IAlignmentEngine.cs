@@ -16,10 +16,25 @@ public sealed record SessionConfiguration(
 /// The engine's estimate of polar misalignment at a point in time. Arcminutes,
 /// matching the units the UI displays (Phase 4) and the accuracy language used
 /// throughout the roadmap.
+///
+/// Extended in Phase 1, which established that the two bolt figures alone are
+/// not sufficient to drive the UI: the success indication is judged on the
+/// *total* angle between the axes, which is neither of them and is not their
+/// sum, and "the actual figure always visible" is only meaningful alongside how
+/// well that figure is known.
 /// </summary>
+/// <param name="TotalErrorArcminutes">
+/// Great-circle angle between the mount axis and the pole -- the figure the 10
+/// arcminute success indication is judged on, since it governs field rotation
+/// and drift.
+/// </param>
 public sealed record AlignmentEstimate(
     double AltitudeErrorArcminutes,
     double AzimuthErrorArcminutes,
+    double TotalErrorArcminutes,
+    double AltitudeSigmaArcminutes,
+    double AzimuthSigmaArcminutes,
+    double TotalSigmaArcminutes,
     double ResidualRmsArcseconds);
 
 /// <summary>

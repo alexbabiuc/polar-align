@@ -256,9 +256,10 @@ rounded city coordinate sees the consequence.
 
 ## Open decisions
 
-**O1 — Licence.** MIT is the natural fit and imposes nothing on Watney. GPL only
-becomes relevant if ASTAP is ever linked rather than subprocessed, which D3
-avoids. Needs a call before the repo goes public.
+**O1 — Licence.** ~~MIT is the natural fit and imposes nothing on Watney. GPL
+only becomes relevant if ASTAP is ever linked rather than subprocessed, which
+D3 avoids. Needs a call before the repo goes public.~~
+**Resolved:** MIT — already in place in the repo's `LICENSE` file.
 
 **O2 — liberfa native vs. pure C#.** ~~See D5. Native is more accurate and less
 code; pure C# removes per-RID native packaging entirely. Both are defensible.

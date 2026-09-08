@@ -62,6 +62,33 @@ approaches the pole, and the reported covariance reflects it.
 That last clause matters more than the accuracy number. The software must know
 when it does not know.
 
+### Measured results, and what they constrain
+
+**Met.** Recovery is better than 0.1′ across the full stated parameter space
+(misalignments 0.1′–5°, latitudes ±70° and the equator, declinations 0°–85°), and
+the reported covariance matches the observed scatter to within 3% — checked per
+component and on the total, over thousands of noise realisations.
+
+**Sweep width matters far more than capture count.** Axis uncertainty falls as
+the square root of the capture count but as the **square** of the RA sweep, and
+the condition number rises as the **fourth power** of a narrowing sweep. Both
+laws are asymptotically exact, not approximate. The practical consequence is a
+constraint on Phase 3's session design: at 1″ solve accuracy, 20 captures over
+60° *misses* 0.1′ (0.111′), while the same 20 captures over 70° meets it with
+margin (0.080′). Thirty captures over 60° also passes, at half again the
+exposure time. **Prefer sweep width to extra captures**, up to D8's meridian
+limit. At 2″ solve accuracy, 0.1′ is not reachable within that limit at all —
+so plate solve accuracy is worth optimising in Phase 2, not just solve success.
+
+**Two corrections to this phase's assumptions.** Conditioning does *not* degrade
+as the target approaches the pole: the circle's radius does not enter the fit's
+conditioning at all, only the spread of rotation angles does, and recovery is
+flat from the celestial equator to within 6′ of the pole. What happens instead is
+an identifiability cliff — see D11, where this is recorded, since it is a
+withholding concern rather than a conditioning one. And a small-circle fit needs
+step control: an undamped Gauss-Newton step on poorly resolved geometry runs away
+by degrees while leaving small residuals.
+
 ---
 
 ## Phase 2 — Solving and the virtual observatory *(Track A)*

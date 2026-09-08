@@ -14,7 +14,14 @@ macOS and Linux.
 The mount's RA axis points somewhere. Rotate in RA only, and the telescope's
 pointing direction traces a small circle on the sky whose pole *is* the mount's
 polar axis. Plate solve three or more positions, fit the circle, compare its pole
-to the true refracted pole, and you have the misalignment in altitude and azimuth.
+to the true celestial pole, and you have the misalignment in altitude and azimuth.
+
+The comparison is done in the local horizon frame, on physical pointing
+directions rather than catalogue coordinates: a plate solve tells you which star
+*appears* at the field centre, so putting it back through the full apparent-place
+transform — refraction included — recovers where the tube was actually aimed.
+Because the mount is a rigid body on the ground, those directions lie on an exact
+circle, and no "refracted pole" approximation is needed. See D15.
 
 Three properties of this method are worth knowing up front, because they shape
 the code:

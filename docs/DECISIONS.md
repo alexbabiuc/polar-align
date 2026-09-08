@@ -267,6 +267,60 @@ result is withheld rather than displayed.
 **Why.** This is the failure mode that produces a confident wrong answer, and the
 user has no way to notice it. Silence is not acceptable here.
 
+**Extended in Phase 1 — residuals are not enough on their own.** Implementing the
+fit turned up a second, independent way to get a confident wrong answer, which
+residuals do not catch. When the telescope points close to the mount's own polar
+axis, the captured arc cannot be told from a straight line, and a very large
+circle centred far away fits the points with *lower* residuals than the true
+small circle. The likelihood becomes multimodal and the axis is simply not
+identifiable. Measured, the fit's median error stayed normal while its tail
+reached two degrees, with small residuals and a healthy condition number
+throughout — every indicator the software had was reporting success.
+
+Withholding therefore rests on three checks, not one:
+
+1. **Residual consistency** (this decision) — catches declination drift and
+   meridian flips, which inflate residuals.
+2. **Conditioning** — catches a too-narrow RA sweep, which leaves the axis
+   position and circle radius degenerate.
+3. **Curvature identifiability** — catches an unresolvable circle, which neither
+   of the other two sees.
+
+The lesson generalises beyond this instance: a single health metric was
+insufficient here precisely because the failure mode was invisible to it, and
+the only reason it was found was testing against known ground truth rather than
+for self-consistency. Any future estimator added to this project should be
+assumed to have a failure mode its own residuals cannot see.
+
+---
+
+## D15 — Fit in the horizon frame, on physical pointing directions
+
+The circle is fitted to the telescope's *physical pointing directions* in the
+local horizon frame, obtained by putting each plate solve through the full
+apparent-place transform (D5) with refraction included. The fitted axis is then
+compared directly against the true celestial pole, whose altitude is the site
+latitude and whose azimuth is due north.
+
+**Why.** A plate solve reports the catalogue position of whichever star appears
+at the field centre. Refraction changes *which* star that is, not where the tube
+is pointing — so applying the full transform, refraction included, recovers the
+mechanical pointing direction. Since the mount is a rigid body in the ground
+frame, those directions lie on an **exact** circle about its polar axis, whatever
+the refraction, whatever the cone error.
+
+This supersedes the README's original phrasing about comparing the fitted pole
+"to the true refracted pole". That approach — fitting catalogue coordinates and
+comparing against where the pole appears to be — is the more common one in
+existing tools, but it is an approximation: refraction is a compression toward
+the zenith, not a rotation, so it does not map a circle to a circle and the
+fitted axis is biased. Doing it in the horizon frame costs nothing extra, since
+D5's transform already exists, and removes the approximation entirely.
+
+**Consequences.** The fit depends on site latitude and on the atmospheric model,
+so D14's site-accuracy requirement is load-bearing for the *result*, not merely
+for pointing. Latitude error maps 1:1 into reported altitude error.
+
 ---
 
 ## D12 — Correction direction derived from the WCS matrix

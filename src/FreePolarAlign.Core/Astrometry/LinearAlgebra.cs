@@ -22,6 +22,11 @@ internal readonly struct Vector3
 
     public double Dot(Vector3 other) => X * other.X + Y * other.Y + Z * other.Z;
 
+    public Vector3 Cross(Vector3 other) => new(
+        Y * other.Z - Z * other.Y,
+        Z * other.X - X * other.Z,
+        X * other.Y - Y * other.X);
+
     public double Length => Math.Sqrt(Dot(this));
 
     public Vector3 Normalized() => this / Length;

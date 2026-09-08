@@ -1,6 +1,4 @@
-# PolarAlign
-
-*(working name — rename before the first public commit)*
+# free-polar-align
 
 Plate-solving polar alignment for German equatorial mounts. Point the telescope
 anywhere reasonable, rotate the RA axis a few times, and the software tells you
@@ -43,17 +41,17 @@ Layered, with the valuable part (the math) isolated from the messy part (the
 hardware).
 
 ```
-┌───────────────────────────────────────────────┐
-│  PolarAlign.App          Avalonia UI          │
-├───────────────────────────────────────────────┤
-│  PolarAlign.Session      state machine        │
-│                          commands in,         │
-│                          event stream out     │
-├──────────────┬────────────────┬───────────────┤
-│ .Core        │ .Solving       │ .Devices      │
-│ math, no I/O │ ISolver        │ ICamera       │
-│              │                │ IMount        │
-└──────────────┴────────────────┴───────────────┘
+┌───────────────────────────────────────────────────┐
+│  FreePolarAlign.App          Avalonia UI          │
+├───────────────────────────────────────────────────┤
+│  FreePolarAlign.Session      state machine        │
+│                               commands in,         │
+│                               event stream out     │
+├──────────────┬────────────────┬───────────────────┤
+│ .Core        │ .Solving       │ .Devices          │
+│ math, no I/O │ ISolver        │ ICamera           │
+│              │                │ IMount            │
+└──────────────┴────────────────┴───────────────────┘
                                        ▲
                         plugins/ ──────┘
                         loaded at runtime, never
@@ -61,7 +59,7 @@ hardware).
 ```
 
 The device layer is a **runtime plugin contract**, not a compile-time reference.
-`PolarAlign.Devices.Ascom` targets `net8.0-windows`, implements `IDeviceProvider`,
+`FreePolarAlign.Devices.Ascom` targets `net8.0-windows`, implements `IDeviceProvider`,
 and is copied into `plugins/` by the Windows build only. The application assembly
 has no knowledge of it and no `#if WINDOWS` anywhere. On macOS you get the
 simulator provider; on Windows, simulator plus ASCOM.
@@ -73,19 +71,19 @@ Alpaca, INDI and the native vendor SDKs drop in later without touching the app.
 
 | Project | TFM | Purpose |
 |---|---|---|
-| `PolarAlign.Core` | `net8.0` | Coordinate transforms, circle fit, error model, correction vectors. Pure functions, no I/O. |
-| `PolarAlign.Imaging` | `net8.0` | FITS read/write, TAN WCS parsing, star detection. |
-| `PolarAlign.Solving` | `net8.0` | `ISolver`, Watney adapter, ASTAP subprocess adapter. |
-| `PolarAlign.Devices` | `net8.0` | `ICamera`, `IMount`, `IDeviceProvider` contracts only. |
-| `PolarAlign.Devices.Simulated` | `net8.0` | Virtual observatory. See below. |
-| `PolarAlign.Devices.Ascom` | `net8.0-windows` | ASCOM COM provider. Windows build only. |
-| `PolarAlign.Session` | `net8.0` | Orchestration state machine. |
-| `PolarAlign.App` | `net8.0` | Avalonia UI. |
-| `PolarAlign.Tests.*` | `net8.0` | Unit and end-to-end tests. Must pass on macOS. |
+| `FreePolarAlign.Core` | `net8.0` | Coordinate transforms, circle fit, error model, correction vectors. Pure functions, no I/O. |
+| `FreePolarAlign.Imaging` | `net8.0` | FITS read/write, TAN WCS parsing, star detection. |
+| `FreePolarAlign.Solving` | `net8.0` | `ISolver`, Watney adapter, ASTAP subprocess adapter. |
+| `FreePolarAlign.Devices` | `net8.0` | `ICamera`, `IMount`, `IDeviceProvider` contracts only. |
+| `FreePolarAlign.Devices.Simulated` | `net8.0` | Virtual observatory. See below. |
+| `FreePolarAlign.Devices.Ascom` | `net8.0-windows` | ASCOM COM provider. Windows build only. |
+| `FreePolarAlign.Session` | `net8.0` | Orchestration state machine. |
+| `FreePolarAlign.App` | `net8.0` | Avalonia UI. |
+| `FreePolarAlign.Tests.*` | `net8.0` | Unit and end-to-end tests. Must pass on macOS. |
 
 ### The virtual observatory
 
-`PolarAlign.Devices.Simulated` is not a stub. It is a simulated mount plus a
+`FreePolarAlign.Devices.Simulated` is not a stub. It is a simulated mount plus a
 camera that reads the mount's pointing, applies a **configurable injected polar
 misalignment and cone error**, and renders a synthetic star field from a bundled
 Tycho-2 subset into a real FITS frame with a known WCS.
@@ -102,9 +100,9 @@ loop.
 **macOS / Linux** — core development, all math and solver work:
 
 ```bash
-dotnet build PolarAlign.Core.slnf     # solution filter excludes Windows projects
-dotnet test  PolarAlign.Core.slnf
-dotnet run --project src/PolarAlign.App
+dotnet build FreePolarAlign.Core.slnf     # solution filter excludes Windows projects
+dotnet test  FreePolarAlign.Core.slnf
+dotnet run --project src/FreePolarAlign.App
 ```
 
 The app launches with the simulator provider only. This is enough to develop and
@@ -113,8 +111,8 @@ demonstrate the entire alignment loop.
 **Windows** — device integration and release builds:
 
 ```powershell
-dotnet build PolarAlign.sln
-dotnet publish src/PolarAlign.App -r win-x64 -c Release --self-contained
+dotnet build FreePolarAlign.sln
+dotnet publish src/FreePolarAlign.App -r win-x64 -c Release --self-contained
 ```
 
 Requires the ASCOM Platform installed for the ASCOM provider to load.

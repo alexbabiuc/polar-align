@@ -66,11 +66,11 @@ controls) in shared code.
 
 `ISolver` abstracts the solver. Two implementations:
 
-- **Watney** — MIT licensed, written in C#, usable as a library rather than a
-  subprocess. Embeds directly, ships in the installer, runs on macOS. This is the
-  default and the reason "deliverable as a whole" is achievable. **VERIFY** the
-  current licence, the library (not just CLI) API surface, and the quad database
-  tiling scheme before committing.
+- **Watney** — **Apache-2.0** licensed (not MIT, as this entry previously said;
+  Apache-2.0 is equally permissive and changes nothing about O1), written in C#,
+  usable as a library rather than a subprocess. Embeds directly, ships in the
+  installer, runs on macOS. This is the default and the reason "deliverable as a
+  whole" is achievable.
 - **ASTAP** — GPL, invoked as a subprocess so no linking obligation arises. Fast
   and excellent at unknown-scale solving. Offered as an accelerator for users who
   already have it; never required.
@@ -81,6 +81,34 @@ awkward to package on Windows and its blind-solving index sets are large.
 **Consequences.** All solver-specific behaviour stays behind the interface,
 including scale hints, timeouts, and failure modes. The engine must never assume
 which solver ran.
+
+### Verified 2026-09-08 (the roadmap wanted this closed in Phase 0)
+
+Checked against the real package and repository, and by compiling and running
+against the assembly on the macOS arm64 build machine:
+
+- **Embedding works.** `WatneyAstrometry.Core` is pure managed IL with **zero
+  NuGet dependencies** and no P/Invoke. It builds, loads and runs natively as
+  `osx-arm64`, and reports missing databases or files as clean typed exceptions
+  rather than crashing — which is what `ISolver`'s failure-reason mapping needs.
+  D3's central assumption holds.
+- **The CD matrix is available directly.** `SolveResult.Solution.FitsHeaders`
+  exposes `CD1_1`/`CD1_2`/`CD2_1`/`CD2_2`, so D12's determinant-based parity
+  logic needs no derivation.
+- **Two contract mismatches, both adapter-level, neither architectural.** Watney
+  expresses a scale hint as min/max *field radius*, so the adapter must convert
+  from `ApproximateScaleArcsecPerPixel` and the image dimensions; and it has no
+  timeout parameter, only a `CancellationToken`, so `PlateSolveRequest.Timeout`
+  becomes a `CancellationTokenSource` in the adapter.
+- **Watney accepts more than `ISolver` currently offers**: a file path, an
+  in-memory image, or a pre-detected star list. The star-list overload skips
+  file I/O entirely and may be worth exposing on the contract in Phase 2.
+- **Unresolved: the target framework.** Watney 2.0.x targets `net10.0` only and
+  the maintainer has dropped the netstandard2.0 profile, so the last release
+  usable from `net8.0` (D2) is 1.2.3 from 2023. See **O4**.
+- **Not yet done:** no end-to-end solve has been run, because the smallest quad
+  database is 369 MB. The library-embedding mechanism is verified; solve quality
+  is not. Do that in Phase 2.
 
 ---
 
@@ -267,8 +295,27 @@ brighter than magnitude 11–12 regardless of what the index contains.
 - **Optional downloadable packs** — deeper magnitudes for sub-0.5° fields, very
   short exposures, or heavy light pollution.
 
-Installer size target: keep the core pack in the low hundreds of MB. **VERIFY**
-against Watney's actual database tiering, which may not slice exactly this way.
+### Verified 2026-09-08 — this sizing does not hold
+
+The **VERIFY** flag was right to be suspicious. Watney slices its databases by
+**field radius and star density**, not by a single bundled magnitude ceiling, so
+there is no pack shaped like "0.5°–8° to magnitude 12". Real v3 pack sizes:
+
+| Pack | Field radius | Diagonal covered | Size |
+|---|---|---|---|
+| `00-07-20-v3` | ≥ 0.8° | ≥ ~1.6° | 369 MB |
+| `08-09-20-v3` | 0.6–0.7° | ~1.2–1.4° | 390 MB |
+| `10-11-20-v3` | 0.4–0.5° | ~0.8–1.0° | 780 MB |
+| `12-13-20-v3` | 0.3° | ~0.6° | 1.56 GB |
+| `14-20-v3` | 0.2° | ~0.4° | 1.29 GB |
+
+Covering this decision's own 0.6°–7.6° diagonal envelope means bundling the first
+four — about **3.1 GB**, an order of magnitude past "low hundreds of MB". The
+cheap packs are the wide fields; it is the 0.6° low end that is expensive, because
+narrow fields need far denser star data.
+
+So the installer-size target and the bundled envelope are now in direct conflict
+and one of them has to move. See **O5**.
 
 ---
 
@@ -305,3 +352,23 @@ Decide in Phase 0, because it affects the build and the collaborator's setup.~~
 **O3 — Project name.** ~~Affects namespaces, so worth settling before the scaffold.~~
 **Resolved:** `free-polar-align` (repo, product name). C# namespace/project prefix
 is `FreePolarAlign`, since hyphens are not valid in .NET identifiers.
+
+**O4 — .NET 8 or .NET 10.** Surfaced by the D3 verification. Watney 2.0.x targets
+`net10.0` only and has dropped netstandard2.0, so D2's `net8.0` can only consume
+Watney 1.2.3 (2023), which is unmaintained and misses a documented ~61%
+blind-solve speedup. Either retarget the stack to `net10.0` — amending D2, and
+noting the build machine already has only the .NET 10 SDK, so `net8.0` is
+currently reached via a `RollForward` workaround — or pin the stale 1.2.3 and
+accept no upstream fixes. Cheap to change now, while the tree is scaffolding;
+expensive once Phase 2 adapters and Phase 3 device code exist. Decide before
+Phase 2.
+
+**O5 — Bundled index pack scope vs. installer size.** Surfaced by the D13
+verification. Covering the stated 0.6°–7.6° diagonal envelope offline costs about
+3.1 GB, against a "low hundreds of MB" target and Phase 5's "installer, offline
+in full". Options: bundle ~759 MB (`00-07` + `08-09`) and support ~1.2° diagonal
+and wider out of the box, pushing narrower fields to optional download; bundle the
+full ~3.1 GB; or build a custom pack with Watney's open-source
+`GaiaQuadDatabaseCreator` tuned to the guide-scope envelope — smaller in
+principle, unverified, and a side project. This decides which hardware works
+without a download, so it is a product call, not a packaging detail.

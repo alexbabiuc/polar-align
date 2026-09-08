@@ -58,7 +58,7 @@ which solver ran.
 
 ## D4 — Device support is a runtime plugin contract
 
-`PolarAlign.Devices` defines `ICamera`, `IMount`, `IDeviceProvider`. Providers are
+`FreePolarAlign.Devices` defines `ICamera`, `IMount`, `IDeviceProvider`. Providers are
 discovered by scanning `plugins/` at startup. The application has no compile-time
 reference to any provider.
 
@@ -74,23 +74,34 @@ Platform should produce a readable message, not an empty device list.
 
 ---
 
-## D5 — Astrometry via liberfa (P/Invoke)
+## D5 — Astrometry via a pure C# IAU 2000B implementation
 
-Coordinate transforms use liberfa (BSD-3, the open release of IAU SOFA) through
-P/Invoke, with prebuilt natives for `win-x64` and `osx-arm64`.
+Coordinate transforms (precession, nutation, aberration, refraction) are
+hand-written in managed C#, using the truncated IAU 2000B nutation series
+(~77 terms, vs. ~1365 for full IAU 2000A).
 
 **Why.** J2000 to apparent place is roughly 22 arcminutes of general precession
 at the current epoch — more than twice the 10 arcminute success threshold. Getting
-precession, nutation, aberration and refraction right is not optional, and it is
-not something to hand-roll.
+precession, nutation, aberration and refraction right is not optional. IAU 2000B
+is accurate to well under an arcsecond, roughly 1000x better than the threshold
+this project actually needs, and comfortably clears the Phase 0 exit criterion
+(<1 arcsec agreement with Astropy).
 
 **Why not ASCOM's Transform.** It would pull a Windows dependency into the math
 core, violating D1.
 
-**Consequences.** Native binaries alongside managed code, and per-RID packaging.
-If the collaborator prefers to avoid that, the fallback is a pure C# IAU 2000B
-truncated nutation series, which is accurate to well under an arcsecond — far
-better than needed here. **Open decision**, see O2.
+**Why not liberfa (P/Invoke).** liberfa (BSD-3, the open release of IAU SOFA)
+was the initial default and remains more accurate and less code to write. But
+that headroom buys nothing here given the 10 arcminute threshold, while it costs
+prebuilt native binaries and per-RID packaging (`win-x64`, `osx-arm64`, and every
+future RID in Phase 6) — a recurring cost for accuracy the project doesn't need.
+Rejected on that basis; see O2.
+
+**Consequences.** The team owns and must verify an astrometry algorithm
+in-house rather than delegating to the reference implementation. Test hard
+against the Phase 0 exit criterion (Astropy reference vectors) before trusting
+it. No native packaging, no per-RID concerns — trivially portable to any future
+OS in Phase 6.
 
 ---
 
@@ -249,8 +260,11 @@ rounded city coordinate sees the consequence.
 becomes relevant if ASTAP is ever linked rather than subprocessed, which D3
 avoids. Needs a call before the repo goes public.
 
-**O2 — liberfa native vs. pure C#.** See D5. Native is more accurate and less code;
-pure C# removes per-RID native packaging entirely. Both are defensible. Decide in
-Phase 0, because it affects the build and the collaborator's setup.
+**O2 — liberfa native vs. pure C#.** ~~See D5. Native is more accurate and less
+code; pure C# removes per-RID native packaging entirely. Both are defensible.
+Decide in Phase 0, because it affects the build and the collaborator's setup.~~
+**Resolved:** pure C# IAU 2000B. See D5.
 
-**O3 — Project name.** Affects namespaces, so worth settling before the scaffold.
+**O3 — Project name.** ~~Affects namespaces, so worth settling before the scaffold.~~
+**Resolved:** `free-polar-align` (repo, product name). C# namespace/project prefix
+is `FreePolarAlign`, since hyphens are not valid in .NET identifiers.

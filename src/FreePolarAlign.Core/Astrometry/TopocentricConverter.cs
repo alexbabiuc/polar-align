@@ -27,11 +27,12 @@ public readonly record struct HorizontalCoordinates(double AzimuthDegrees, doubl
 ///   5. Optical atmospheric refraction (<see cref="Refraction"/>), a pure
 ///      altitude correction that leaves azimuth unchanged.
 ///
-/// Polar motion and UT1-UTC come from <see cref="EarthOrientationParameters"/>;
-/// if none is supplied, <see cref="EarthOrientationData.Lookup"/> is used,
-/// which is adequate for this project's actual (arcminute-level) accuracy
-/// need but only exactly correct for the handful of epochs it has been
-/// seeded with -- see that type's remarks.
+/// Polar motion and UT1-UTC are measured inputs
+/// (<see cref="EarthOrientationParameters"/>). They default to
+/// <see cref="EarthOrientationParameters.Zero"/>, which costs at most about 14
+/// arcseconds of pointing -- immaterial against this project's 10 arcminute
+/// threshold (D5, D14), but the caller must supply real IERS values to
+/// reproduce another implementation to sub-arcsecond agreement.
 /// </summary>
 public static class TopocentricConverter
 {
@@ -44,7 +45,7 @@ public static class TopocentricConverter
         EarthOrientationParameters? earthOrientation = null)
     {
         atmosphere ??= AtmosphericConditions.Vacuum;
-        EarthOrientationParameters eop = earthOrientation ?? EarthOrientationData.Lookup(utc);
+        EarthOrientationParameters eop = earthOrientation ?? EarthOrientationParameters.Zero;
 
         double ttJulianDate = TimeScales.ToTerrestrialTimeJulianDate(utc);
         double t = TimeScales.JulianCenturiesTt(ttJulianDate);

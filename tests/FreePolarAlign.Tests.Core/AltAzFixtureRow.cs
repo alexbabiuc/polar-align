@@ -25,6 +25,20 @@ public sealed class AltAzFixtureRow
     [JsonPropertyName("dec_icrs_deg")]
     public double DecIcrsDeg { get; set; }
 
+    /// <summary>
+    /// Measured IERS Earth orientation at this instant, an input to the
+    /// transform rather than something it can derive (see
+    /// <see cref="FreePolarAlign.Core.Astrometry.EarthOrientationParameters"/>).
+    /// </summary>
+    [JsonPropertyName("ut1_minus_utc_s")]
+    public double Ut1MinusUtcSeconds { get; set; }
+
+    [JsonPropertyName("pm_x_arcsec")]
+    public double PolarMotionXArcsec { get; set; }
+
+    [JsonPropertyName("pm_y_arcsec")]
+    public double PolarMotionYArcsec { get; set; }
+
     [JsonPropertyName("az_vacuum_deg")]
     public double AzVacuumDeg { get; set; }
 

@@ -49,7 +49,15 @@ rewrite, which was a stated stretch goal.
 
 ---
 
-## D2 — Stack: .NET 8 + C# + Avalonia
+## D2 — Stack: .NET 10 + C# + Avalonia
+
+**Why .NET 10 rather than .NET 8.** Originally .NET 8. Retargeted once the D3
+verification showed Watney 2.0.x targets `net10.0` only, having dropped
+netstandard2.0: staying on `net8.0` would have pinned the solver to an
+unmaintained 2023 build (see O4). The build machine already had only the .NET 10
+SDK, so `net8.0` was being reached through a `RollForward` workaround that is now
+gone. Solve quality is load-bearing for D11's safety story, so tracking a
+maintained solver matters more than the original TFM.
 
 **Why Avalonia rather than WPF.** WPF does not run on macOS. Choosing it would
 mean writing UI code that cannot be launched on the build machine. Avalonia is
@@ -314,8 +322,28 @@ four — about **3.1 GB**, an order of magnitude past "low hundreds of MB". The
 cheap packs are the wide fields; it is the 0.6° low end that is expensive, because
 narrow fields need far denser star data.
 
-So the installer-size target and the bundled envelope are now in direct conflict
-and one of them has to move. See **O5**.
+### Revised decision (resolves O5)
+
+The bundled envelope moves, not the installer size.
+
+- **Bundled in the installer** — `00-07-20-v3` + `08-09-20-v3`, about **759 MB**.
+  Covers a field radius of 0.6° and wider, i.e. roughly **1.2° diagonal and up**,
+  which is most guide-scope setups (a 200 mm focal length with a 4.2 mm or larger
+  sensor diagonal, or any shorter focal length).
+- **Optional download** — `10-11`, `12-13` and `14-20`, for narrower fields. The
+  long-focal-length, small-sensor corner of the envelope (a 400 mm guide scope
+  with a 4.5 mm sensor, giving 0.64°) therefore needs a download before first use.
+
+This is over the original "low hundreds of MB" but an order of magnitude under
+the ~3.1 GB that covering the whole stated envelope offline would cost. The
+consequence to own: Phase 5's "installer, offline in full" now means *offline for
+the common hardware*, and the index pack manager must say clearly which fields
+the bundled packs cover, so a user with a narrow field learns it before a dark
+site rather than during one.
+
+A custom pack built with Watney's open-source `GaiaQuadDatabaseCreator`, tuned to
+this specific envelope, could plausibly beat 759 MB. Not attempted; revisit only
+if installer size becomes a real complaint.
 
 ---
 
@@ -353,22 +381,14 @@ Decide in Phase 0, because it affects the build and the collaborator's setup.~~
 **Resolved:** `free-polar-align` (repo, product name). C# namespace/project prefix
 is `FreePolarAlign`, since hyphens are not valid in .NET identifiers.
 
-**O4 — .NET 8 or .NET 10.** Surfaced by the D3 verification. Watney 2.0.x targets
-`net10.0` only and has dropped netstandard2.0, so D2's `net8.0` can only consume
-Watney 1.2.3 (2023), which is unmaintained and misses a documented ~61%
-blind-solve speedup. Either retarget the stack to `net10.0` — amending D2, and
-noting the build machine already has only the .NET 10 SDK, so `net8.0` is
-currently reached via a `RollForward` workaround — or pin the stale 1.2.3 and
-accept no upstream fixes. Cheap to change now, while the tree is scaffolding;
-expensive once Phase 2 adapters and Phase 3 device code exist. Decide before
-Phase 2.
+**O4 — .NET 8 or .NET 10.** ~~Surfaced by the D3 verification. Watney 2.0.x
+targets `net10.0` only and has dropped netstandard2.0, so D2's `net8.0` can only
+consume Watney 1.2.3 (2023), which is unmaintained and misses a documented ~61%
+blind-solve speedup.~~
+**Resolved:** retarget the stack to `net10.0`. See D2.
 
-**O5 — Bundled index pack scope vs. installer size.** Surfaced by the D13
+**O5 — Bundled index pack scope vs. installer size.** ~~Surfaced by the D13
 verification. Covering the stated 0.6°–7.6° diagonal envelope offline costs about
 3.1 GB, against a "low hundreds of MB" target and Phase 5's "installer, offline
-in full". Options: bundle ~759 MB (`00-07` + `08-09`) and support ~1.2° diagonal
-and wider out of the box, pushing narrower fields to optional download; bundle the
-full ~3.1 GB; or build a custom pack with Watney's open-source
-`GaiaQuadDatabaseCreator` tuned to the guide-scope envelope — smaller in
-principle, unverified, and a side project. This decides which hardware works
-without a download, so it is a product call, not a packaging detail.
+in full".~~
+**Resolved:** bundle `00-07` + `08-09`, about 759 MB. See D13.

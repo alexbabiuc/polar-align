@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>FreePolarAlign.App</RootNamespace>
+    <AssemblyName>FreePolarAlign.App</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FreePolarAlign.Session\FreePolarAlign.Session.csproj" />
+  </ItemGroup>
+
+</Project>

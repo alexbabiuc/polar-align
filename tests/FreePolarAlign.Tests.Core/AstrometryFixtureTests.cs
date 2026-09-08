@@ -81,9 +81,11 @@ public class AstrometryFixtureTests
     /// orientation path. UT1-UTC is bounded to roughly +/-0.9 s by the leap
     /// second rules, and the Earth turns 15.041 arcsec per second of UT1, so
     /// ignoring it can misplace a target by around 14 arcsec; polar motion adds
-    /// a few tenths. That is immaterial against this project's 10 arcminute
-    /// alignment threshold (D5, D14), and it is the honest default because
-    /// there is no way to derive the value -- but it must be a measured,
+    /// a few tenths. This is a bound on *pointing*; the effect on a polar
+    /// alignment result is far smaller, because a UT1 error rotates the sky
+    /// about the polar axis rather than moving the pole (see
+    /// <see cref="EarthOrientationParameters"/>). Zero is the honest default
+    /// because the value cannot be derived -- but the cost must be a measured,
     /// asserted bound rather than an unexamined assumption (D11: the software
     /// must know when it does not know).
     /// </summary>

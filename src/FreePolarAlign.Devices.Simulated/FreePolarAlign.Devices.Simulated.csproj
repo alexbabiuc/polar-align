@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>FreePolarAlign.Devices.Simulated</RootNamespace>
+    <AssemblyName>FreePolarAlign.Devices.Simulated</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FreePolarAlign.Devices\FreePolarAlign.Devices.csproj" />
+  </ItemGroup>
+
+</Project>

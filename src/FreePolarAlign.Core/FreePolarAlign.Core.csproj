@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>FreePolarAlign.Core</RootNamespace>
+    <AssemblyName>FreePolarAlign.Core</AssemblyName>
+  </PropertyGroup>
+
+</Project>

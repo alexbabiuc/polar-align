@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>FreePolarAlign.Session</RootNamespace>
+    <AssemblyName>FreePolarAlign.Session</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FreePolarAlign.Core\FreePolarAlign.Core.csproj" />
+    <ProjectReference Include="..\FreePolarAlign.Solving\FreePolarAlign.Solving.csproj" />
+    <ProjectReference Include="..\FreePolarAlign.Devices\FreePolarAlign.Devices.csproj" />
+  </ItemGroup>
+
+</Project>

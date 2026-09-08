@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>FreePolarAlign.Devices.Ascom</RootNamespace>
+    <AssemblyName>FreePolarAlign.Devices.Ascom</AssemblyName>
+
+    <!--
+      Allows this Windows-targeted project to be *compiled* (not run) from the
+      full solution on macOS/Linux dev machines. It is deliberately excluded
+      from FreePolarAlign.Core.slnf, the filter used for day-to-day macOS work.
+    -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FreePolarAlign.Devices\FreePolarAlign.Devices.csproj" />
+  </ItemGroup>
+
+</Project>

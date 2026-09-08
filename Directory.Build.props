@@ -1,0 +1,18 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <Deterministic>true</Deterministic>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!--
+      Only the .NET 10 shared runtime is installed on this machine (D2 pins the
+      TFM to net8.0 for the shipping product). RollForward lets `dotnet run` /
+      `dotnet test` execute net8.0-targeted assemblies against the installed
+      net8.0+ runtime without a separate net8.0 runtime install.
+    -->
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>FreePolarAlign.Solving</RootNamespace>
+    <AssemblyName>FreePolarAlign.Solving</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FreePolarAlign.Imaging\FreePolarAlign.Imaging.csproj" />
+  </ItemGroup>
+
+</Project>

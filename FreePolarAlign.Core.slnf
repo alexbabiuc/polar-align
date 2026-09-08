@@ -1,0 +1,16 @@
+{
+  "solution": {
+    "path": "FreePolarAlign.sln",
+    "projects": [
+      "src\\FreePolarAlign.Core\\FreePolarAlign.Core.csproj",
+      "src\\FreePolarAlign.Imaging\\FreePolarAlign.Imaging.csproj",
+      "src\\FreePolarAlign.Solving\\FreePolarAlign.Solving.csproj",
+      "src\\FreePolarAlign.Devices\\FreePolarAlign.Devices.csproj",
+      "src\\FreePolarAlign.Devices.Simulated\\FreePolarAlign.Devices.Simulated.csproj",
+      "src\\FreePolarAlign.Session\\FreePolarAlign.Session.csproj",
+      "src\\FreePolarAlign.App\\FreePolarAlign.App.csproj",
+      "tests\\FreePolarAlign.Tests.Core\\FreePolarAlign.Tests.Core.csproj",
+      "tests\\FreePolarAlign.Tests.Imaging\\FreePolarAlign.Tests.Imaging.csproj"
+    ]
+  }
+}

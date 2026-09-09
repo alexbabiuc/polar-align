@@ -52,15 +52,35 @@ public static class TopocentricConverter
         double t = TimeScales.JulianCenturiesTt(ttJulianDate);
         double ut1JulianDate = TimeScales.ToUt1JulianDate(utc, eop.Ut1MinusUtcSeconds);
 
-        // --- Step 1: annual aberration, applied to the ICRS direction. ---
         double raIcrsRad = raIcrsDegrees * AstrometryConstants.DegreesToRadians;
         double decIcrsRad = decIcrsDegrees * AstrometryConstants.DegreesToRadians;
         Vector3 icrsDirection = Vector3.FromSpherical(raIcrsRad, decIcrsRad);
+
+        var (deltaPsi, deltaEpsilon) = Nutation2000B.Evaluate(t);
+        Matrix3 npb = Precession2006.BuildBiasPrecessionNutationMatrix(t, deltaPsi, deltaEpsilon);
+
+        return ToAltAzInternal(icrsDirection, t, ut1JulianDate, site, atmosphere, eop, npb, deltaPsi);
+    }
+
+    /// <summary>
+    /// The transform proper, taking the epoch-dependent quantities as arguments
+    /// so that <see cref="FromAltAz"/> can iterate against it without rebuilding
+    /// the precession-nutation matrix and nutation series on every pass.
+    /// </summary>
+    private static HorizontalCoordinates ToAltAzInternal(
+        Vector3 icrsDirection,
+        double t,
+        double ut1JulianDate,
+        ObserverSite site,
+        AtmosphericConditions atmosphere,
+        EarthOrientationParameters eop,
+        in Matrix3 npb,
+        double deltaPsi)
+    {
+        // --- Step 1: annual aberration, applied to the ICRS direction. ---
         Vector3 properDirection = Aberration.Apply(icrsDirection, t);
 
         // --- Step 2: frame bias + precession + nutation -> true equator/equinox of date. ---
-        var (deltaPsi, deltaEpsilon) = Nutation2000B.Evaluate(t);
-        Matrix3 npb = Precession2006.BuildBiasPrecessionNutationMatrix(t, deltaPsi, deltaEpsilon);
         Vector3 dateDirection = npb.Apply(properDirection);
         var (raApparentRad, decApparentRad) = dateDirection.ToSpherical();
 
@@ -132,6 +152,130 @@ public static class TopocentricConverter
         return new HorizontalCoordinates(
             azimuthRad * AstrometryConstants.RadiansToDegrees,
             altitudeRad * AstrometryConstants.RadiansToDegrees);
+    }
+
+    /// <summary>
+    /// The inverse of <see cref="ToAltAz"/>: what to point the telescope at, in
+    /// J2000 ICRS, to look in a given direction from the ground.
+    ///
+    /// Needed wherever a constraint is naturally expressed in the horizon frame
+    /// but has to be commanded in equatorial coordinates -- target selection
+    /// above a minimum altitude (Phase 3), and generating what a camera would
+    /// see for a given mount pointing in the virtual observatory.
+    ///
+    /// Most of the forward chain is a rotation and so is trivially invertible;
+    /// aberration and refraction are not, being a displacement toward the
+    /// direction of travel and a compression toward the zenith respectively. So
+    /// this inverts the rotations analytically for a starting estimate, then
+    /// corrects it against the full forward transform. Each correction applies
+    /// the rotation that carries the current result onto the target, which
+    /// converges quickly because the residual map is close to the identity.
+    /// </summary>
+    public static (double RaIcrsDegrees, double DecIcrsDegrees) FromAltAz(
+        HorizontalCoordinates target,
+        DateTime utc,
+        ObserverSite site,
+        AtmosphericConditions? atmosphere = null,
+        EarthOrientationParameters? earthOrientation = null)
+    {
+        atmosphere ??= AtmosphericConditions.Vacuum;
+        EarthOrientationParameters eop = earthOrientation ?? EarthOrientationParameters.Zero;
+
+        double ttJulianDate = TimeScales.ToTerrestrialTimeJulianDate(utc);
+        double t = TimeScales.JulianCenturiesTt(ttJulianDate);
+        double ut1JulianDate = TimeScales.ToUt1JulianDate(utc, eop.Ut1MinusUtcSeconds);
+
+        var (deltaPsi, deltaEpsilon) = Nutation2000B.Evaluate(t);
+        Matrix3 npb = Precession2006.BuildBiasPrecessionNutationMatrix(t, deltaPsi, deltaEpsilon);
+        double gast = GreenwichApparentSiderealTime(ut1JulianDate, t, deltaPsi);
+        double elongRad = site.LongitudeDegrees * AstrometryConstants.DegreesToRadians;
+        double phiRad = site.LatitudeDegrees * AstrometryConstants.DegreesToRadians;
+
+        Vector3 targetVector = FromHorizontal(target);
+
+        // The correction is applied to what is *asked of* the rotation-only
+        // inverse, not to its output. Both the error and the request then live
+        // in the horizon frame, which is the point: an earlier version rotated
+        // the ICRS estimate by an axis computed from horizon-frame vectors, and
+        // since the two frames differ by a large rotation, that correction had
+        // the right magnitude and an almost arbitrary direction.
+        //
+        // Because the rotation-only inverse is already accurate to about an
+        // arcminute, asking it for a point displaced by the residual converges
+        // in two or three passes.
+        Vector3 requested = targetVector;
+        Vector3 estimate = InvertRotations(requested, npb, gast, elongRad, phiRad);
+
+        for (int iteration = 0; iteration < 16; iteration++)
+        {
+            HorizontalCoordinates achieved = ToAltAzInternal(estimate, t, ut1JulianDate, site, atmosphere, eop, npb, deltaPsi);
+            Vector3 achievedVector = FromHorizontal(achieved);
+
+            Vector3 axis = achievedVector.Cross(targetVector);
+            double sine = axis.Length;
+            double angle = Math.Atan2(sine, achievedVector.Dot(targetVector));
+            if (angle < 1e-13 || sine <= 0)
+            {
+                break;
+            }
+
+            requested = RotateAbout(requested, axis / sine, angle).Normalized();
+            estimate = InvertRotations(requested, npb, gast, elongRad, phiRad);
+        }
+
+        var (ra, dec) = estimate.ToSpherical();
+        return (ra * AstrometryConstants.RadiansToDegrees, dec * AstrometryConstants.RadiansToDegrees);
+    }
+
+    /// <summary>
+    /// Undoes only the rotational part of the forward chain -- horizon frame,
+    /// hour angle and precession-nutation -- ignoring refraction, aberration and
+    /// polar motion. Good to roughly an arcminute, which is a starting estimate
+    /// rather than an answer.
+    /// </summary>
+    private static Vector3 InvertRotations(Vector3 horizontal, Matrix3 npb, double gast, double elongRad, double phiRad)
+    {
+        double sphi = Math.Sin(phiRad), cphi = Math.Cos(phiRad);
+
+        // Horizon (north/east/up) back to the internal south-referenced az/el
+        // frame the forward transform works in.
+        double xaet = -horizontal.X;
+        double yaet = horizontal.Y;
+        double zaet = horizontal.Z;
+
+        double xhd = sphi * xaet + cphi * zaet;
+        double yhd = yaet;
+        double zhd = -cphi * xaet + sphi * zaet;
+
+        double declination = Math.Atan2(zhd, Math.Sqrt(xhd * xhd + yhd * yhd));
+        double hourAngle = Math.Atan2(-yhd, xhd);
+        double rightAscension = gast + elongRad - hourAngle;
+
+        Vector3 apparent = Vector3.FromSpherical(rightAscension, declination);
+        return Transpose(npb).Apply(apparent).Normalized();
+    }
+
+    private static Matrix3 Transpose(in Matrix3 m) => new(
+        m.Get(0, 0), m.Get(1, 0), m.Get(2, 0),
+        m.Get(0, 1), m.Get(1, 1), m.Get(2, 1),
+        m.Get(0, 2), m.Get(1, 2), m.Get(2, 2));
+
+    private static Vector3 RotateAbout(Vector3 v, Vector3 axis, double angleRadians)
+    {
+        double c = Math.Cos(angleRadians);
+        double s = Math.Sin(angleRadians);
+        return c * v + s * axis.Cross(v) + ((1.0 - c) * axis.Dot(v)) * axis;
+    }
+
+    private static Vector3 FromHorizontal(HorizontalCoordinates coordinates)
+    {
+        double altitude = coordinates.AltitudeDegrees * AstrometryConstants.DegreesToRadians;
+        double azimuth = coordinates.AzimuthDegrees * AstrometryConstants.DegreesToRadians;
+        double cosAltitude = Math.Cos(altitude);
+        return new Vector3(
+            cosAltitude * Math.Cos(azimuth),
+            cosAltitude * Math.Sin(azimuth),
+            Math.Sin(altitude));
     }
 
     private static double EarthRotationAngle(double ut1JulianDate)

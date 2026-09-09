@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>FreePolarAlign.Tests.EndToEnd</RootNamespace>
+    <AssemblyName>FreePolarAlign.Tests.EndToEnd</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Xunit.SkippableFact" Version="1.4.13" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\FreePolarAlign.Core\FreePolarAlign.Core.csproj" />
+    <ProjectReference Include="..\..\src\FreePolarAlign.Imaging\FreePolarAlign.Imaging.csproj" />
+    <ProjectReference Include="..\..\src\FreePolarAlign.Solving\FreePolarAlign.Solving.csproj" />
+    <ProjectReference Include="..\..\src\FreePolarAlign.Devices.Simulated\FreePolarAlign.Devices.Simulated.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\docs\fixtures\tycho2_subset.csv" Link="fixtures\tycho2_subset.csv" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -18,6 +18,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FreePolarAlign.Imaging\FreePolarAlign.Imaging.csproj" />
+    <ProjectReference Include="..\..\src\FreePolarAlign.Devices.Simulated\FreePolarAlign.Devices.Simulated.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\docs\fixtures\tycho2_subset.csv" Link="fixtures\tycho2_subset.csv" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -27,6 +27,60 @@ public sealed record TanWcsSolution(
     /// </summary>
     public double Determinant => Cd1_1 * Cd2_2 - Cd1_2 * Cd2_1;
 
+    /// <summary>
+    /// True when the image is mirrored relative to the sky as seen by eye.
+    ///
+    /// Note which sign means which, because it is easy to get backwards: a
+    /// *normal* image has a **negative** determinant. Right ascension increases
+    /// eastward and the sky is viewed from the inside, so an unmirrored frame
+    /// with north up has east to the left, giving CD1_1 negative against CD2_2
+    /// positive. A positive determinant means an odd number of reflections --
+    /// a star diagonal, most commonly -- and the correction arrows must flip
+    /// with it (D12).
+    /// </summary>
+    public bool IsMirrored => Determinant > 0.0;
+
+    /// <summary>
+    /// Plate scale in arcseconds per pixel, as the geometric mean of the two
+    /// axes: the square root of the determinant's magnitude. Equal to either
+    /// axis' scale for the square, unskewed matrix a real solve returns, and
+    /// the right average when they differ.
+    /// </summary>
+    public double PixelScaleArcsecondsPerPixel => Math.Sqrt(Math.Abs(Determinant)) * 3600.0;
+
+    /// <summary>Scale along the pixel x axis, arcseconds per pixel.</summary>
+    public double ScaleXArcsecondsPerPixel => Math.Sqrt(Cd1_1 * Cd1_1 + Cd2_1 * Cd2_1) * 3600.0;
+
+    /// <summary>Scale along the pixel y axis, arcseconds per pixel.</summary>
+    public double ScaleYArcsecondsPerPixel => Math.Sqrt(Cd1_2 * Cd1_2 + Cd2_2 * Cd2_2) * 3600.0;
+
+    /// <summary>
+    /// Position angle of the pixel +y axis, degrees east of north, in [0, 360).
+    /// Defined against the sky rather than against the pixel grid so that it
+    /// means the same thing whatever the parity.
+    /// </summary>
+    public double RotationDegrees
+    {
+        get
+        {
+            double angle = Math.Atan2(Cd1_2, Cd2_2) * RadToDeg;
+            return angle < 0 ? angle + 360.0 : angle;
+        }
+    }
+
+    /// <summary>
+    /// Angular radius of the frame: half the diagonal, in degrees. This is the
+    /// quantity Watney's search strategies and index packs are indexed by
+    /// (D3, D13), so it is what a solver hint has to be expressed in.
+    /// </summary>
+    public double FieldRadiusDegrees(int widthPixels, int heightPixels)
+    {
+        double halfWidth = widthPixels / 2.0;
+        double halfHeight = heightPixels / 2.0;
+        double scaleDegrees = PixelScaleArcsecondsPerPixel / 3600.0;
+        return Math.Sqrt(halfWidth * halfWidth + halfHeight * halfHeight) * scaleDegrees;
+    }
+
     public static TanWcsSolution FromHeader(FitsHeader header)
     {
         string ctype1 = header.GetString("CTYPE1", "RA---TAN");

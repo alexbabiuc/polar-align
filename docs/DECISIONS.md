@@ -334,35 +334,6 @@ assumed to have a failure mode its own residuals cannot see.
 
 ---
 
-## D15 — Fit in the horizon frame, on physical pointing directions
-
-The circle is fitted to the telescope's *physical pointing directions* in the
-local horizon frame, obtained by putting each plate solve through the full
-apparent-place transform (D5) with refraction included. The fitted axis is then
-compared directly against the true celestial pole, whose altitude is the site
-latitude and whose azimuth is due north.
-
-**Why.** A plate solve reports the catalogue position of whichever star appears
-at the field centre. Refraction changes *which* star that is, not where the tube
-is pointing — so applying the full transform, refraction included, recovers the
-mechanical pointing direction. Since the mount is a rigid body in the ground
-frame, those directions lie on an **exact** circle about its polar axis, whatever
-the refraction, whatever the cone error.
-
-This supersedes the README's original phrasing about comparing the fitted pole
-"to the true refracted pole". That approach — fitting catalogue coordinates and
-comparing against where the pole appears to be — is the more common one in
-existing tools, but it is an approximation: refraction is a compression toward
-the zenith, not a rotation, so it does not map a circle to a circle and the
-fitted axis is biased. Doing it in the horizon frame costs nothing extra, since
-D5's transform already exists, and removes the approximation entirely.
-
-**Consequences.** The fit depends on site latitude and on the atmospheric model,
-so D14's site-accuracy requirement is load-bearing for the *result*, not merely
-for pointing. Latitude error maps 1:1 into reported altitude error.
-
----
-
 ## D12 — Correction direction derived from the WCS matrix
 
 On-screen arrow direction and parity come from the solved CD matrix, whose
@@ -498,6 +469,88 @@ clock are not symmetric requirements, and it is latitude that carries the risk.
 **Sources**, in order of preference: mount driver site properties, serial NMEA GPS,
 manual entry. Manual entry must show the derived uncertainty so a user typing a
 rounded city coordinate sees the consequence.
+
+---
+
+## D15 — Fit in the horizon frame, on physical pointing directions
+
+The circle is fitted to the telescope's *physical pointing directions* in the
+local horizon frame, obtained by putting each plate solve through the full
+apparent-place transform (D5) with refraction included. The fitted axis is then
+compared directly against the true celestial pole, whose altitude is the site
+latitude and whose azimuth is due north.
+
+**Why.** A plate solve reports the catalogue position of whichever star appears
+at the field centre. Refraction changes *which* star that is, not where the tube
+is pointing — so applying the full transform, refraction included, recovers the
+mechanical pointing direction. Since the mount is a rigid body in the ground
+frame, those directions lie on an **exact** circle about its polar axis, whatever
+the refraction, whatever the cone error.
+
+This supersedes the README's original phrasing about comparing the fitted pole
+"to the true refracted pole". That approach — fitting catalogue coordinates and
+comparing against where the pole appears to be — is the more common one in
+existing tools, but it is an approximation: refraction is a compression toward
+the zenith, not a rotation, so it does not map a circle to a circle and the
+fitted axis is biased. Doing it in the horizon frame costs nothing extra, since
+D5's transform already exists, and removes the approximation entirely.
+
+**Consequences.** The fit depends on site latitude and on the atmospheric model,
+so D14's site-accuracy requirement is load-bearing for the *result*, not merely
+for pointing. Latitude error maps 1:1 into reported altitude error.
+
+It also means a vacuum is the wrong default anywhere describing a real
+observation. Refraction is tens of arcseconds at usable altitudes and *varies*
+across a sequence — roughly 25 arcseconds at 66° altitude rising past 50 at 49° —
+so assuming it away puts an altitude-dependent distortion into every observation
+rather than a harmless constant offset. Measured, that alone moved a recovered
+polar axis by 26 arcminutes. Both the session and the simulated camera default to
+a standard atmosphere for this reason, and callers with real weather data should
+supply it.
+
+---
+
+## D16 — Sequences are commanded in mechanical coordinates, resolved just in time
+
+A capture sequence is planned as mount *mechanical* angles — one fixed
+declination and a set of hour angles — and each capture's sky coordinates are
+computed from those angles immediately before the slew, not up front.
+
+**Why.** D11 requires the optical axis to stay fixed in the rotating mount
+frame, which means the *mechanical* declination must not change between
+captures. That is not the same as a fixed catalogue declination, and the
+difference is large enough to matter: a constant mechanical declination is a
+constant declination about the pole **of date**, whose J2000 equivalent drifts
+with right ascension because the two poles differ by the accumulated precession.
+Measured, commanding a fixed J2000 declination across a 70° sweep made the
+mechanical declination wander **5.75 arcminutes** — the mount faithfully moving
+in declination to obey coordinates that meant something slightly different at
+each hour angle. Resolving each capture at the moment of its slew makes the round
+trip exact instead, because the mount decomposes exactly what it was handed.
+
+**Consequences.** Two, both sharp.
+
+First, the resolution must be the exact inverse of whatever the mount does to the
+coordinates — geometric, with no refraction, because a mount's pointing model is
+geometric. Using the most physically complete transform available here would be
+*wrong*, which is a rare enough situation to be worth stating plainly.
+
+Second, it makes the coordinate epoch a correctness issue rather than a
+convention. `IMount.SlewToCoordinatesAsync` is documented as J2000, but ASCOM
+drivers interpret coordinates according to their own `EquatorialSystem`, which is
+frequently JNow on EQMOD and SynScan setups. A driver silently treating our J2000
+coordinates as JNow would shift the commanded position by the full precession
+offset — around 22 arcminutes at the current epoch — and, worse, by an amount
+that varies across the sweep, reintroducing exactly the declination drift this
+decision exists to prevent. The ASCOM provider therefore refuses to run against a
+driver whose `EquatorialSystem` is not J2000, rather than guessing. A future
+integration needs either J2000-configured drivers or an explicit conversion
+layer; see `docs/MOUNT-COMPATIBILITY.md`.
+
+**How this was found.** Not by inspection. The residual check from D11 rejected
+the fit — residuals ten times the expected solve noise — and the reported reason
+was, correctly, that declination had probably moved between captures. The safety
+net named its own cause.
 
 ---
 

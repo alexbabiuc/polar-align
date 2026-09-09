@@ -118,6 +118,46 @@ against the assembly on the macOS arm64 build machine:
   database is 369 MB. The library-embedding mechanism is verified; solve quality
   is not. Do that in Phase 2.
 
+### Tuning Watney (Phase 2) — its defaults do not suit this application
+
+Solve quality turned out to depend far more on how Watney is *configured* than on
+anything about the images. With its defaults, rendered fields of 2.3° and 1.2°
+diagonal would not solve at all; correctly configured, everything from 7.4° down
+to 1.2° solves in under a second. Two settings account for that, and neither is
+obvious from the API.
+
+**Widen the density passes.** `MaxNegative/PositiveDensityOffset` default to
+**zero** — a single density pass. A pack's passes are built at fixed star
+densities (20, 28, 40, 57 … stars/deg²), and a frame whose detected density falls
+between two of them matches neither. Setting ±2 is what fixed the 1.2° field, and
+it is the single largest cause of otherwise inexplicable failures.
+
+**A scale hint must pin the radius, not bracket it.** Watney searches a
+*discrete* sequence of field radii, halving from a start value — its defaults run
+22.5° down to 0.703°, and 0.703 is exactly 22.5/2⁵. A fractional scale tolerance
+therefore cannot be expressed as a range: handing it a ±25% band collapses the
+ladder to a single radius that may sit 25% off the truth, and measurably turned
+*succeeding* solves into `NoMatchFound`. So a tolerance tight enough to be a
+measurement pins the radius exactly; a looser one is treated as a claim and
+ignored in favour of the blind ladder, whose floor also has to be lowered below
+Watney's 0.703° or no frame under about 1.4° can match at all.
+
+**Measured coverage with the bundled `00-07` pack**, fully blind, no hints:
+
+| Frame diagonal | Field radius | Result |
+|---|---|---|
+| 7.4° | 3.73° | solves, 0.14 s |
+| 2.3° | 1.15° | solves, 0.12 s |
+| 1.6° | 0.76° | solves, 0.38 s |
+| 1.2° | 0.57° | solves, 0.91 s |
+| 0.64° | 0.32° | no match — needs the optional `12-13` pack |
+
+The 0.64° result is the expected consequence of O5's bundling decision rather
+than a defect, and it confirms that decision's stated cost: the narrow corner of
+D13's envelope needs a download. Note also that this measured floor of ~1.2°
+diagonal is *worse* than the wiki's "field radius ≥ 0.8°" claim for this pack
+would imply, so the bundled packs cover less than D13 assumed.
+
 ---
 
 ## D4 — Device support is a runtime plugin contract
@@ -427,12 +467,19 @@ Internally each set is 406 files on an equal-area band-cell division of the sky,
 roughly 10°×10° per cell, so a by-region subset is mechanically simple if a
 smaller bundle is ever wanted.
 
-**Unresolved: unpacked size.** The figures above are compressed download sizes.
-The on-disk footprint after extraction is larger by an unknown factor — the
-format is documented as tightly packed binary, so the margin may be small, but it
-has not been measured. Phase 5's installer size and the disk space the user must
-have free are therefore two different numbers, and only one of them is known.
-Measure when a pack is first downloaded in Phase 2.
+**Unpacked size: measured, and it roughly doubles.** `00-07-20-v3` downloads as
+369 MB and extracts to **768 MB** across 409 files — a factor of 2.08, not the
+small margin "tightly packed binary" suggested. So O5's bundled pair is about
+**759 MB to download and roughly 1.55 GB on disk**, and Phase 5 must quote the
+larger figure as the free-space requirement. The installer size and the disk
+requirement are genuinely different numbers.
+
+**The `.qdbindex` sidecar is mandatory.** Each pack carries one index file
+(`gaia2-00-07-20.qdbindex`, 1.2 MB) alongside its 408 `.qdb` cell files, and
+Watney throws `QuadDatabaseVersionException` without it. It is easy to lose by
+extracting or copying only `*.qdb`, and the resulting error names a *version*
+problem rather than a missing file, which sends you looking in the wrong place.
+The pack manager must treat it as part of the pack.
 
 ---
 

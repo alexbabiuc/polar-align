@@ -107,6 +107,35 @@ Phase 1 to recover the injected misalignment to within 1′. Degraded inputs —
 clouds, trailing, poor focus, a field with few stars — fail cleanly with a useful
 message rather than returning a wrong solve.
 
+### Measured results
+
+**Met, with one scope correction.** Frames are rendered from a committed Tycho-2
+subset, written as real FITS with the WCS stripped out, and solved by the
+embedded Watney the product will ship — so nothing in the loop is mocked. Blind
+solves succeed from 7.4° down to 1.2° diagonal, and focal length comes back well
+inside 0.5%.
+
+The correction is the narrow end: 0.6° needs an index pack O5 deliberately does
+not bundle, and Tycho-2 is too shallow there anyway (about a dozen stars). So
+"the full D13 envelope" is not demonstrable with what ships, by choice rather
+than by defect. See D3's tuning section for the measured coverage table.
+
+**The closed loop, end to end.** Injected 14.0′ altitude and −11.0′ azimuth
+errors came back as 14.005′ and −10.997′ — an axis error of **0.006′**, some 175
+times inside the 1′ criterion — through forward model, inverse astrometry,
+render, detect, blind solve, forward astrometry and small-circle fit, with 25′ of
+cone error injected and captures two minutes apart so the sky rotated between
+them.
+
+**A number Phase 1 needs.** Solved field centres landed 0.23″–1.42″ from truth,
+so the fit's per-observation noise is under an arcsecond rather than the 1–2″
+Phase 1 assumed. That makes Phase 1's 0.1′ target easier than its own measurements
+suggested. Treat it as an optimistic bound, though: these frames have exact
+catalogue positions and a clean Gaussian PSF, with none of the differential
+refraction, optical distortion or seeing-driven centroid wander a real night
+adds. The honest conclusion is that solve accuracy is not the binding constraint
+on the observing plan — sweep width is.
+
 ---
 
 ## Phase 3 — Devices and session *(Track B)*

@@ -399,6 +399,41 @@ A custom pack built with Watney's open-source `GaiaQuadDatabaseCreator`, tuned t
 this specific envelope, could plausibly beat 759 MB. Not attempted; revisit only
 if installer size becomes a real complaint.
 
+### Where the packs come from
+
+GitHub releases on `Jusas/WatneyAstrometry`, tag **`watneyqdb3`**. Plain HTTPS,
+no authentication, stable URLs — so the Phase 5 pack manager needs no API client:
+
+```
+https://github.com/Jusas/WatneyAstrometry/releases/download/watneyqdb3/watneyqdb-00-07-20-v3.zip
+https://github.com/Jusas/WatneyAstrometry/releases/download/watneyqdb3/watneyqdb-08-09-20-v3.zip
+```
+
+**Use the v3 generation.** Three exist, and the newest is also the smallest:
+`0.9.0-qdb1` (2021, one 1.35 GB pack), `1.0.0-qdb1` (2022-01, five sets,
+5.50 GB), `watneyqdb3` (2022-02, five sets, 4.39 GB). v3 is about 20% smaller
+than v1 for identical coverage and needs Watney v1.1 or later, which O4's move to
+2.0.x satisfies. Nothing newer has been published since February 2022, so this is
+a stable target rather than a moving one.
+
+**Naming.** `watneyqdb-<pass range>-<lowest star density>-v<format version>`. The
+trailing `20` is not a variant to choose between: every published set starts from
+the same 20 stars/deg² floor. "Passes" are density tiers — 20, 28, 40, 57, 80,
+113, 160, 226, 320, 453, 640, 905, 1280, 1810, 2560 stars/deg² — and denser
+passes serve smaller fields, which is why the narrow-field sets are the large
+ones. Field radius is half the frame diagonal.
+
+Internally each set is 406 files on an equal-area band-cell division of the sky,
+roughly 10°×10° per cell, so a by-region subset is mechanically simple if a
+smaller bundle is ever wanted.
+
+**Unresolved: unpacked size.** The figures above are compressed download sizes.
+The on-disk footprint after extraction is larger by an unknown factor — the
+format is documented as tightly packed binary, so the margin may be small, but it
+has not been measured. Phase 5's installer size and the disk space the user must
+have free are therefore two different numbers, and only one of them is known.
+Measure when a pack is first downloaded in Phase 2.
+
 ---
 
 ## D14 — Site position accuracy is a hard requirement

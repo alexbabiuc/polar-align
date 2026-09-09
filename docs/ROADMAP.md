@@ -156,6 +156,51 @@ below 10′, then below 2′, without operator intervention. Then the same seque
 runs end to end on a real iOptron and a real Sky-Watcher mount. Pulling the USB
 cable mid-sequence produces a recoverable state, not a crash.
 
+### Measured results
+
+**Simulated half: met.** From an injected 2° error (119.25′), one measurement
+round left **0.003′** — the loop reads what the software reports, turns the
+simulated bolts by exactly that, and re-measures, so a wrong sign or scale would
+diverge rather than converge. Six captures solved blind in well under a second
+each, residual RMS 0.33″, and the equipment profile learned the focal length as
+100.02 mm against a true 100.00.
+
+One round rather than the successive refinement the criterion implies, because
+the simulator has no unmodelled mount error: no periodic error, backlash or
+flexure. Expect real hardware to need several rounds, and treat the single-round
+result as evidence the loop is *correct*, not as a prediction of how a night goes.
+
+Manual mode (D10) measures identically, and a device disconnected mid-sequence
+produces a reported fault and a session that starts again cleanly.
+
+**Hardware half: not done, and not doable here.** No mount, no ASCOM Platform,
+and macOS. The ASCOM provider is written and compiles, but has never executed —
+see its doc comments and `docs/MOUNT-COMPATIBILITY.md`, which researches the
+iOptron and Sky-Watcher `SideOfPier` behaviour D9 marked VERIFY, tagging every
+claim by whether it is documented, user-reported or inferred. Two findings there
+matter more than the table: the `SideOfPier` unreliability D9 attributes mainly
+to SynScan appears in iOptron drivers too, and both families can flip
+autonomously mid-sequence from firmware settings — which no pre-slew check can
+catch, so D8's per-capture checking is load-bearing rather than belt-and-braces.
+
+**Three bugs worth recording**, all found by the exit criterion rather than by
+inspection, and all invisible in a single capture:
+
+1. Cone error was applied in a basis derived from the current pointing rather
+   than the mount frame, so the offset direction drifted as the mount turned and
+   the track stopped being a circle. 20′ of cone error varied the radius by 10′
+   across a sweep. The test that catches it checks the radius at *several*
+   rotations; the earlier one checked the offset magnitude at one.
+2. A vacuum was being assumed where a real atmosphere belongs, putting an
+   altitude-dependent refraction error into every observation — 26′ of axis
+   error. See D15.
+3. Commanding a constant J2000 declination made the mount drift 5.75′ in
+   *mechanical* declination across a 70° sweep. See D16.
+
+D11's residual check caught all three: it rejected the fits and named
+declination movement as the likely cause, which is exactly what two of them
+were. The safety net earned its place before any hardware existed.
+
 ---
 
 ## Phase 4 — UI and the live adjustment loop *(joint)*

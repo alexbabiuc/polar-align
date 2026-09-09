@@ -5,9 +5,13 @@ using Xunit;
 namespace FreePolarAlign.Tests.Solving;
 
 /// <summary>
-/// D3: "use BlindSearchStrategy when no position hint is given,
-/// NearbySearchStrategy when Approximate*/SearchRadiusDegrees are supplied."
-/// These pin that selection down without needing a solve.
+/// Which search strategy a request selects, pinned down without needing a solve.
+///
+/// The rule is not simply "position hint means nearby search". A nearby search
+/// is only usable when the field radius can also be pinned, because Watney
+/// defaults that range to 0-2 degrees and searches only its endpoints -- so a
+/// position hint without a trustworthy scale would silently exclude any wider
+/// frame. See D3's tuning section.
 /// </summary>
 public class SearchStrategySelectionTests
 {
@@ -22,15 +26,39 @@ public class SearchStrategySelectionTests
     }
 
     [Fact]
-    public void PositionHint_SelectsNearbySearch()
+    public void PositionAndTrustedScaleHint_SelectsNearbySearch()
     {
-        var request = NoHints with { ApproximateRaDegrees = 83.8, ApproximateDecDegrees = -5.4 };
+        var request = NoHints with
+        {
+            ApproximateRaDegrees = 83.8,
+            ApproximateDecDegrees = -5.4,
+            ApproximateScaleArcsecPerPixel = 2.0,
+            ScaleToleranceFraction = 0.05,
+        };
 
         ISearchStrategy strategy = WatneyPlateSolver.BuildStrategy(request, imageWidth: 1000, imageHeight: 1000);
 
         var nearby = Assert.IsType<NearbySearchStrategy>(strategy);
         Assert.Equal(83.8, nearby.SearchCenter.Ra, precision: 9);
         Assert.Equal(-5.4, nearby.SearchCenter.Dec, precision: 9);
+    }
+
+    /// <summary>
+    /// A position hint with no scale is deliberately discarded in favour of the
+    /// blind ladder. Watney's nearby search cannot be configured to cover an
+    /// unknown field size without laddering through candidate radii, which
+    /// measured out slower than simply solving the frame blind -- and its
+    /// default range would have excluded the field entirely.
+    /// </summary>
+    [Fact]
+    public void PositionHintWithoutScale_FallsBackToTheBlindLadder()
+    {
+        var request = NoHints with { ApproximateRaDegrees = 83.8, ApproximateDecDegrees = -5.4 };
+
+        ISearchStrategy strategy = WatneyPlateSolver.BuildStrategy(request, imageWidth: 1000, imageHeight: 1000);
+
+        var blind = Assert.IsType<BlindSearchStrategy>(strategy);
+        Assert.Equal(WatneyPlateSolver.BlindMinimumRadiusDegrees, blind.Options.MinRadiusDegrees, precision: 9);
     }
 
     [Fact]
@@ -47,7 +75,14 @@ public class SearchStrategySelectionTests
     [Fact]
     public void NearbySearch_UsesRequestedSearchRadius()
     {
-        var request = NoHints with { ApproximateRaDegrees = 10.0, ApproximateDecDegrees = 20.0, SearchRadiusDegrees = 4.5 };
+        var request = NoHints with
+        {
+            ApproximateRaDegrees = 10.0,
+            ApproximateDecDegrees = 20.0,
+            SearchRadiusDegrees = 4.5,
+            ApproximateScaleArcsecPerPixel = 2.0,
+            ScaleToleranceFraction = 0.05,
+        };
 
         var nearby = Assert.IsType<NearbySearchStrategy>(
             WatneyPlateSolver.BuildStrategy(request, imageWidth: 1000, imageHeight: 1000));
@@ -150,7 +185,13 @@ public class SearchStrategySelectionTests
         Assert.Equal(WatneyPlateSolver.DensityOffsetPasses, blind.Options.MaxPositiveDensityOffset);
 
         var nearby = Assert.IsType<NearbySearchStrategy>(WatneyPlateSolver.BuildStrategy(
-            NoHints with { ApproximateRaDegrees = 10.0, ApproximateDecDegrees = 20.0 },
+            NoHints with
+            {
+                ApproximateRaDegrees = 10.0,
+                ApproximateDecDegrees = 20.0,
+                ApproximateScaleArcsecPerPixel = 2.0,
+                ScaleToleranceFraction = 0.05,
+            },
             imageWidth: 1000, imageHeight: 1000));
         Assert.Equal(WatneyPlateSolver.DensityOffsetPasses, nearby.Options.MaxNegativeDensityOffset);
         Assert.Equal(WatneyPlateSolver.DensityOffsetPasses, nearby.Options.MaxPositiveDensityOffset);

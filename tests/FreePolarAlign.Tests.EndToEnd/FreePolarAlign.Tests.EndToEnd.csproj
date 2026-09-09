@@ -22,6 +22,8 @@
     <ProjectReference Include="..\..\src\FreePolarAlign.Imaging\FreePolarAlign.Imaging.csproj" />
     <ProjectReference Include="..\..\src\FreePolarAlign.Solving\FreePolarAlign.Solving.csproj" />
     <ProjectReference Include="..\..\src\FreePolarAlign.Devices.Simulated\FreePolarAlign.Devices.Simulated.csproj" />
+    <ProjectReference Include="..\..\src\FreePolarAlign.Session\FreePolarAlign.Session.csproj" />
+    <ProjectReference Include="..\..\src\FreePolarAlign.Devices\FreePolarAlign.Devices.csproj" />
   </ItemGroup>
 
   <ItemGroup>

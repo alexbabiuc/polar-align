@@ -7,8 +7,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FreePolarAlign.Core\FreePolarAlign.Core.csproj" />
-    <ProjectReference Include="..\FreePolarAlign.Solving\FreePolarAlign.Solving.csproj" />
     <ProjectReference Include="..\FreePolarAlign.Devices\FreePolarAlign.Devices.csproj" />
+    <ProjectReference Include="..\FreePolarAlign.Solving\FreePolarAlign.Solving.csproj" />
+    <ProjectReference Include="..\FreePolarAlign.Imaging\FreePolarAlign.Imaging.csproj" />
   </ItemGroup>
 
 </Project>

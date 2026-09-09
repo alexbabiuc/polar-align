@@ -185,26 +185,37 @@ public sealed class WatneyPlateSolver : ISolver, IDisposable
             trustedRadius = ComputeFieldRadiusDegrees(scale, imageWidth, imageHeight);
         }
 
-        if (hasPositionHint)
+        // A position hint is only usable when the field radius can be pinned as
+        // well, which is why this needs both and not either.
+        //
+        // Watney's nearby search defaults its field radius range to 0-2
+        // degrees, so handing it a position and no scale silently excludes any
+        // frame wider than about four degrees -- measured, it searched a
+        // hundred-odd areas and could not match a 7.4 degree field. Widening
+        // the range instead means laddering through candidate radii inside a
+        // search area, which is far slower than a blind solve of the same frame.
+        //
+        // So with no trustworthy scale the position is deliberately discarded
+        // and the blind ladder used, which handles unknown scale in well under a
+        // second. That is also the flow the roadmap intends: solve blind once,
+        // learn the focal length from it, and hint thereafter.
+        if (hasPositionHint && trustedRadius is { } pinnedRadius)
         {
             var options = new NearbySearchStrategyOptions
             {
                 MaxNegativeDensityOffset = DensityOffsetPasses,
                 MaxPositiveDensityOffset = DensityOffsetPasses,
+
+                // Pinned rather than bracketed: Watney tries the endpoints of
+                // this range, so a band around the true radius can miss it
+                // entirely while the exact value matches immediately.
+                MinFieldRadiusDegrees = pinnedRadius,
+                MaxFieldRadiusDegrees = pinnedRadius,
             };
 
             if (request.SearchRadiusDegrees is { } searchRadius)
             {
                 options.SearchAreaRadiusDegrees = searchRadius;
-            }
-
-            if (trustedRadius is { } radius)
-            {
-                // Pinned rather than bracketed: Watney tries the endpoints of
-                // this range, so a band around the true radius can miss it
-                // entirely while the exact value matches immediately.
-                options.MinFieldRadiusDegrees = radius;
-                options.MaxFieldRadiusDegrees = radius;
             }
 
             var center = new EquatorialCoords(request.ApproximateRaDegrees!.Value, request.ApproximateDecDegrees!.Value);

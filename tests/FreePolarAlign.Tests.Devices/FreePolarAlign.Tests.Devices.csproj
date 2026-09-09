@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      net10.0-windows, not the repo default net10.0: this project also tests
+      FreePolarAlign.Devices.Ascom's pure logic (AscomMapping), so it must
+      match that project's TFM. EnableWindowsTargeting lets it compile AND
+      run here on macOS/arm64, same as the Ascom project itself; none of
+      the tested code touches an actual Windows/COM API.
+    -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>FreePolarAlign.Tests.Devices</RootNamespace>
+    <AssemblyName>FreePolarAlign.Tests.Devices</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\FreePolarAlign.Devices\FreePolarAlign.Devices.csproj" />
+    <ProjectReference Include="..\..\src\FreePolarAlign.Devices.Ascom\FreePolarAlign.Devices.Ascom.csproj" />
+  </ItemGroup>
+
+</Project>

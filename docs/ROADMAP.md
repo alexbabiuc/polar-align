@@ -217,6 +217,40 @@ were. The safety net earned its place before any hardware existed.
 **Exit criterion.** A real night, on your own equipment, aligning to better than
 2′ without consulting the source code to interpret what the screen is saying.
 
+### Measured results
+
+**Freeze-and-track works, and is the part worth the most scrutiny.** A bolt turn
+is recovered from a *single* field across turns from 1′ to a full degree, giving
+back both the turn itself and the resulting axis to within 0.001′, with 2° of
+cone error present and in both hemispheres. Sidereal tracking is not mistaken for
+a bolt turn, because the drive's rotation is supplied and removed exactly — the
+failure that would otherwise make the readout drift while the user did nothing.
+Six successive guided turns converge monotonically.
+
+**Two inherent limits, both now recorded as D17.** It cannot detect a
+disturbance that is not a bolt turn — a declination slip fits exactly, with a
+near-zero residual — so it refines a trusted measurement rather than policing
+one. And its blind spot is due east and due west, not the zenith, because the
+altitude bolt's axis runs east–west; conditioning there is twenty thousand
+against one to sixty near the meridian. Both were found by testing rather than
+by inspection, the second because the first draft of the tests sat a degree from
+due west and failed wholesale.
+
+**The UI exists but is only partly verified.** The presentation logic is a pure
+reducer over the event stream plus pure formatting, and that *is* tested — in
+particular that success is judged on the total error rather than either bolt
+figure or their sum, and that a withheld result clears the previous estimate
+instead of leaving a stale number on screen. The window itself is not tested and
+cannot be here; it compiles, and the app launches and stays running with the
+virtual observatory wired up, which demonstrates the dependency graph constructs
+and nothing more. The correction reticle (D12) is still a placeholder.
+
+**The exit criterion is not met and cannot be here.** It asks for a real night on
+real equipment, which needs both hardware and a sky. What has been established is
+that the numbers behind the screen are right and that the screen does not
+misrepresent them; whether they can be *acted on* without reading the source is
+exactly what a real night would test.
+
 ---
 
 ## Phase 5 — Shipping

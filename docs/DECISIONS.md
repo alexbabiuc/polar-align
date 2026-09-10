@@ -554,6 +554,53 @@ net named its own cause.
 
 ---
 
+## D17 — Freeze-and-track refines a measurement; it cannot police one
+
+Live tracking updates the axis estimate from a single field while the user turns
+the bolts, by inferring the rigid rotation the bolts applied. Two limits are
+inherent to that and are treated as part of the design rather than as defects.
+
+**It is blind to anything that is not a bolt turn.** The altitude and azimuth
+bolts give two degrees of freedom, and a single field's motion has exactly two
+observable components, so *any* observed motion is explained exactly by some pair
+of bolt angles. A declination clutch slipping, or a nudged tripod, produces a
+clean fit with a near-zero residual and a wrong answer. Even a gross displacement
+fits, because the two bolt angles reach a two-parameter family of directions
+covering most of the sphere.
+
+That is the exact opposite of the swept measurement, where six points on a circle
+are heavily over-determined and D11's residual check catches this readily. So a
+residual test here would pass always while *looking* like a safety net, and
+deliberately does not exist — an always-passing guard is worse than none, because
+it invites the confidence it cannot justify.
+
+The consequences are that live tracking must be re-anchored by a fresh sweep
+rather than trusted indefinitely, and that the two inferred bolt figures are
+worth surfacing in their own right: a user who touched only the altitude bolt and
+is told the azimuth bolt moved has learned that something else moved.
+
+**Its blind spot is due east and due west, not the zenith.** The altitude bolt
+turns the mount about a horizontal axis running east–west, perpendicular to the
+polar axis' vertical plane. A telescope pointing due east or west therefore lies
+in that axis' own vertical plane, where both bolts move the field along the same
+line and cannot be told apart. Measured conditioning:
+
+| Pointing | Altitude 20° | Altitude 80° |
+|---|---|---|
+| On the meridian | 1.1 | 33 |
+| 45° off it | 2.3 | 67 |
+| **Due east or west** | **21 000** | **627 000** |
+
+Pointing near the zenith degrades it too, but by a factor of thirty rather than
+twenty thousand, and the advice differs. So the tracking target should sit near
+the meridian, and `AxisTracker.IsUsableTrackingGeometry` exists so a caller can
+check *before* the user starts turning bolts rather than discovering it after.
+
+This was found by accident: the first version of the tests happened to pick a
+geometry a degree from due west, and every one of them failed.
+
+---
+
 ## Open decisions
 
 **O1 — Licence.** ~~MIT is the natural fit and imposes nothing on Watney. GPL

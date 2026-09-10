@@ -52,6 +52,12 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     private string _proposalDecText = string.Empty;
     private string? _entryError;
 
+    /// <summary>
+    /// Whether a mount status poll is waiting on the engine. Only ever touched
+    /// on the UI thread, which is where the timer fires.
+    /// </summary>
+    private bool _statusPollInFlight;
+
     public MainWindowViewModel(
         IAlignmentEngine? engine,
         DeviceCatalog? catalog,
@@ -452,9 +458,38 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     /// Polls the mount for where it is and whether it is tracking. Driven from
     /// the window's timer rather than from inside the engine, so the engine
     /// stays a deterministic function of the commands it is given.
+    ///
+    /// A poll already in flight is skipped rather than queued. The engine
+    /// serialises commands behind one gate, and a capture holds that gate for
+    /// the whole exposure and solve -- minutes, on a slow blind solve. A timer
+    /// that queued regardless would pile up dozens of waiting polls and then
+    /// discharge them all at once the moment the capture finished, none of them
+    /// telling the user anything the last one had not.
     /// </summary>
-    public Task RefreshMountStatusAsync() =>
-        State.Mount.IsConnected ? SendAsync(new RefreshMountStatusCommand()) : Task.CompletedTask;
+    public async Task RefreshMountStatusAsync()
+    {
+        if (_statusPollInFlight || !State.Mount.IsConnected)
+        {
+            return;
+        }
+
+        _statusPollInFlight = true;
+        try
+        {
+            await SendAsync(new RefreshMountStatusCommand()).ConfigureAwait(true);
+        }
+        catch (Exception) when (_engine is not null)
+        {
+            // The timer fires without anyone awaiting it, so an exception here
+            // would go unobserved. Losing one poll is invisible; the next one is
+            // two seconds away, and a genuinely dead mount reports itself
+            // through the engine's own event stream.
+        }
+        finally
+        {
+            _statusPollInFlight = false;
+        }
+    }
 
     // ---- Command bodies ----
 
@@ -575,14 +610,33 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
     // ---- Event handling ----
 
+    /// <summary>
+    /// Folds one engine event into the state, on the UI thread.
+    ///
+    /// The reduction happens *inside* the posted action, not before it, and that
+    /// placement is the whole correctness of this method. A single command
+    /// routinely publishes several events -- connecting a camera reports the
+    /// device and then its plate scale, connecting a mount reports the device
+    /// and then its position -- and they arrive synchronously, one after another,
+    /// while the post queue is still holding the earlier ones.
+    ///
+    /// Reducing first would therefore fold every event of a command against the
+    /// same stale state, and the last post would win: connecting a camera would
+    /// end with its plate scale applied and the camera itself still shown as
+    /// disconnected, which then disables everything gated on having one. Posting
+    /// the event instead means each action reduces from whatever the previous
+    /// action left, in arrival order, because the dispatcher runs them in order.
+    ///
+    /// It also confines every read and write of the state to one thread, where
+    /// reducing on the publishing thread was a plain data race.
+    /// </summary>
     private void OnEngineEvent(EngineEvent engineEvent)
     {
         _log?.Record(engineEvent);
 
-        UiState next = EngineEventReducer.Apply(_state, engineEvent);
-
         _postToUiThread(() =>
         {
+            UiState next = EngineEventReducer.Apply(_state, engineEvent);
             State = next;
 
             // Seeded, not bound: whatever the user has typed stays theirs until

@@ -27,7 +27,11 @@ public sealed partial class App : Application
 
             _viewModel = new MainWindowViewModel(
                 _startup.Engine,
-                _startup.Warning,
+                _startup.Catalog,
+                _startup.SettingsStore,
+                _startup.Settings,
+                _startup.Log,
+                _startup.Warnings,
                 _startup.DefaultConfiguration,
                 postToUiThread: action => Dispatcher.UIThread.Post(action));
 

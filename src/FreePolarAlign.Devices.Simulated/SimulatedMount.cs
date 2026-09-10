@@ -21,6 +21,24 @@ namespace FreePolarAlign.Devices.Simulated;
 /// same axis the measurement is about, so it changes nothing the fit cares
 /// about; the option exists to demonstrate that rather than to be tuned.
 /// </param>
+/// <param name="InitialMechanicalRotationDegrees">
+/// Where the mount is already pointing when it is switched on, as an hour angle
+/// in its own frame. A real telescope is always aimed somewhere, and since the
+/// first capture of a sequence is now taken without moving anything (D18), a
+/// simulator that begins nowhere at all could not exercise that path.
+/// </param>
+/// <param name="InitialPoleDistanceDegrees">
+/// The initial pointing's distance from the celestial pole, on the observer's
+/// own side of the equator. Expressed as a pole distance rather than a
+/// declination so that the same default is sensible in either hemisphere.
+///
+/// The default is chosen to sit inside the declination band the committed
+/// sample catalogue actually covers (D13), and comfortably clear of the twenty
+/// degrees inside which the arc stops curving measurably (D11). A simulated
+/// telescope pointed at empty catalogue would fail its first solve with "no
+/// stars detected", which is a confusing way to discover a test-data
+/// limitation.
+/// </param>
 public sealed record SimulatedMountOptions(
     GeodeticLocation Site,
     MountMisalignment Misalignment,
@@ -29,7 +47,9 @@ public sealed record SimulatedMountOptions(
     bool Tracking = true,
     TimeSpan SlewDuration = default,
     bool SupportsSideOfPier = true,
-    bool CanSlewAsync = true);
+    bool CanSlewAsync = true,
+    double InitialMechanicalRotationDegrees = 12.0,
+    double InitialPoleDistanceDegrees = 22.0);
 
 /// <summary>
 /// A German equatorial mount with a genuinely misaligned polar axis.
@@ -64,6 +84,27 @@ public sealed class SimulatedMount : IMount
         Options = options;
         _misalignment = options.Misalignment;
         _observerSite = new ObserverSite(options.Site.LatitudeDegrees, options.Site.LongitudeDegrees, options.Site.HeightMeters);
+
+        // Switched on already pointing somewhere, like the real thing. The
+        // commanded coordinates are derived from the configured mechanical
+        // angles exactly as a slew would derive them, so the mount's belief and
+        // its mechanical state agree from the first moment rather than only
+        // after the first slew.
+        // Mechanical declination is measured towards the pole the mount's axis
+        // actually points at -- the visible one -- so it is positive in both
+        // hemispheres and is not sky declination south of the equator.
+        double declination = 90.0 - options.InitialPoleDistanceDegrees;
+
+        HorizontalCoordinates ideal = MountMechanics.Compose(
+            options.Site.LatitudeDegrees,
+            MountMisalignment.Aligned,
+            options.InitialMechanicalRotationDegrees,
+            declination);
+
+        _mechanicalEpochUtc = DateTime.UtcNow;
+        (_commandedRaDegrees, _commandedDecDegrees) = TopocentricConverter.FromAltAz(
+            ideal, _mechanicalEpochUtc, _observerSite, AtmosphericConditions.Vacuum);
+        _hasSlewed = true;
     }
 
     public SimulatedMountOptions Options { get; }
@@ -140,7 +181,11 @@ public sealed class SimulatedMount : IMount
         lock (_gate)
         {
             return Task.FromResult(new MountPosition(
-                _commandedRaDegrees, _commandedDecDegrees, ComputeSideOfPier(DateTime.UtcNow), DateTime.UtcNow));
+                _commandedRaDegrees,
+                _commandedDecDegrees,
+                ComputeSideOfPier(DateTime.UtcNow),
+                DateTime.UtcNow,
+                Options.Tracking ? TrackingState.Tracking : TrackingState.Stopped));
         }
     }
 

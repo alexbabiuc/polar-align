@@ -64,6 +64,34 @@ public class Phase3ExitCriterionTests
         public void OnCompleted() { }
 
         public T? Last<T>() where T : EngineEvent => Events.OfType<T>().LastOrDefault();
+
+        /// <summary>
+        /// The whole sequence as text, for assertion messages. A bare
+        /// "expected not null" tells you nothing about which step went wrong in
+        /// a twelve-command sequence; the narrated stream tells you exactly.
+        /// </summary>
+        public string Trail() => Environment.NewLine + string.Join(
+            Environment.NewLine,
+            Events.Select(e => $"  {EngineEventNarrator.Describe(e).Severity}: {EngineEventNarrator.Describe(e).Message}")
+                .Where(line => !line.EndsWith(": ", StringComparison.Ordinal)));
+    }
+
+    private static readonly GeodeticLocation Site = new(Latitude, 15.0, 200.0);
+
+    /// <summary>
+    /// Connects the devices and confirms the site, which the engine now requires
+    /// as explicit acts before a sequence can start (D18, D19). A program driving
+    /// the engine has to do exactly what the UI does, which is the point of the
+    /// boundary being message-shaped.
+    /// </summary>
+    private static async Task ConnectAndConfirmSiteAsync(AlignmentSession session)
+    {
+        await session.SendAsync(new ConnectDeviceCommand(
+            DeviceKind.Camera, AlignmentSession.AttachedProviderName, "camera"));
+        await session.SendAsync(new ConnectDeviceCommand(
+            DeviceKind.Mount, AlignmentSession.AttachedProviderName, "mount"));
+        await session.SendAsync(new ConfigureSiteCommand(
+            Site.LatitudeDegrees, Site.LongitudeDegrees, Site.HeightMeters));
     }
 
     private static async Task<(AlignmentEstimate? Estimate, Recorder Recorder)> RunSequenceAsync(
@@ -73,12 +101,19 @@ public class Phase3ExitCriterionTests
         using IDisposable subscription = session.Events.Subscribe(recorder);
 
         await session.SendAsync(new StartSessionCommand(new SessionConfiguration(
-            Latitude, 15.0, 200.0, MinimumCapturePoints: 3, ExposureDuration: TimeSpan.FromSeconds(2))));
+            CapturePoints: captureCount,
+            RequestedSweepDegrees: 70.0,
+            ExposureDuration: TimeSpan.FromSeconds(2))));
 
-        if (recorder.Last<SessionFaultedEvent>() is { } fault)
+        if (recorder.Last<SessionFaultedEvent>() is not null || recorder.Last<CommandRejectedEvent>() is not null)
         {
             return (null, recorder);
         }
+
+        // D18: the engine proposes the first point rather than slewing to it,
+        // and that first point is wherever the telescope already happens to be.
+        Assert.NotNull(recorder.Last<SlewProposedEvent>());
+        Assert.False(recorder.Last<SlewProposedEvent>()!.RequiresMotion);
 
         // Driving the sequence by repeated commands is what "no operator
         // intervention" looks like from the engine's side: the caller is a
@@ -127,6 +162,8 @@ public class Phase3ExitCriterionTests
         using var session = new AlignmentSession(camera, mount, solver, new AlignmentSessionOptions(
             CaptureCount: 6, SweepDegrees: 70.0, ExpectedSolveNoiseArcseconds: 3.0));
 
+        await ConnectAndConfirmSiteAsync(session);
+
         var errors = new List<double> { startingError };
         bool below10 = false;
         bool below2 = false;
@@ -135,7 +172,7 @@ public class Phase3ExitCriterionTests
         {
             var (estimate, recorder) = await RunSequenceAsync(session, 6);
 
-            Assert.NotNull(estimate);
+            Assert.True(estimate is not null, recorder.Trail());
             Assert.Null(recorder.Last<AlignmentWithheldEvent>());
 
             // Turn the bolts by exactly what the software asked for.
@@ -186,8 +223,10 @@ public class Phase3ExitCriterionTests
         using var session = new AlignmentSession(camera, mount, solver,
             new AlignmentSessionOptions(CaptureCount: 6, SweepDegrees: 70.0, ExpectedSolveNoiseArcseconds: 3.0));
 
-        var (estimate, _) = await RunSequenceAsync(session, 6);
-        Assert.NotNull(estimate);
+        await ConnectAndConfirmSiteAsync(session);
+
+        var (estimate, recorder) = await RunSequenceAsync(session, 6);
+        Assert.True(estimate is not null, recorder.Trail());
 
         mount.AdjustAxis(-estimate!.AltitudeErrorArcminutes, -estimate.AzimuthErrorArcminutes);
         Assert.True(AxisErrorArcminutes(mount) < 10.0,
@@ -215,8 +254,9 @@ public class Phase3ExitCriterionTests
         var recorder = new Recorder();
         using IDisposable subscription = session.Events.Subscribe(recorder);
 
+        await ConnectAndConfirmSiteAsync(session);
         await session.SendAsync(new StartSessionCommand(new SessionConfiguration(
-            Latitude, 15.0, 200.0, 3, TimeSpan.FromSeconds(2))));
+            6, 70.0, TimeSpan.FromSeconds(2))));
         await session.SendAsync(new CaptureNextPointCommand());
         Assert.NotNull(recorder.Last<PointCapturedEvent>());
 
@@ -235,7 +275,7 @@ public class Phase3ExitCriterionTests
         await camera.ConnectAsync();
 
         var (estimate, second) = await RunSequenceAsync(session, 6);
-        Assert.NotNull(estimate);
+        Assert.True(estimate is not null, second.Trail());
         Assert.Null(second.Last<SessionFaultedEvent>());
     }
 
@@ -262,36 +302,34 @@ public class Phase3ExitCriterionTests
         var recorder = new Recorder();
         using IDisposable subscription = session.Events.Subscribe(recorder);
 
+        await ConnectAndConfirmSiteAsync(session);
         await session.SendAsync(new StartSessionCommand(new SessionConfiguration(
-            Latitude, 15.0, 200.0, 3, TimeSpan.FromSeconds(2))));
+            5, 70.0, TimeSpan.FromSeconds(2))));
 
-        var plan = TargetSelection.Plan(new GeodeticLocation(Latitude, 15.0, 200.0), DateTime.UtcNow, 5, 70.0);
-        Assert.True(plan.Success, plan.Reason);
-
-        for (int i = 0; i < plan.Captures.Count; i++)
+        // The prompt now arrives with the proposal, so the operator sees where
+        // to go before pressing anything -- one press per point rather than one
+        // to ask and another to proceed.
+        for (int i = 0; i < 5; i++)
         {
-            // First command draws the prompt.
-            await session.SendAsync(new CaptureNextPointCommand());
+            SlewProposedEvent? proposed = recorder.Last<SlewProposedEvent>();
+            Assert.NotNull(proposed);
+            Assert.False(proposed!.RequiresMotion, "manual mode must never ask the engine to slew (D10)");
+
             ManualActionRequiredEvent? prompt = recorder.Last<ManualActionRequiredEvent>();
             Assert.NotNull(prompt);
             Assert.Contains("declination", prompt!.Instruction, StringComparison.OrdinalIgnoreCase);
 
-            // The operator obeys it, turning the mount to the mechanical
-            // position the prompt named -- resolved to sky coordinates now,
-            // exactly as the engine would for a slew.
-            (double ra, double dec) = TargetSelection.ResolveCommand(
-                new GeodeticLocation(Latitude, 15.0, 200.0),
-                plan.Captures[i].MechanicalRotationDegrees,
-                plan.MechanicalDeclinationDegrees,
-                DateTime.UtcNow);
-            await mount.SlewToCoordinatesAsync(ra, dec);
+            // The operator obeys the prompt, turning the mount to the position
+            // it named. The engine is told nothing about this: as far as it
+            // knows, the telescope simply is where it is.
+            await mount.SlewToCoordinatesAsync(proposed.RaDegrees, proposed.DecDegrees);
 
-            // Second command proceeds with the capture.
             await session.SendAsync(new CaptureNextPointCommand());
+            Assert.Null(recorder.Last<SessionFaultedEvent>());
         }
 
         AlignmentUpdatedEvent? updated = recorder.Last<AlignmentUpdatedEvent>();
-        Assert.NotNull(updated);
+        Assert.True(updated is not null, recorder.Trail());
 
         mount.AdjustAxis(-updated!.Estimate.AltitudeErrorArcminutes, -updated.Estimate.AzimuthErrorArcminutes);
         Assert.True(AxisErrorArcminutes(mount) < 10.0,

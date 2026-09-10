@@ -470,6 +470,12 @@ clock are not symmetric requirements, and it is latitude that carries the risk.
 manual entry. Manual entry must show the derived uncertainty so a user typing a
 rounded city coordinate sees the consequence.
 
+That ordering governs where the *field* is populated from, not what the software
+acts on. **D19 refines this:** whichever source filled it in, the site takes
+effect only once the user has confirmed it, and a driver that disagrees is
+reported rather than obeyed — a driver's site is very often a factory default or
+a leftover from the mount's last setup.
+
 ---
 
 ## D15 — Fit in the horizon frame, on physical pointing directions
@@ -598,6 +604,113 @@ check *before* the user starts turning bolts rather than discovering it after.
 
 This was found by accident: the first version of the tests happened to pick a
 geometry a degree from due west, and every one of them failed.
+
+---
+
+## D18 — The mount never moves on its own initiative
+
+Every slew is the direct result of a command that arrived from outside the
+engine. After each capture the engine works out where to go next, says so, and
+then stops. Nothing is chained.
+
+The reason is not caution for its own sake. A polar alignment sequence is run at
+the start of a night, next to a telescope that has just been assembled, often
+with a dew shield still on, a cable not yet dressed, or someone standing under
+the counterweight. Software that begins swinging a mount the moment a button is
+pressed removes the one opportunity to notice. The cost of asking is a button
+press per point — six presses for a sequence — against a mount that can drive
+its optical tube into a pier leg.
+
+**The first capture requires no movement at all.** The sequence is planned
+around wherever the telescope is already pointing (`TargetSelection.PlanFrom`),
+so the first frame is taken where it stands. That frame is also the most
+valuable one to have early: it measures the plate scale, which turns every later
+solve from a blind search into a bounded one (D13). If the current pointing
+cannot carry a sequence — too near the pole for the arc to curve measurably
+(D11), too near the meridian to sweep away from it (D8), too low — the engine
+says which, plans a fresh target instead, and proposes a slew to it.
+
+**The proposed coordinates are editable, and the override is not a formality.**
+The engine cannot see the sky. Trees, a neighbour's roof, a dome slit and one
+cloudy quadrant are all invisible to it, and a planner that insisted on its own
+choice would simply be wrong more often than the user is. So the coordinates are
+offered as text, and whatever comes back is what gets used.
+
+What the engine *can* do is tell the difference between two kinds of override:
+
+- **A different hour angle on the same target.** The sequence continues, and the
+  declination is snapped back to the sequence's mechanical declination exactly.
+  A hand-typed declination sitting a few arcminutes out is real declination
+  movement, and the sequence must not contain any (D11, D16).
+- **A different target**, meaning a mechanical declination more than five
+  arcminutes away. The earlier captures are **discarded** and the sequence
+  restarts from the new position.
+
+Discarding is the point, and it is the less generous-looking choice. A
+small-circle fit assumes every observation lies on one circle about the polar
+axis. Mixing declinations does not merely add noise — it produces a confident
+wrong answer, which is the single failure mode this project exists to avoid. The
+five-arcminute threshold is a question about *intent*, not an accuracy
+tolerance: five arcminutes of genuine declination movement would wreck a fit,
+and D11 would catch it.
+
+**Accepting a proposal unedited still re-resolves the coordinates** for the
+instant of the slew rather than sending the ones displayed with the suggestion,
+because a fixed sky coordinate does not hold a fixed mechanical declination as
+the sky turns (D16). Whether the user edited anything is decided by comparing
+against the engine's own proposal to within an arcsecond.
+
+A refused command — starting with no camera, confirming when nothing is pending,
+disconnecting mid-sequence — is a `CommandRejectedEvent`, deliberately not a
+session fault. Nothing has broken and no state has been torn down, and
+presenting it as a fault would train the user to ignore faults. Equally
+deliberately it is not silence: a button that appears to do nothing is worse
+than one that explains itself.
+
+---
+
+## D19 — The site is confirmed by the user, then remembered
+
+The observing site is stored between sessions and reloaded, but a stored site
+takes effect only when the user explicitly confirms it. It prefills the fields;
+it is never an input on its own.
+
+This is the one number the software cannot check. **A latitude error appears
+one-for-one in the reported altitude misalignment**, because the fit recovers
+the polar axis in the horizon frame and the pole's altitude *is* the latitude.
+One hundredth of a degree is 0.6 arcminutes of pure bias — six times the
+measurement's own target of about 0.1 arcminutes. A latitude good to six
+arcseconds needs a position good to roughly 185 metres north–south.
+
+So a stored latitude that silently follows someone to a different site would
+bias every altitude figure they see, by an amount nothing in the software can
+detect, in a quantity they are about to turn bolts to correct. Asking once per
+session costs a glance; getting it wrong costs the night and gives no clue why.
+
+**Where the driver disagrees, the user's confirmed figure wins and the
+disagreement is reported.** D14 prefers the mount driver as a source, and that
+remains the right default for *populating* the field — but a driver's site is
+very often a factory default or a leftover from wherever the mount was last set
+up, and the user has just been asked to look at theirs. A difference beyond 0.01°
+of latitude, 0.05° of longitude or 200 m of height is surfaced with the
+latitude's consequence spelled out, because a disagreement is usually the first
+sign that one of the two figures is simply wrong.
+
+Also remembered: the focal length, and which devices were last used. The focal
+length is worth carrying because the first solve of a session is the expensive
+one and it measures the value — but it is reloaded as *entered*, not as
+*measured*, since the distinction decides how tightly the solver may bound its
+search. Devices are preselected but never opened on startup: connecting would
+move nothing, but it would talk to hardware the user has not yet said is
+tonight's hardware.
+
+Settings are written when they change rather than at shutdown, because the way
+an observing session ends is not usually a clean shutdown. The file is written
+through a temporary and moved into place, so an interruption leaves the previous
+settings rather than a truncated file. A stored value that cannot be right — a
+latitude of 200°, a negative focal length — is discarded on load with a warning,
+since carrying it forward would produce a confident wrong answer and dropping it
+costs only a retype.
 
 ---
 

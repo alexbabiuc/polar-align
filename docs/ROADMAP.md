@@ -251,6 +251,67 @@ that the numbers behind the screen are right and that the screen does not
 misrepresent them; whether they can be *acted on* without reading the source is
 exactly what a real night would test.
 
+### Phase 4b — Operator control of the loop
+
+Added after the first look at the running window, which made clear how much the
+UI assumed and how little it asked. The session had connected its own devices,
+inherited a site, and slewed the moment it was started.
+
+- **Device choice, connect and disconnect** for camera and mount, over the same
+  `DeviceCatalog` that enumerates the simulator and any installed plugins (D4).
+  Discovery failures are listed rather than swallowed, and a missing plugins
+  directory is not presented as one.
+- **Focal length is entered, then measured.** The typed value is shown as
+  entered; the first solve replaces it and says so, because "1000 mm (as
+  entered)" and "1000 mm (measured)" mean different things when a solve keeps
+  failing.
+- **Displayed:** camera and mount names with their drivers, pixel pitch and
+  sensor size, focal length with its provenance, plate scale and field radius,
+  the mount's reported RA and Dec, tracking state, pier side, and the confirmed
+  site to five decimal places.
+- **Nothing moves without confirmation (D18).** The first capture is taken where
+  the telescope already points; every later point is proposed with editable
+  coordinates and waits.
+- **The site is reloaded, confirmed, then stored (D19),** and a mount reporting a
+  different site is reported rather than obeyed.
+- **A full session log** is written to `~/.free-polar-align/logs/`, narrated by
+  the same function that writes the on-screen log so the two cannot drift apart,
+  flushed per line because the usual way a session ends is not a clean shutdown.
+
+**Tracking has three states, not two.** A driver that does not report it reads as
+unknown, never as stopped: someone who believes the drive is stopped when it is
+running will misread every number that follows, and the two are
+indistinguishable in a boolean.
+
+**A real southern-hemisphere defect surfaced from the new planner tests.**
+Mechanical declination is measured towards the pole the mount's axis actually
+points at, so it is positive towards the *visible* pole in both hemispheres and
+is not sky declination south of the equator. `TargetSelection.Plan` negated it
+below the equator, as though it were sky declination. At latitude −33.9° it then
+chose a target **105° from the polar axis, six degrees above the horizon**, and
+silently settled for a 30° sweep instead of the 70° requested — which, since
+uncertainty scales as the inverse square of the sweep, is roughly five times
+less certain than the software implied. It reported success throughout. That
+silence is what made it worth finding: there is now a regression test asserting
+the chosen target lands in the 20°–75° pole-distance band at four latitudes in
+both hemispheres.
+
+**The planner also stopped pretending the sweep is guaranteed.** It shrinks
+rather than plan a capture below the altitude floor or across the meridian, and
+reports what it achieved so the UI can say how much certainty that costs. Near
+the equator a shrunk sweep is honest geometry rather than a defect — measured,
+latitude 0.5° yields 50° — and is reported as such.
+
+**993 tests pass.** The new ones worth naming: the coordinate parser (a typed
+right ascension read in the wrong unit, or a negative declination inside the
+first degree losing its sign, would point a telescope somewhere nobody asked
+for), and the confirm-before-slew flow, which runs against the real mount
+mechanics with a noiseless solver so that it needs no quad database and any
+discrepancy in a commanded coordinate is unambiguous.
+
+**Still outstanding:** the correction reticle (D12) remains a placeholder, and
+the window itself is still unverified beyond launching.
+
 ---
 
 ## Phase 5 — Shipping

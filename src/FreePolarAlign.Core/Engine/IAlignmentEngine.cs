@@ -1,15 +1,61 @@
 namespace FreePolarAlign.Core.Engine;
 
+/// <summary>Which of the two devices a command or event is about.</summary>
+public enum DeviceKind
+{
+    Camera,
+    Mount
+}
+
+/// <summary>
+/// Whether the mount is driving at sidereal rate. <see cref="Unknown"/> is a
+/// real answer, not a placeholder: plenty of drivers do not report tracking, and
+/// the UI must say "unknown" rather than imply "stopped" -- a user who believes
+/// tracking is off when it is on will misread every subsequent reading.
+/// </summary>
+public enum MountTrackingState
+{
+    Unknown,
+    Tracking,
+    Stopped
+}
+
+/// <summary>
+/// Which side of the meridian the mount reports. Mirrors
+/// <c>FreePolarAlign.Devices.PierSide</c> deliberately rather than reusing it:
+/// this boundary is meant to be serialisable and driveable by a remote client
+/// (D6), and a plugin author implementing the device contracts should not have
+/// to take a dependency on the astrometry core to do so. The Session layer maps
+/// between the two.
+/// </summary>
+public enum MeridianSide
+{
+    Unknown,
+    East,
+    West
+}
+
 /// <summary>
 /// Configuration for one alignment session. Immutable so it can cross the
 /// engine boundary as part of a command without aliasing concerns (D6).
+///
+/// The observing site is deliberately *not* here. It arrives by its own
+/// <see cref="ConfigureSiteCommand"/> and is confirmed once per session rather
+/// than being restated with every start, so there is exactly one authoritative
+/// copy of the most safety-critical number in the system (D19: a latitude error
+/// transfers one-for-one into the reported altitude error).
 /// </summary>
-/// <param name="MinimumCapturePoints">D7: never less than 3.</param>
+/// <param name="CapturePoints">How many captures to take. D7: never less than 3.</param>
+/// <param name="RequestedSweepDegrees">
+/// Sweep to aim for. Phase 1 measured axis uncertainty falling as the *square*
+/// of this against only the square root of the capture count, so it is the
+/// parameter worth spending on -- but it is a request, not a guarantee: the
+/// planner shrinks it rather than plan a capture below the altitude floor or
+/// across the meridian, and reports what it actually achieved.
+/// </param>
 public sealed record SessionConfiguration(
-    double SiteLatitudeDegrees,
-    double SiteLongitudeDegrees,
-    double SiteHeightMeters,
-    int MinimumCapturePoints,
+    int CapturePoints,
+    double RequestedSweepDegrees,
     TimeSpan ExposureDuration);
 
 /// <summary>
@@ -47,16 +93,100 @@ public sealed record CapturePoint(
     DateTime ExposureMidpointUtc);
 
 /// <summary>
+/// What is known about the connected camera. Sent with
+/// <see cref="DeviceConnectedEvent"/> because the pixel pitch and sensor size
+/// are the two numbers the plate scale depends on, and a user checking why a
+/// solve keeps failing needs to see the values the software is actually using
+/// rather than the ones on the box.
+/// </summary>
+public sealed record CameraDescription(
+    double PixelSizeMicrons,
+    int SensorWidthPixels,
+    int SensorHeightPixels);
+
+/// <summary>
 /// Base type for everything sent into an <see cref="IAlignmentEngine"/>. Commands
 /// are the only way callers (the UI, or a future remote client per D6) affect
 /// engine state -- there is no other public mutator anywhere on the boundary.
 /// </summary>
 public abstract record EngineCommand;
 
+/// <summary>
+/// Open and connect one device. The provider name and device id are the two
+/// strings <c>DeviceCatalog</c> hands out; keeping them as strings rather than
+/// an object reference is what lets this command cross a transport (D6).
+/// </summary>
+public sealed record ConnectDeviceCommand(DeviceKind Kind, string ProviderName, string DeviceId) : EngineCommand;
+
+/// <summary>
+/// Disconnect and release one device. Refused while a session is running: a
+/// half-connected sequence is not a state worth supporting, and pulling the
+/// camera out from under a capture would surface as an opaque driver error
+/// rather than as the deliberate act it was.
+/// </summary>
+public sealed record DisconnectDeviceCommand(DeviceKind Kind) : EngineCommand;
+
+/// <summary>
+/// Set the observing site. Required before a session can start, and required to
+/// be an explicit act rather than something inherited silently from a stored
+/// file or a driver default -- see D19.
+/// </summary>
+public sealed record ConfigureSiteCommand(
+    double LatitudeDegrees,
+    double LongitudeDegrees,
+    double HeightMeters) : EngineCommand;
+
+/// <summary>
+/// Tell the engine the focal length the user believes they have. Null clears it,
+/// forcing fully blind solves. A solve replaces this figure with the measured
+/// one (<see cref="EquipmentConfiguredEvent.IsFocalLengthSolved"/>), which is
+/// the whole point of asking for it only once.
+/// </summary>
+public sealed record ConfigureFocalLengthCommand(double? FocalLengthMillimetres) : EngineCommand;
+
+/// <summary>
+/// Ask the engine to poll the mount and report where it is pointing and whether
+/// it is tracking. Polling is driven from outside rather than by a timer inside
+/// the engine so that the engine stays a deterministic function of the commands
+/// it is given -- which is what makes the sequence reproducible in a test.
+/// </summary>
+public sealed record RefreshMountStatusCommand : EngineCommand;
+
+/// <summary>
+/// Plan a sequence anchored where the mount is already pointing. Connects
+/// nothing and moves nothing (D18).
+/// </summary>
 public sealed record StartSessionCommand(SessionConfiguration Configuration) : EngineCommand;
 
-/// <summary>Slew (if in automatic mode) or prompt (D10, manual mode) for the next capture point.</summary>
+/// <summary>
+/// Capture and solve at whatever the mount is pointing at right now, without
+/// commanding any motion. This is how the first point of every sequence is
+/// taken (D18), and how every point is taken on a mount being turned by hand
+/// (D10).
+/// </summary>
+public sealed record CaptureHereCommand : EngineCommand;
+
+/// <summary>
+/// Accept the engine's own proposal for the next point unedited: slew there and
+/// capture. Equivalent to <see cref="ConfirmSlewCommand"/> with the proposed
+/// coordinates, and kept separate only so a caller that is not overriding
+/// anything need not echo numbers back.
+/// </summary>
 public sealed record CaptureNextPointCommand : EngineCommand;
+
+/// <summary>
+/// Slew to coordinates the user supplied -- possibly the proposed ones, possibly
+/// not -- and capture there.
+///
+/// The override exists because the engine cannot see the sky: trees, a
+/// neighbour's roof and cloud in one quadrant are all invisible to it, and a
+/// planner that insists on its own choice would simply be wrong more often than
+/// the user. What the engine can do is notice when an override moves the mount
+/// in *declination*, which invalidates the small-circle fit the whole method
+/// rests on, and re-anchor rather than quietly average incompatible points
+/// together (D18).
+/// </summary>
+public sealed record ConfirmSlewCommand(double RaDegrees, double DecDegrees) : EngineCommand;
 
 public sealed record CancelSessionCommand : EngineCommand;
 
@@ -75,7 +205,117 @@ public abstract record EngineEvent
     public DateTimeOffset TimestampUtc { get; init; } = DateTimeOffset.UtcNow;
 }
 
+/// <param name="Camera">Populated only when <paramref name="Kind"/> is <see cref="DeviceKind.Camera"/>.</param>
+/// <param name="CanSlew">
+/// Populated only for a mount. False means automatic mode is unavailable (D9)
+/// and the sequence has to be driven by hand (D10) -- worth knowing at connect
+/// time rather than discovering at the first slew.
+/// </param>
+public sealed record DeviceConnectedEvent(
+    DeviceKind Kind,
+    string ProviderName,
+    string DeviceId,
+    string DisplayName,
+    string DriverInfo,
+    CameraDescription? Camera = null,
+    bool CanSlew = false) : EngineEvent;
+
+/// <param name="Reason">Null for a deliberate disconnect; a message when the device dropped or failed to open.</param>
+public sealed record DeviceDisconnectedEvent(DeviceKind Kind, string? Reason = null) : EngineEvent;
+
+/// <param name="MountReportedDisagreement">
+/// Non-null when the mount's own site differs from the confirmed one by enough
+/// to matter. Not an error and not overridden -- the user's confirmed figure
+/// wins (D19) -- but it is very often the first sign that one of the two is a
+/// leftover from somewhere else entirely, so it is surfaced rather than
+/// resolved silently.
+/// </param>
+public sealed record SiteConfiguredEvent(
+    double LatitudeDegrees,
+    double LongitudeDegrees,
+    double HeightMeters,
+    string? MountReportedDisagreement = null) : EngineEvent;
+
+/// <param name="IsFocalLengthSolved">
+/// False while this is still the user's own figure, true once a solve measured
+/// it. The distinction drives how wide a scale hint the solver is given, and
+/// the UI shows it because "1000 mm (measured)" and "1000 mm (as entered)" mean
+/// quite different things when a solve is failing.
+/// </param>
+public sealed record EquipmentConfiguredEvent(
+    double? FocalLengthMillimetres,
+    bool IsFocalLengthSolved,
+    double? ScaleArcsecondsPerPixel,
+    double? FieldRadiusDegrees) : EngineEvent;
+
+/// <summary>
+/// Where the mount says it is and what it is doing. The coordinates are the
+/// mount's own belief, not a solved position -- on a misaligned mount those are
+/// different things, and the difference is exactly what this software measures,
+/// so the UI labels this as reported rather than as truth.
+/// </summary>
+public sealed record MountStatusEvent(
+    double RaDegrees,
+    double DecDegrees,
+    MountTrackingState Tracking,
+    MeridianSide PierSide) : EngineEvent;
+
 public sealed record SessionStartedEvent(SessionConfiguration Configuration) : EngineEvent;
+
+/// <param name="SweepDegrees">
+/// The sweep actually planned, which may be less than requested: the planner
+/// shrinks rather than plan a capture below the altitude floor or across the
+/// meridian. Since uncertainty scales as the inverse square of this, a shrunk
+/// sweep is a materially worse measurement and the UI says so.
+/// </param>
+public sealed record TargetSelectedEvent(
+    double DeclinationDegrees,
+    bool IsWestOfMeridian,
+    int PlannedCaptures,
+    double SweepDegrees) : EngineEvent;
+
+/// <summary>
+/// The engine's suggestion for where to point next, and the reason the sequence
+/// is now waiting rather than moving (D18). Nothing turns until a
+/// <see cref="CaptureNextPointCommand"/> or <see cref="ConfirmSlewCommand"/>
+/// arrives.
+/// </summary>
+/// <param name="RaDegrees">
+/// Resolved for roughly now. The engine re-resolves at the instant of the slew,
+/// because a fixed sky coordinate does not hold the mechanical declination
+/// constant as the sky rotates (see <c>TargetSelection.ResolveCommand</c>), so
+/// this figure is what to *show*, not what will necessarily be commanded.
+/// </param>
+/// <param name="RequiresMotion">
+/// False when the telescope is already somewhere usable -- the first point of a
+/// sequence anchored where it was already pointing -- or when it is being turned
+/// by hand (D10). A caller must not offer to slew in that case: presenting a
+/// movement that will not happen invites the user to go and check the sky for an
+/// obstruction that does not matter.
+/// </param>
+public sealed record SlewProposedEvent(
+    int PointIndex,
+    int PlannedCaptures,
+    double RaDegrees,
+    double DecDegrees,
+    double MechanicalRotationDegrees,
+    double PredictedAltitudeDegrees,
+    bool RequiresMotion,
+    string Instruction) : EngineEvent;
+
+/// <param name="WasOverridden">True when the coordinates were not the ones proposed.</param>
+/// <param name="ReanchoredReason">
+/// Non-null when the override moved the mount in declination and the sequence
+/// therefore restarted from this point, discarding earlier captures. Points at
+/// different declinations do not lie on one small circle, so fitting them
+/// together would produce a confident wrong answer -- the failure mode D11
+/// exists to prevent (D18).
+/// </param>
+public sealed record SlewConfirmedEvent(
+    double RaDegrees,
+    double DecDegrees,
+    bool WasOverridden,
+    string? ReanchoredReason = null) : EngineEvent;
 
 public sealed record PointCapturedEvent(CapturePoint Point) : EngineEvent;
 

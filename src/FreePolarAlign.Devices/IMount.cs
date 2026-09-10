@@ -13,11 +13,37 @@ public enum PierSide
     West
 }
 
+/// <summary>
+/// Whether the mount is driving at sidereal rate, with <see cref="Unknown"/> for
+/// drivers that do not say. Unknown is reported as unknown rather than folded
+/// into "stopped": the two look identical in a boolean and mean very different
+/// things to someone deciding whether the readings they are watching should be
+/// changing on their own.
+/// </summary>
+public enum TrackingState
+{
+    Unknown,
+    Tracking,
+    Stopped
+}
+
 /// <summary>Geodetic observer location. Latitude accuracy is a hard requirement (D14).</summary>
 public sealed record GeodeticLocation(double LatitudeDegrees, double LongitudeDegrees, double HeightMeters);
 
-/// <summary>A mount's reported pointing position at a moment in time.</summary>
-public sealed record MountPosition(double RaDegrees, double DecDegrees, PierSide PierSide, DateTime TimestampUtc);
+/// <summary>
+/// A mount's reported state at a moment in time: where it believes it is
+/// pointing, which side of the pier it is on, and whether it is tracking.
+///
+/// All three arrive together because they are read together -- one round trip to
+/// a driver rather than three, which matters for a COM-based ASCOM mount where
+/// each property read is an out-of-process call.
+/// </summary>
+public sealed record MountPosition(
+    double RaDegrees,
+    double DecDegrees,
+    PierSide PierSide,
+    DateTime TimestampUtc,
+    TrackingState Tracking = TrackingState.Unknown);
 
 /// <summary>
 /// A mount device, opened via <see cref="IDeviceProvider.OpenMount"/>. Slewing

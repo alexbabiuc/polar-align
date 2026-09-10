@@ -9,7 +9,8 @@ namespace FreePolarAlign.App.ViewModels;
 /// "understand the engine's event stream" logic for the app, kept free of
 /// Avalonia, threading and I/O so it can be unit-tested directly -- which is
 /// where the safety properties this project cares about (D11: never show a
-/// stale number as current) actually live and get verified.
+/// stale number as current; D18: never suggest the mount is about to move when
+/// it is not) actually live and get verified.
 /// </summary>
 public static class EngineEventReducer
 {
@@ -24,10 +25,47 @@ public static class EngineEventReducer
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(engineEvent);
 
-        UiState withLog = AppendLog(state, Describe(engineEvent));
+        UiState withLog = AppendLog(state, engineEvent);
 
         return engineEvent switch
         {
+            DeviceConnectedEvent e => ApplyConnected(withLog, e),
+
+            DeviceDisconnectedEvent e => ApplyDisconnected(withLog, e),
+
+            SiteConfiguredEvent e => withLog with
+            {
+                SiteLatitudeDegrees = e.LatitudeDegrees,
+                SiteLongitudeDegrees = e.LongitudeDegrees,
+                SiteHeightMeters = e.HeightMeters,
+                SiteDisagreement = e.MountReportedDisagreement,
+                RejectionReason = null,
+                StatusMessage = e.MountReportedDisagreement is null
+                    ? "Site confirmed."
+                    : "Site confirmed, but the mount disagrees -- see the note beside it.",
+            },
+
+            EquipmentConfiguredEvent e => withLog with
+            {
+                FocalLengthMillimetres = e.FocalLengthMillimetres,
+                IsFocalLengthSolved = e.IsFocalLengthSolved,
+                ScaleArcsecondsPerPixel = e.ScaleArcsecondsPerPixel,
+                FieldRadiusDegrees = e.FieldRadiusDegrees,
+                RejectionReason = null,
+            },
+
+            // Polled continuously, so it deliberately leaves the status line and
+            // every warning alone: a status refresh is not news, and letting it
+            // clear a message would make warnings vanish a second after
+            // appearing.
+            MountStatusEvent e => withLog with
+            {
+                MountRaDegrees = e.RaDegrees,
+                MountDecDegrees = e.DecDegrees,
+                MountTracking = e.Tracking,
+                MountPierSide = e.PierSide,
+            },
+
             SessionStartedEvent e => withLog with
             {
                 SessionActive = true,
@@ -37,18 +75,56 @@ public static class EngineEventReducer
                 FaultReason = null,
                 ManualInstruction = null,
                 CaptureWarning = null,
+                RejectionReason = null,
+                Proposal = null,
                 CapturedPointCount = 0,
                 PlannedPointCount = 0,
-                SiteLatitudeDegrees = e.Configuration.SiteLatitudeDegrees,
-                StatusMessage = "Session started.",
+                PlannedSweepDegrees = null,
+                RequestedSweepDegrees = e.Configuration.RequestedSweepDegrees,
+                StatusMessage = "Sequence started.",
             },
 
             TargetSelectedEvent e => withLog with
             {
                 PlannedPointCount = e.PlannedCaptures,
+                PlannedSweepDegrees = e.SweepDegrees,
                 StatusMessage =
-                    $"Target selected: {e.PlannedCaptures} captures planned at declination {e.DeclinationDegrees:F1}°, " +
-                    $"sweeping {(e.IsWestOfMeridian ? "west" : "east")} of the meridian (D8).",
+                    $"Target selected: {e.PlannedCaptures} captures at mechanical declination " +
+                    $"{e.DeclinationDegrees:F1}°, sweeping {e.SweepDegrees:F0}° " +
+                    $"{(e.IsWestOfMeridian ? "west" : "east")} of the meridian (D8).",
+            },
+
+            // D18: this is the engine saying "here is what I would do next" and
+            // then waiting. The UI's job is to make clear that nothing has moved
+            // and nothing will until it is told to.
+            SlewProposedEvent e => withLog with
+            {
+                Proposal = new ProposalView(
+                    e.PointIndex,
+                    e.PlannedCaptures,
+                    e.RaDegrees,
+                    e.DecDegrees,
+                    e.MechanicalRotationDegrees,
+                    e.PredictedAltitudeDegrees,
+                    e.RequiresMotion,
+                    e.Instruction),
+                RejectionReason = null,
+                StatusMessage = e.RequiresMotion
+                    ? $"Waiting for you to confirm point {e.PointIndex} of {e.PlannedCaptures}. Nothing will move until you do."
+                    : $"Ready to capture point {e.PointIndex} of {e.PlannedCaptures} without moving.",
+            },
+
+            SlewConfirmedEvent e => withLog with
+            {
+                // A re-anchor threw away the earlier captures, so anything
+                // computed from them is gone too. The AlignmentWithheldEvent
+                // that accompanies it clears the estimate; this clears the
+                // count, so the two cannot disagree on screen.
+                CapturedPointCount = e.ReanchoredReason is null ? state.CapturedPointCount : 0,
+                RejectionReason = null,
+                StatusMessage = e.ReanchoredReason is null
+                    ? (e.WasOverridden ? "Slewing to your coordinates." : "Slewing to the proposed coordinates.")
+                    : "Sequence re-anchored -- see the note below.",
             },
 
             PointCapturedEvent e => withLog with
@@ -57,7 +133,8 @@ public static class EngineEventReducer
                 AwaitingManualAction = false,
                 ManualInstruction = null,
                 CaptureWarning = null,
-                StatusMessage = $"Captured point {e.Point.Index} of {state.PlannedPointCount}.",
+                Proposal = null,
+                StatusMessage = $"Captured and solved point {e.Point.Index} of {state.PlannedPointCount}.",
             },
 
             // The two bolt figures plus the total (which the 10' success
@@ -84,8 +161,7 @@ public static class EngineEventReducer
             },
 
             // D10: manual mode. The operator turns the mount by hand; the
-            // "Continue" affordance re-sends CaptureNextPointCommand, which is
-            // exactly what AlignmentSession is waiting for.
+            // capture affordance then takes the frame where it stands.
             ManualActionRequiredEvent e => withLog with
             {
                 AwaitingManualAction = true,
@@ -105,12 +181,21 @@ public static class EngineEventReducer
                 StatusMessage = e.WillRetry ? "A capture failed and will be retried." : "A capture failed; the session is stopping.",
             },
 
+            // A refusal, not a fault: nothing broke and nothing was torn down,
+            // so no estimate is stale and none is cleared.
+            CommandRejectedEvent e => withLog with
+            {
+                RejectionReason = e.Reason,
+                StatusMessage = "That is not possible yet -- see the note below.",
+            },
+
             SessionFaultedEvent e => withLog with
             {
                 SessionActive = false,
                 AwaitingManualAction = false,
                 CurrentEstimate = null,
                 ManualInstruction = null,
+                Proposal = null,
                 FaultReason = e.Reason,
                 StatusMessage = "Session faulted -- see reason below.",
             },
@@ -123,6 +208,7 @@ public static class EngineEventReducer
                 SessionActive = false,
                 AwaitingManualAction = false,
                 ManualInstruction = null,
+                Proposal = null,
                 StatusMessage = "Session complete.",
             },
 
@@ -130,11 +216,85 @@ public static class EngineEventReducer
         };
     }
 
-    private static UiState AppendLog(UiState state, string line)
+    private static UiState ApplyConnected(UiState state, DeviceConnectedEvent e)
     {
+        var view = new DeviceView(IsConnected: true, e.DisplayName, e.DriverInfo);
+
+        if (e.Kind == DeviceKind.Camera)
+        {
+            return state with
+            {
+                Camera = view,
+                CameraPixelSizeMicrons = e.Camera?.PixelSizeMicrons,
+                CameraWidthPixels = e.Camera?.SensorWidthPixels ?? 0,
+                CameraHeightPixels = e.Camera?.SensorHeightPixels ?? 0,
+                RejectionReason = null,
+                StatusMessage = $"Camera connected: {e.DisplayName}.",
+            };
+        }
+
+        return state with
+        {
+            Mount = view,
+            MountCanSlew = e.CanSlew,
+            RejectionReason = null,
+            StatusMessage = e.CanSlew
+                ? $"Mount connected: {e.DisplayName}."
+                : $"Mount connected: {e.DisplayName}. It reports no slew support, so use manual mode (D9/D10).",
+        };
+    }
+
+    private static UiState ApplyDisconnected(UiState state, DeviceDisconnectedEvent e)
+    {
+        var view = new DeviceView(IsConnected: false, Problem: e.Reason);
+
+        if (e.Kind == DeviceKind.Camera)
+        {
+            return state with
+            {
+                Camera = view,
+                // Cleared with the camera: a pixel size left over from a device
+                // that is no longer attached would make every plate scale shown
+                // afterwards a fiction.
+                CameraPixelSizeMicrons = null,
+                CameraWidthPixels = 0,
+                CameraHeightPixels = 0,
+                StatusMessage = e.Reason ?? "Camera disconnected.",
+            };
+        }
+
+        return state with
+        {
+            Mount = view,
+            MountCanSlew = false,
+            MountRaDegrees = null,
+            MountDecDegrees = null,
+            MountTracking = MountTrackingState.Unknown,
+            MountPierSide = MeridianSide.Unknown,
+            StatusMessage = e.Reason ?? "Mount disconnected.",
+        };
+    }
+
+    private static UiState AppendLog(UiState state, EngineEvent engineEvent)
+    {
+        NarratedEvent narrated = EngineEventNarrator.Describe(engineEvent);
+        if (string.IsNullOrEmpty(narrated.Message))
+        {
+            // The narrator returns an empty message for events not worth a line
+            // -- currently the continuous mount-status poll.
+            return state;
+        }
+
+        string prefix = narrated.Severity switch
+        {
+            LogSeverity.Warning => "WARN ",
+            LogSeverity.Error => "ERROR",
+            _ => "     ",
+        };
+
         var log = new List<string>(state.Log.Count + 1);
         log.AddRange(state.Log);
-        log.Add(line);
+        log.Add($"{engineEvent.TimestampUtc.ToLocalTime():HH:mm:ss} {prefix} {narrated.Message}");
 
         if (log.Count > MaxLogEntries)
         {
@@ -143,22 +303,4 @@ public static class EngineEventReducer
 
         return state with { Log = log };
     }
-
-    private static string Describe(EngineEvent e) => e switch
-    {
-        SessionStartedEvent => $"{Timestamp(e)} Session started.",
-        TargetSelectedEvent t => $"{Timestamp(e)} Target selected: dec {t.DeclinationDegrees:F1}°, " +
-                                  $"{t.PlannedCaptures} captures, {t.SweepDegrees:F0}° sweep {(t.IsWestOfMeridian ? "west" : "east")}.",
-        PointCapturedEvent p => $"{Timestamp(e)} Point {p.Point.Index} captured: RA {p.Point.RaDegrees:F3}°, Dec {p.Point.DecDegrees:F3}°.",
-        AlignmentUpdatedEvent a => $"{Timestamp(e)} Estimate updated: total {a.Estimate.TotalErrorArcminutes:F2}' " +
-                                    $"± {a.Estimate.TotalSigmaArcminutes:F2}'.",
-        AlignmentWithheldEvent w => $"{Timestamp(e)} WITHHELD: {w.Reason}",
-        ManualActionRequiredEvent m => $"{Timestamp(e)} Manual action required: {m.Instruction}",
-        CaptureFailedEvent c => $"{Timestamp(e)} Capture {c.CaptureIndex} failed: {c.Reason} (retry: {c.WillRetry}).",
-        SessionFaultedEvent f => $"{Timestamp(e)} FAULT: {f.Reason}",
-        SessionCompletedEvent => $"{Timestamp(e)} Session completed.",
-        _ => $"{Timestamp(e)} {e.GetType().Name}",
-    };
-
-    private static string Timestamp(EngineEvent e) => e.TimestampUtc.ToLocalTime().ToString("HH:mm:ss");
 }

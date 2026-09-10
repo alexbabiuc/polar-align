@@ -97,7 +97,8 @@ public sealed class AscomMount : IMount
             double raHours = (double)_telescope.RightAscension;
             double decDegrees = (double)_telescope.Declination;
             PierSide pierSide = TryGetSideOfPier();
-            var position = new MountPosition(AscomMapping.RaHoursToDegrees(raHours), decDegrees, pierSide, DateTime.UtcNow);
+            var position = new MountPosition(
+                AscomMapping.RaHoursToDegrees(raHours), decDegrees, pierSide, DateTime.UtcNow, TryGetTracking());
             return Task.FromResult(position);
         }
         catch (Exception ex)
@@ -223,6 +224,26 @@ public sealed class AscomMount : IMount
             // D9: advisory only. Some drivers (historically SynScan) do not
             // implement this reliably; never fail a caller over it.
             return PierSide.Unknown;
+        }
+    }
+
+    /// <summary>
+    /// Whether the drive is running. <c>Tracking</c> is a required ASCOM
+    /// property, but "required" and "implemented" are not the same thing in this
+    /// ecosystem, so a driver that throws yields Unknown rather than an
+    /// exception -- and Unknown rather than false, since a stopped drive and an
+    /// unreporting one look identical in a boolean and mean quite different
+    /// things to someone watching the numbers.
+    /// </summary>
+    private TrackingState TryGetTracking()
+    {
+        try
+        {
+            return (bool)_telescope.Tracking ? TrackingState.Tracking : TrackingState.Stopped;
+        }
+        catch (Exception)
+        {
+            return TrackingState.Unknown;
         }
     }
 

@@ -239,6 +239,9 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 case RefreshMountStatusCommand:
                     await RefreshMountStatusAsync(cancellationToken).ConfigureAwait(false);
                     break;
+                case SetReadoutModeCommand readout:
+                    await SetReadoutModeAsync(readout, cancellationToken).ConfigureAwait(false);
+                    break;
                 case StartSessionCommand start:
                     await StartAsync(start, cancellationToken).ConfigureAwait(false);
                     break;
@@ -340,7 +343,12 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             command.DeviceId,
             camera.Name,
             DescribeDriver(command),
-            new CameraDescription(camera.PixelSizeMicrons, camera.SensorWidthPixels, camera.SensorHeightPixels)));
+            new CameraDescription(
+                camera.PixelSizeMicrons,
+                camera.SensorWidthPixels,
+                camera.SensorHeightPixels,
+                camera.ReadoutModes.Select(Describe).ToArray(),
+                camera.ReadoutModeIndex)));
 
         PublishEquipment();
     }
@@ -595,6 +603,50 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         return message;
     }
+
+    private async Task SetReadoutModeAsync(SetReadoutModeCommand command, CancellationToken cancellationToken)
+    {
+        if (_camera is null || !_camera.IsConnected)
+        {
+            _events.Publish(new CommandRejectedEvent("Connect a camera before choosing a readout mode."));
+            return;
+        }
+
+        if (_sessionActive)
+        {
+            _events.Publish(new CommandRejectedEvent(
+                "Cannot change the readout mode during a sequence. The frames already captured would have been " +
+                "read out differently, and the fit weights them all alike."));
+            return;
+        }
+
+        if (command.Index < 0 || command.Index >= _camera.ReadoutModes.Count)
+        {
+            _events.Publish(new CommandRejectedEvent(
+                $"This camera offers {_camera.ReadoutModes.Count} readout mode(s); {command.Index} is not one of them."));
+            return;
+        }
+
+        try
+        {
+            await _camera.SetReadoutModeAsync(command.Index, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _events.Publish(new CommandRejectedEvent($"The camera refused that readout mode: {ex.Message}"));
+            return;
+        }
+
+        CameraReadoutMode mode = _camera.ReadoutModes[command.Index];
+        _events.Publish(new ReadoutModeChangedEvent(mode.Index, mode.Name, mode.BitDepth));
+    }
+
+    private static CameraReadoutModeDescription Describe(CameraReadoutMode mode) =>
+        new(mode.Index, mode.Name, mode.BitDepth);
 
     private void ConfigureFocalLength(ConfigureFocalLengthCommand command)
     {
@@ -1020,6 +1072,12 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
             CapturedImage captured = await _camera!
                 .ExposeAsync(_exposure, cancellationToken).ConfigureAwait(false);
+
+            // Announced before the solve is attempted, so that a frame the
+            // solver cannot make sense of is still on screen while the user
+            // reads why.
+            _events.Publish(new FrameCapturedEvent(
+                _completedCaptures + 1, captured.FitsPath, captured.ExposureMidpointUtc, captured.Duration));
 
             PlateSolveResult solve = await SolveAsync(
                 captured, position.RaDegrees, position.DecDegrees, cancellationToken).ConfigureAwait(false);

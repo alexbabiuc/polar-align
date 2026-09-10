@@ -72,6 +72,26 @@ public sealed record UiState
     public int CameraHeightPixels { get; init; }
 
     /// <summary>
+    /// The readout modes the driver offers. Empty means it offers no choice,
+    /// which is the common case and not a failure -- most cameras have one
+    /// readout, and presenting a menu of one implies a decision the user does
+    /// not have to make.
+    /// </summary>
+    public IReadOnlyList<CameraReadoutModeDescription> ReadoutModes { get; init; } =
+        Array.Empty<CameraReadoutModeDescription>();
+
+    public int? ReadoutModeIndex { get; init; }
+
+    /// <summary>
+    /// The most recently exposed frame, on disk. Set as soon as the exposure
+    /// finishes and before the solve is attempted, because a frame the solver
+    /// could not read is exactly the one worth looking at.
+    /// </summary>
+    public string? LatestFramePath { get; init; }
+
+    public int LatestFrameIndex { get; init; }
+
+    /// <summary>
     /// False when the connected mount cannot perform absolute slews (D9), which
     /// makes automatic mode unavailable and manual mode (D10) the only option.
     /// Worth showing at connect time rather than at the first slew.

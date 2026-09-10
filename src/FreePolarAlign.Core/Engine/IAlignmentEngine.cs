@@ -99,10 +99,26 @@ public sealed record CapturePoint(
 /// solve keeps failing needs to see the values the software is actually using
 /// rather than the ones on the box.
 /// </summary>
+/// <param name="ReadoutModes">
+/// The modes the driver offers, or empty when it offers no choice. Empty is the
+/// common case: most cameras have one readout, and presenting a menu of one
+/// implies a decision the user does not have to make.
+/// </param>
 public sealed record CameraDescription(
     double PixelSizeMicrons,
     int SensorWidthPixels,
-    int SensorHeightPixels);
+    int SensorHeightPixels,
+    IReadOnlyList<CameraReadoutModeDescription>? ReadoutModes = null,
+    int? ReadoutModeIndex = null);
+
+/// <param name="BitDepth">
+/// Bits per pixel where the driver reveals it, null otherwise. Null is a real
+/// answer rather than a gap -- see <c>FreePolarAlign.Devices.CameraReadoutMode</c>.
+/// </param>
+public sealed record CameraReadoutModeDescription(int Index, string Name, int? BitDepth = null)
+{
+    public string Label => BitDepth is { } bits ? $"{Name} ({bits}-bit)" : Name;
+}
 
 /// <summary>
 /// Base type for everything sent into an <see cref="IAlignmentEngine"/>. Commands
@@ -151,6 +167,14 @@ public sealed record ConfigureFocalLengthCommand(double? FocalLengthMillimetres)
 /// it is given -- which is what makes the sequence reproducible in a test.
 /// </summary>
 public sealed record RefreshMountStatusCommand : EngineCommand;
+
+/// <summary>
+/// Select one of the camera's readout modes. Refused while a sequence is
+/// running: changing the bit depth part-way through would leave the sequence
+/// mixing frames whose centroids can be trusted to different precisions, and
+/// the fit weights them all alike.
+/// </summary>
+public sealed record SetReadoutModeCommand(int Index) : EngineCommand;
 
 /// <summary>
 /// Plan a sequence anchored where the mount is already pointing. Connects
@@ -316,6 +340,30 @@ public sealed record SlewConfirmedEvent(
     double DecDegrees,
     bool WasOverridden,
     string? ReanchoredReason = null) : EngineEvent;
+
+/// <summary>
+/// A frame has been exposed and written to disk, before any attempt to solve
+/// it.
+///
+/// Published early on purpose. The moment a user most needs to see the frame is
+/// when the solve has just failed — "no stars detected" is answered by looking
+/// at the image, where a lens cap, cloud, a wildly wrong focus or a tracking
+/// runaway are all obvious and none of them are distinguishable from the message
+/// alone.
+/// </summary>
+/// <param name="FitsPath">
+/// A local filesystem path, which is the one thing on this boundary that does
+/// not survive a transport (D6). A remote client would need the frame streamed
+/// instead; until there is one, a path costs nothing and copying every frame
+/// through the event stream would.
+/// </param>
+public sealed record FrameCapturedEvent(
+    int PointIndex,
+    string FitsPath,
+    DateTime ExposureMidpointUtc,
+    TimeSpan Duration) : EngineEvent;
+
+public sealed record ReadoutModeChangedEvent(int Index, string Name, int? BitDepth) : EngineEvent;
 
 public sealed record PointCapturedEvent(CapturePoint Point) : EngineEvent;
 

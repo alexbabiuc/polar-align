@@ -66,6 +66,25 @@ public static class EngineEventReducer
                 MountPierSide = e.PierSide,
             },
 
+            // The frame arrives before any attempt to solve it, and is left in
+            // place afterwards whatever the solve did: a failed solve is the
+            // moment the image matters most.
+            FrameCapturedEvent e => withLog with
+            {
+                LatestFramePath = e.FitsPath,
+                LatestFrameIndex = e.PointIndex,
+                StatusMessage = $"Frame {e.PointIndex} captured; solving.",
+            },
+
+            ReadoutModeChangedEvent e => withLog with
+            {
+                ReadoutModeIndex = e.Index,
+                RejectionReason = null,
+                StatusMessage = e.BitDepth is { } bits
+                    ? $"Readout mode: {e.Name} ({bits}-bit)."
+                    : $"Readout mode: {e.Name}.",
+            },
+
             SessionStartedEvent e => withLog with
             {
                 SessionActive = true,
@@ -228,6 +247,8 @@ public static class EngineEventReducer
                 CameraPixelSizeMicrons = e.Camera?.PixelSizeMicrons,
                 CameraWidthPixels = e.Camera?.SensorWidthPixels ?? 0,
                 CameraHeightPixels = e.Camera?.SensorHeightPixels ?? 0,
+                ReadoutModes = e.Camera?.ReadoutModes ?? Array.Empty<CameraReadoutModeDescription>(),
+                ReadoutModeIndex = e.Camera?.ReadoutModeIndex,
                 RejectionReason = null,
                 StatusMessage = $"Camera connected: {e.DisplayName}.",
             };
@@ -259,6 +280,8 @@ public static class EngineEventReducer
                 CameraPixelSizeMicrons = null,
                 CameraWidthPixels = 0,
                 CameraHeightPixels = 0,
+                ReadoutModes = Array.Empty<CameraReadoutModeDescription>(),
+                ReadoutModeIndex = null,
                 StatusMessage = e.Reason ?? "Camera disconnected.",
             };
         }

@@ -40,6 +40,128 @@ public sealed class AscomCamera : ICamera
 
     public string Name => _progId;
 
+    /// <summary>
+    /// The driver's readout modes, or empty when it offers none.
+    ///
+    /// ASCOM exposes these as an opaque list of names with no bit depth
+    /// attached, so the depth is derived from <c>MaxADU</c> where that is
+    /// unambiguous and left null otherwise. Deriving it from the mode's *name*
+    /// was the obvious alternative and is rejected deliberately: a substring
+    /// match on "8" would read "8-bit" correctly, "ADC 8x binned" wrongly, and
+    /// there is no way to tell which happened. A wrong bit depth is worse than
+    /// an unknown one, because the depth is what decides how far a centroid can
+    /// be trusted.
+    ///
+    /// MaxADU is a camera-level property rather than a per-mode one, so this
+    /// reports the depth of whatever mode is currently selected against every
+    /// entry in the list. That is a known limitation of the standard, not of
+    /// this mapping, and it is why the value is re-read after a mode change.
+    /// </summary>
+    public IReadOnlyList<CameraReadoutMode> ReadoutModes
+    {
+        get
+        {
+            string[] names;
+            try
+            {
+                object raw = _camera.ReadoutModes;
+                names = raw is System.Collections.IEnumerable enumerable
+                    ? enumerable.Cast<object?>().Select(v => v?.ToString() ?? string.Empty).ToArray()
+                    : Array.Empty<string>();
+            }
+            catch (Exception)
+            {
+                // ReadoutModes is only meaningful when CanFastReadout is false,
+                // and drivers that do not implement it throw rather than return
+                // an empty list. No modes is a normal answer, not a fault.
+                return Array.Empty<CameraReadoutMode>();
+            }
+
+            if (names.Length <= 1)
+            {
+                // A single mode is not a choice, and offering it as one implies
+                // a decision the user does not have to make.
+                return Array.Empty<CameraReadoutMode>();
+            }
+
+            int? bitDepth = TryGetBitDepth();
+            return names.Select((name, index) => new CameraReadoutMode(index, name, bitDepth)).ToArray();
+        }
+    }
+
+    public int? ReadoutModeIndex
+    {
+        get
+        {
+            try
+            {
+                return (int)_camera.ReadoutMode;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+    }
+
+    public Task SetReadoutModeAsync(int index, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        IReadOnlyList<CameraReadoutMode> modes = ReadoutModes;
+        if (index < 0 || index >= modes.Count)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(index), index, $"ASCOM camera '{_progId}' reports {modes.Count} readout mode(s).");
+        }
+
+        try
+        {
+            _camera.ReadoutMode = index;
+        }
+        catch (Exception ex)
+        {
+            throw new AscomPlatformNotAvailableException(
+                $"Failed to set ReadoutMode on ASCOM camera '{_progId}': {ex.Message}", ex);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Bits per pixel implied by the camera's full-well value, where it implies
+    /// one exactly. Anything that is not a power-of-two range less one is left
+    /// unknown rather than rounded to the nearest plausible depth.
+    /// </summary>
+    private int? TryGetBitDepth()
+    {
+        int maxAdu;
+        try
+        {
+            maxAdu = (int)_camera.MaxADU;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+
+        if (maxAdu <= 0)
+        {
+            return null;
+        }
+
+        long range = (long)maxAdu + 1;
+        if ((range & (range - 1)) != 0)
+        {
+            // Not a power of two: some drivers report a saturation level rather
+            // than a data range, and that says nothing about the bit depth.
+            return null;
+        }
+
+        int bits = System.Numerics.BitOperations.TrailingZeroCount((ulong)range);
+        return bits is >= 8 and <= 32 ? bits : null;
+    }
+
     public int SensorWidthPixels
     {
         get

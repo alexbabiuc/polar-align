@@ -340,6 +340,68 @@ as +27.0′ ± 0.2′ altitude and −19.0′ ± 0.3′ azimuth against an injec
 −19.0. The commanded declination visibly moves 9′ across the sweep while the
 mechanical declination is held constant, which is D16 doing its job.
 
+### Phase 4c — Seeing the frame, and choosing the readout
+
+- **The captured frame is displayed**, with an automatic stretch and a brightness
+  slider. The stretch is not a nicety: a faithful rendering of a real exposure
+  averages under 6/255 — measured — because the sky sits a few hundred ADU above
+  bias while the stars reach forty thousand. The transform is the standard
+  midtone transfer function placed from the median and the median absolute
+  deviation, both robust against the stars, which here are the outliers rather
+  than the signal. The midtone is solved in closed form rather than searched.
+- **The frame is published before the solve is attempted**, so a frame the
+  solver could not make sense of is on screen while the user reads why. "No
+  stars detected" is answered by looking at the picture; a lens cap, cloud, wild
+  defocus and a tracking runaway are all obvious there and none of them are
+  distinguishable from the message.
+- **Decimation takes the brightest pixel per block, not the average.** A star two
+  pixels across, decimated by four, survives max-pooling, is diluted eightfold
+  by averaging, and is missed entirely by subsampling. Since the commonest
+  reason to look at the preview is "are there stars in this at all", losing them
+  to the resize would defeat it.
+- **Readout mode selection**, where the driver offers a choice. The simulated
+  camera offers a genuine one: eight-bit really is written as BITPIX 8 with the
+  frame quantised to 256 levels, so the cost of choosing it shows up in the data
+  rather than only in the menu. Verified end to end — both depths solve, and
+  both recover the injected misalignment (16-bit: 26.85′/−18.79′; 8-bit:
+  26.96′/−18.94′; injected 27.0/−19.0).
+- Bit depth is reported only when the driver actually reveals it. ASCOM exposes
+  readout modes as opaque names, so the depth is derived from `MaxADU` where
+  that is an exact power of two and left **unknown** otherwise. Matching on the
+  mode's name was the obvious alternative and is rejected: a substring match on
+  "8" reads "8-bit" correctly and "ADC 8x binned" wrongly, with no way to tell
+  which happened, and a wrong depth is worse than an unknown one because the
+  depth is what decides how far a centroid can be trusted.
+
+**A bug the eight-bit mode exposed immediately.** The stretch normalised from
+the darkest pixel present. At eight bits the noise quantises away entirely —
+measured, a background of 600 ADU and 9 ADU of noise become level 2 with a
+median absolute deviation of exactly **zero** — so the background *is* the
+darkest value in the frame, which normalisation put at zero, and the transfer
+function fixes zero at zero. The frame rendered black however far the slider was
+dragged. It now normalises from the origin rather than the observed minimum,
+which keeps the background strictly positive whenever it is.
+
+### Known fragility: the end-to-end tests depend on the wall clock
+
+Found while chasing the above. `DeviceLostMidSequence_LeavesARecoverableSession`
+began failing on a *solve*, and failed identically at the previous commit — so
+it is not a regression but a standing flake.
+
+The mechanism: a sequence's target is derived from the current sidereal time, so
+which patch of sky it walks across depends on the hour the suite is run. The
+committed sample catalogue is a magnitude-limited subset, so the rendered frame
+is an incomplete version of what the real quad database expects, and matching
+succeeds in some parts of that band and fails in others. The frames were fine —
+246 stars detected — and Watney simply found no matching quad.
+
+The recovery test has been narrowed to assert what it is actually about: that a
+reconnected session starts and captures again rather than finding the engine
+wedged. Requiring a full six-point solution imported the solver's reliability
+into a test named after a pulled cable. The convergence tests remain exposed,
+and the proper fix is a clock the session can be given, which would also make
+D16's just-in-time resolve testable at chosen instants. Not done yet.
+
 **Still outstanding:** the correction reticle (D12) remains a placeholder, and
 the window's own rendering is still only verified by having been looked at.
 

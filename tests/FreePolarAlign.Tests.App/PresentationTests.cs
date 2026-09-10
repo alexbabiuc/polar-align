@@ -519,4 +519,137 @@ public class PresentationTests
         Assert.Equal(1023.4, state.FocalLengthMillimetres);
         Assert.True(state.IsFocalLengthSolved);
     }
+
+    // ---- The captured frame ----
+
+    /// <summary>
+    /// The frame stays on screen when the solve that followed it failed. That is
+    /// the case the preview exists for: "no stars detected" is answered by
+    /// looking at the picture, not by re-reading the message.
+    /// </summary>
+    [Fact]
+    public void AFrameSurvivesTheFailureOfTheSolveThatFollowedIt()
+    {
+        UiState state = After(
+            Fresh(),
+            new FrameCapturedEvent(1, "/tmp/capture-0001.fits", DateTime.UtcNow, TimeSpan.FromSeconds(2)),
+            new CaptureFailedEvent(1, "Could not solve (NoStarsDetected).", WillRetry: true));
+
+        Assert.Equal("/tmp/capture-0001.fits", state.LatestFramePath);
+        Assert.Equal(1, state.LatestFrameIndex);
+        Assert.NotNull(state.CaptureWarning);
+    }
+
+    /// <summary>
+    /// The frame path is logged. It is the only way to find the image again
+    /// afterwards, and "which frame was point 3" is the first question anyone
+    /// asks about a sequence that went wrong.
+    /// </summary>
+    [Fact]
+    public void TheFramePathIsLogged_SoTheImageCanBeFoundAgain()
+    {
+        UiState state = After(
+            Fresh(),
+            new FrameCapturedEvent(3, "/tmp/fpa/capture-0003.fits", DateTime.UtcNow, TimeSpan.FromSeconds(2)));
+
+        Assert.Contains(state.Log, entry => entry.Contains("capture-0003.fits", StringComparison.Ordinal));
+    }
+
+    // ---- Readout modes ----
+
+    /// <summary>
+    /// A camera offering no readout modes leaves the list empty, so the UI can
+    /// hide the picker rather than present a menu of one.
+    /// </summary>
+    [Fact]
+    public void ACameraWithOneReadout_OffersNoChoice()
+    {
+        UiState state = After(Fresh(), new DeviceConnectedEvent(
+            DeviceKind.Camera, "ASCOM", "cam", "Camera", "driver", new CameraDescription(3.76, 100, 100)));
+
+        Assert.Empty(state.ReadoutModes);
+        Assert.Null(state.ReadoutModeIndex);
+    }
+
+    [Fact]
+    public void ReadoutModesAndTheActiveOne_AreReportedOnConnect()
+    {
+        UiState state = After(Fresh(), new DeviceConnectedEvent(
+            DeviceKind.Camera, "Simulator", "sim-camera", "Simulated Camera", "driver",
+            new CameraDescription(
+                3.8, 2737, 2053,
+                new[]
+                {
+                    new CameraReadoutModeDescription(0, "High dynamic range", 16),
+                    new CameraReadoutModeDescription(1, "Fast", 8),
+                },
+                ReadoutModeIndex: 0)));
+
+        Assert.Equal(2, state.ReadoutModes.Count);
+        Assert.Equal(0, state.ReadoutModeIndex);
+    }
+
+    /// <summary>
+    /// The index moves only when the camera confirms it, so the picker cannot
+    /// sit showing a mode the driver refused -- which would leave the user
+    /// believing they are reading out at a depth they are not.
+    /// </summary>
+    [Fact]
+    public void TheActiveModeFollowsTheCamerasConfirmation()
+    {
+        UiState state = After(
+            Fresh(),
+            new DeviceConnectedEvent(
+                DeviceKind.Camera, "Simulator", "sim-camera", "Simulated Camera", "driver",
+                new CameraDescription(
+                    3.8, 2737, 2053,
+                    new[]
+                    {
+                        new CameraReadoutModeDescription(0, "High dynamic range", 16),
+                        new CameraReadoutModeDescription(1, "Fast", 8),
+                    },
+                    ReadoutModeIndex: 0)),
+            new ReadoutModeChangedEvent(1, "Fast", 8));
+
+        Assert.Equal(1, state.ReadoutModeIndex);
+        Assert.Contains("8-bit", state.StatusMessage, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A driver that will not say the bit depth reads as a bare name rather than
+    /// a guessed depth. A wrong depth is worse than an unknown one, because the
+    /// depth is what decides how far a centroid can be trusted.
+    /// </summary>
+    [Fact]
+    public void AModeWithNoKnownBitDepth_DoesNotClaimOne()
+    {
+        var withDepth = new CameraReadoutModeDescription(0, "Mode A", 16);
+        var withoutDepth = new CameraReadoutModeDescription(1, "Mode B");
+
+        Assert.Contains("16-bit", withDepth.Label, StringComparison.Ordinal);
+        Assert.Equal("Mode B", withoutDepth.Label);
+        Assert.DoesNotContain("bit", withoutDepth.Label, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Disconnecting clears the mode list with the camera. A list left over from
+    /// a device that is no longer attached would let a selection be sent to
+    /// whatever connects next, where the same index means something else.
+    /// </summary>
+    [Fact]
+    public void DisconnectingACamera_ClearsItsReadoutModes()
+    {
+        UiState state = After(
+            Fresh(),
+            new DeviceConnectedEvent(
+                DeviceKind.Camera, "Simulator", "sim-camera", "Simulated Camera", "driver",
+                new CameraDescription(
+                    3.8, 2737, 2053,
+                    new[] { new CameraReadoutModeDescription(0, "Fast", 8) },
+                    ReadoutModeIndex: 0)),
+            new DeviceDisconnectedEvent(DeviceKind.Camera));
+
+        Assert.Empty(state.ReadoutModes);
+        Assert.Null(state.ReadoutModeIndex);
+    }
 }

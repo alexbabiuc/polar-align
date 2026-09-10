@@ -45,6 +45,14 @@ public sealed record AppSettings
     /// </summary>
     public bool IsFocalLengthSolved { get; init; }
 
+    /// <summary>
+    /// The camera readout mode last chosen, by index. Remembered because it is a
+    /// deliberate trade the user made -- speed against bit depth -- and having
+    /// it silently revert to the driver's default between sessions would change
+    /// the data without changing anything on screen.
+    /// </summary>
+    public int? ReadoutModeIndex { get; init; }
+
     public string? CameraProviderName { get; init; }
 
     public string? CameraDeviceId { get; init; }

@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:FreePolarAlign.App.ViewModels"
         xmlns:devices="using:FreePolarAlign.Devices"
+        xmlns:engine="using:FreePolarAlign.Core.Engine"
         x:Class="FreePolarAlign.App.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="free-polar-align"
@@ -72,6 +73,27 @@
               <TextBlock Classes="value" Text="{Binding CameraSummary}" />
               <TextBlock Classes="label" Text="Sensor" />
               <TextBlock Classes="value" Text="{Binding CameraPixelText}" />
+
+              <!--
+                Only shown when the driver offers a genuine choice. Most cameras
+                have one readout, and a menu of one implies a decision the user
+                does not have to make.
+              -->
+              <StackPanel Spacing="4" IsVisible="{Binding HasReadoutModes}">
+                <TextBlock Classes="label" Text="Readout mode" />
+                <ComboBox ItemsSource="{Binding ReadoutModes}"
+                          SelectedItem="{Binding SelectedReadoutMode, Mode=TwoWay}"
+                          HorizontalAlignment="Stretch"
+                          IsEnabled="{Binding !IsSessionActive}">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="engine:CameraReadoutModeDescription">
+                      <TextBlock Text="{Binding Label}" />
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+                <TextBlock Classes="label" TextWrapping="Wrap"
+                           Text="Fewer bits read out faster but quantise the frame more coarsely, which limits how precisely a star's centre can be measured." />
+              </StackPanel>
             </StackPanel>
           </Border>
 
@@ -221,16 +243,44 @@
         </Border>
 
         <!--
-          Reticle placeholder. The correction reticle and its CD-matrix-derived
-          parity (D12) are still outstanding; nothing here guesses a direction,
-          because an arrow pointing the wrong way is worse than no arrow.
+          The captured frame. A linear rendering of an astronomical exposure is a
+          black rectangle, so the default is a stretched view and the slider says
+          so; nothing measured is computed from these pixels.
         -->
         <Border Grid.Row="1" Classes="panel">
-          <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="6">
-            <TextBlock Classes="h" Text="Correction reticle" HorizontalAlignment="Center" />
-            <TextBlock Classes="label" TextAlignment="Center" MaxWidth="280" TextWrapping="Wrap"
-                       Text="Not implemented yet. The arrow's direction has to come from the solved CD matrix (D12) rather than from the hemisphere, and pointing it the wrong way would be worse than leaving it out." />
-          </StackPanel>
+          <Grid RowDefinitions="Auto,*,Auto,Auto" RowSpacing="6">
+            <Grid Grid.Row="0" ColumnDefinitions="Auto,*">
+              <TextBlock Grid.Column="0" Classes="h" Text="Captured frame" VerticalAlignment="Center" />
+              <CheckBox Grid.Column="1" Content="Stretch" IsChecked="{Binding AutoStretch, Mode=TwoWay}"
+                        HorizontalAlignment="Right" />
+            </Grid>
+
+            <Border Grid.Row="1" Background="#0A0A0A" CornerRadius="3" MinHeight="220">
+              <Grid>
+                <Image Source="{Binding FramePreview}" Stretch="Uniform"
+                       IsVisible="{Binding HasFramePreview}" />
+                <TextBlock Text="No frame captured yet. The first capture appears here."
+                           Classes="label" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="260"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           IsVisible="{Binding !HasFramePreview}" />
+              </Grid>
+            </Border>
+
+            <StackPanel Grid.Row="2" Spacing="2" IsVisible="{Binding StretchEnabled}">
+              <TextBlock Classes="label" Text="Brightness — drag right to lift the sky background" />
+              <Slider Minimum="0.02" Maximum="0.85" Value="{Binding StretchTarget, Mode=TwoWay}"
+                      TickFrequency="0.01" IsSnapToTickEnabled="True" />
+            </StackPanel>
+
+            <StackPanel Grid.Row="3" Spacing="2">
+              <TextBlock Classes="label" Text="{Binding FramePreviewCaption}" TextWrapping="Wrap" />
+              <TextBlock Classes="label" Foreground="#FFB0B0" TextWrapping="Wrap"
+                         Text="{Binding FramePreviewProblem}"
+                         IsVisible="{Binding HasFramePreviewProblem}" />
+              <TextBlock Classes="label" TextWrapping="Wrap"
+                         Text="Correction reticle (D12) still to come: its direction has to be derived from the solved CD matrix, and an arrow pointing the wrong way would be worse than none." />
+            </StackPanel>
+          </Grid>
         </Border>
       </Grid>
 

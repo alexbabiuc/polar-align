@@ -1,13 +1,35 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>FreePolarAlign.App</RootNamespace>
     <AssemblyName>FreePolarAlign.App</AssemblyName>
+    <Nullable>enable</Nullable>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.2" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\FreePolarAlign.Session\FreePolarAlign.Session.csproj" />
+    <ProjectReference Include="..\FreePolarAlign.Devices.Simulated\FreePolarAlign.Devices.Simulated.csproj" />
+    <ProjectReference Include="..\FreePolarAlign.Solving\FreePolarAlign.Solving.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      D13's committed sample catalogue: the simulated observatory needs real
+      stars to render, and the test projects already copy this file the same
+      way (see FreePolarAlign.Tests.EndToEnd.csproj).
+    -->
+    <None Include="..\..\docs\fixtures\tycho2_subset.csv" Link="fixtures\tycho2_subset.csv" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,122 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FreePolarAlign.App.ViewModels"
+        x:Class="FreePolarAlign.App.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="free-polar-align"
+        Width="1100" Height="720" MinWidth="900" MinHeight="600">
+
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="12">
+
+    <!-- Standing install-level warning (e.g. missing quad database, D13). Always visible while it applies — never folded into the transient status line. -->
+    <Border Grid.Row="0" Background="#553A1A" BorderBrush="#B8860B" BorderThickness="1" CornerRadius="4" Padding="10"
+            Margin="0,0,0,8" IsVisible="{Binding StartupWarning, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <TextBlock Text="{Binding StartupWarning}" TextWrapping="Wrap" Foreground="#FFE9B0" />
+    </Border>
+
+    <!-- Transient status line, reconstructed entirely from the engine's event stream (D6). -->
+    <Border Grid.Row="1" Background="#1E1E1E" CornerRadius="4" Padding="8" Margin="0,0,0,8">
+      <TextBlock Text="{Binding StatusMessage}" Foreground="White" FontWeight="SemiBold" />
+    </Border>
+
+    <Grid Grid.Row="2" ColumnDefinitions="380,*,320" ColumnSpacing="12">
+
+      <!-- Numeric readouts. The actual figures stay on screen unconditionally,
+           including after a successful (below-threshold) session, per the roadmap. -->
+      <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="14">
+        <StackPanel Spacing="10">
+          <TextBlock Text="Alignment estimate" FontSize="18" FontWeight="Bold" />
+          <TextBlock Text="{Binding HemisphereText, StringFormat='{}{0} hemisphere site'}" Foreground="Gray" FontSize="12" />
+
+          <Border Background="#28304A" CornerRadius="4" Padding="10">
+            <StackPanel Spacing="4">
+              <TextBlock Text="Total error (success is judged on this figure alone)" FontSize="12" Foreground="LightGray" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding TotalErrorText}" FontSize="30" FontWeight="Bold" />
+              <Border Background="#1F6F3F" CornerRadius="3" Padding="6,3" HorizontalAlignment="Left"
+                      IsVisible="{Binding IsGoodEnoughToStop}">
+                <TextBlock Text="Good enough to stop turning bolts (below 10')" Foreground="White" FontSize="12" />
+              </Border>
+            </StackPanel>
+          </Border>
+
+          <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="2">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Altitude error" Foreground="LightGray" FontSize="12" />
+            <TextBlock Grid.Row="0" Grid.Column="1" Text="Azimuth error" Foreground="LightGray" FontSize="12" />
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding AltitudeErrorText}" FontSize="20" />
+            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding AzimuthErrorText}" FontSize="20" />
+          </Grid>
+
+          <StackPanel Spacing="2">
+            <TextBlock Text="Residual RMS (fit health)" Foreground="LightGray" FontSize="12" />
+            <TextBlock Text="{Binding ResidualRmsText}" FontSize="16" />
+          </StackPanel>
+
+          <TextBlock Text="{Binding ProgressText}" Foreground="Gray" FontSize="12" />
+        </StackPanel>
+      </Border>
+
+      <!-- Reticle placeholder. Deliberately not implemented here: the
+           correction reticle and its CD-matrix-derived parity (D12) are a
+           separate, concurrently-developed piece and are explicitly out of
+           scope for this UI shell. -->
+      <Border Grid.Column="1" BorderBrush="Gray" BorderThickness="1" CornerRadius="4">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="6">
+          <TextBlock Text="Correction reticle" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" />
+          <TextBlock Text="Placeholder -- CD-matrix-derived parity and arrow (D12) land here in a follow-up."
+                     Foreground="Gray" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="240" />
+        </StackPanel>
+      </Border>
+
+      <!-- Withheld / faulted / manual-action banners. Mutually exclusive in practice, per EngineEventReducer. -->
+      <StackPanel Grid.Column="2" Spacing="10">
+
+        <Border Background="#5A1E1E" BorderBrush="#B33A3A" BorderThickness="1" CornerRadius="4" Padding="10"
+                IsVisible="{Binding HasWithheldReason}">
+          <StackPanel Spacing="4">
+            <TextBlock Text="RESULT WITHHELD" FontWeight="Bold" Foreground="#FFB0B0" />
+            <TextBlock Text="{Binding WithheldReason}" TextWrapping="Wrap" Foreground="#FFDADA" />
+          </StackPanel>
+        </Border>
+
+        <Border Background="#5A1E1E" BorderBrush="#B33A3A" BorderThickness="1" CornerRadius="4" Padding="10"
+                IsVisible="{Binding HasFaultReason}">
+          <StackPanel Spacing="4">
+            <TextBlock Text="SESSION FAULTED" FontWeight="Bold" Foreground="#FFB0B0" />
+            <TextBlock Text="{Binding FaultReason}" TextWrapping="Wrap" Foreground="#FFDADA" />
+          </StackPanel>
+        </Border>
+
+        <Border Background="#5A4A1E" BorderBrush="#B3943A" BorderThickness="1" CornerRadius="4" Padding="10"
+                IsVisible="{Binding HasCaptureWarning}">
+          <StackPanel Spacing="4">
+            <TextBlock Text="CAPTURE FAILED" FontWeight="Bold" Foreground="#FFE0A0" />
+            <TextBlock Text="{Binding CaptureWarning}" TextWrapping="Wrap" Foreground="#FFEFCB" />
+          </StackPanel>
+        </Border>
+
+        <Border Background="#1E3A5A" BorderBrush="#3A7AB3" BorderThickness="1" CornerRadius="4" Padding="10"
+                IsVisible="{Binding HasManualInstruction}">
+          <StackPanel Spacing="8">
+            <TextBlock Text="MANUAL ACTION REQUIRED" FontWeight="Bold" Foreground="#B0D8FF" />
+            <TextBlock Text="{Binding ManualInstruction}" TextWrapping="Wrap" Foreground="#DCEFFF" />
+            <Button Content="Continue" Command="{Binding CaptureNextCommand}" HorizontalAlignment="Left" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </Grid>
+
+    <!-- Commands (D6: buttons only ever send EngineCommands) and the event/status log. -->
+    <Grid Grid.Row="3" RowDefinitions="Auto,150" Margin="0,10,0,0" RowSpacing="6">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <Button Content="Start session" Command="{Binding StartCommand}" />
+        <Button Content="Capture next point" Command="{Binding CaptureNextCommand}" />
+        <Button Content="Cancel" Command="{Binding CancelCommand}" />
+        <Button Content="Abort" Command="{Binding AbortCommand}" Background="#5A1E1E" />
+      </StackPanel>
+
+      <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="4">
+        <ListBox ItemsSource="{Binding Log}" Background="#101010" FontFamily="monospace" FontSize="12" />
+      </Border>
+    </Grid>
+  </Grid>
+</Window>

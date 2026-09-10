@@ -91,6 +91,17 @@ public static class EngineEventNarrator
                     $"Dec {CoordinateText.FormatDeclination(e.DecDegrees)}",
                     $"{(e.WasOverridden ? " (coordinates overridden by the operator)." : ".")}")),
 
+            // The path is logged because it is the only way to find the frame
+            // again afterwards, and "which image was point 3" is the first
+            // question anyone asks about a sequence that went wrong.
+            FrameCapturedEvent e => Info(Inv(
+                $"Frame {e.PointIndex} exposed for {e.Duration.TotalSeconds:F1} s ",
+                $"(midpoint {e.ExposureMidpointUtc:yyyy-MM-dd HH:mm:ss}Z): {e.FitsPath}")),
+
+            ReadoutModeChangedEvent e => Info(e.BitDepth is { } bits
+                ? $"Readout mode set to '{e.Name}' ({bits}-bit)."
+                : $"Readout mode set to '{e.Name}'. The driver does not report a bit depth."),
+
             PointCapturedEvent e => Info(Inv(
                 $"Point {e.Point.Index} solved: RA {CoordinateText.FormatRightAscension(e.Point.RaDegrees)}, ",
                 $"Dec {CoordinateText.FormatDeclination(e.Point.DecDegrees)}, ",

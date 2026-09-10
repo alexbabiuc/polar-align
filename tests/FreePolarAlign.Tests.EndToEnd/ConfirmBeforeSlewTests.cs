@@ -3,6 +3,7 @@ using FreePolarAlign.Core.Astrometry;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Devices;
 using FreePolarAlign.Devices.Simulated;
+using FreePolarAlign.Devices.Simulated.SyntheticSky;
 using FreePolarAlign.Session;
 using FreePolarAlign.Solving;
 using Xunit;
@@ -92,6 +93,14 @@ public class ConfirmBeforeSlewTests
         public bool IsConnected { get; private set; }
 
         public int Exposures { get; private set; }
+
+        /// <summary>No modes, which is the common case for a real camera and the one worth exercising by default.</summary>
+        public IReadOnlyList<CameraReadoutMode> ReadoutModes => Array.Empty<CameraReadoutMode>();
+
+        public int? ReadoutModeIndex => null;
+
+        public Task SetReadoutModeAsync(int index, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("This stub camera has no selectable readout modes.");
 
         public Task ConnectAsync(CancellationToken cancellationToken = default)
         {
@@ -619,6 +628,171 @@ public class ConfirmBeforeSlewTests
         await session.SendAsync(new RefreshMountStatusCommand());
 
         Assert.Equal(MountTrackingState.Stopped, recorder.Last<MountStatusEvent>()!.Tracking);
+    }
+
+    // ---- The captured frame ----
+
+    /// <summary>
+    /// The frame is announced before the solve is attempted. A user whose solve
+    /// has just failed needs the image, because "no stars detected" is answered
+    /// by looking at it -- a lens cap, cloud, wild defocus and a tracking runaway
+    /// are all obvious in the picture and none are distinguishable from the
+    /// message.
+    /// </summary>
+    [Fact]
+    public async Task TheFrameIsAnnouncedBeforeTheSolveIsAttempted()
+    {
+        using var harness = new Harness();
+        await harness.ReadyAsync();
+
+        await harness.Session.SendAsync(new CaptureNextPointCommand());
+
+        int frameAt = harness.Recorder.Events.FindIndex(e => e is FrameCapturedEvent);
+        int solvedAt = harness.Recorder.Events.FindIndex(e => e is PointCapturedEvent);
+
+        Assert.True(frameAt >= 0, harness.Recorder.Trail());
+        Assert.True(frameAt < solvedAt, "the frame must be available before the solve resolves it");
+        Assert.Equal(1, harness.Recorder.Last<FrameCapturedEvent>()!.PointIndex);
+    }
+
+    /// <summary>
+    /// And it is announced even when the solve fails, which is the case it
+    /// exists for.
+    /// </summary>
+    [Fact]
+    public async Task AFailedSolve_StillLeavesTheFrameAvailable()
+    {
+        var options = new SimulatedMountOptions(Site, new MountMisalignment(30.0, -25.0));
+        var simulated = new SimulatedMount(options);
+        var mount = new RecordingMount(simulated);
+        var camera = new StubCamera();
+
+        using var session = new AlignmentSession(camera, mount, new HopelessSolver());
+        var recorder = new Recorder();
+        using IDisposable subscription = session.Events.Subscribe(recorder);
+
+        await session.SendAsync(new ConnectDeviceCommand(
+            DeviceKind.Camera, AlignmentSession.AttachedProviderName, "camera"));
+        await session.SendAsync(new ConnectDeviceCommand(
+            DeviceKind.Mount, AlignmentSession.AttachedProviderName, "mount"));
+        await session.SendAsync(new ConfigureSiteCommand(
+            Site.LatitudeDegrees, Site.LongitudeDegrees, Site.HeightMeters));
+        await session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 60.0, TimeSpan.FromSeconds(1))));
+
+        await session.SendAsync(new CaptureNextPointCommand());
+
+        Assert.NotNull(recorder.Last<FrameCapturedEvent>());
+        Assert.NotNull(recorder.Last<CaptureFailedEvent>());
+        Assert.Null(recorder.Last<PointCapturedEvent>());
+    }
+
+    /// <summary>A solver that never matches anything, for the failure path.</summary>
+    private sealed class HopelessSolver : ISolver
+    {
+        public string Name => "Hopeless (test)";
+
+        public Task<PlateSolveResult> SolveAsync(PlateSolveRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(PlateSolveResult.Failed(
+                PlateSolveFailureReason.NoStarsDetected, "No stars were detected in the image."));
+    }
+
+    // ---- Readout modes ----
+
+    /// <summary>
+    /// A camera that offers no readout modes refuses a selection rather than
+    /// pretending to have made one. Most cameras are in this position, and a
+    /// silently ignored setting is the worst outcome: the user believes they are
+    /// reading out at sixteen bits and has no way to find out otherwise.
+    /// </summary>
+    [Fact]
+    public async Task ACameraWithNoReadoutModes_RefusesASelection()
+    {
+        using var harness = new Harness();
+        await harness.ConnectAsync();
+
+        await harness.Session.SendAsync(new SetReadoutModeCommand(1));
+
+        Assert.True(harness.Recorder.Last<CommandRejectedEvent>() is not null, harness.Recorder.Trail());
+        Assert.Null(harness.Recorder.Last<ReadoutModeChangedEvent>());
+    }
+
+    /// <summary>
+    /// The mode cannot be changed part-way through a sequence. The frames already
+    /// captured were read out differently, and the fit weights every observation
+    /// alike -- so mixing depths would quietly degrade the answer by an amount
+    /// nothing reports.
+    /// </summary>
+    [Fact]
+    public async Task ChangingTheReadoutModeMidSequence_IsRefused()
+    {
+        var options = new SimulatedMountOptions(Site, new MountMisalignment(30.0, -25.0));
+        var simulated = new SimulatedMount(options);
+        var mount = new RecordingMount(simulated);
+
+        // The simulated camera has real readout modes, so this exercises the
+        // mid-sequence guard rather than the no-modes one.
+        var provider = new SimulatedDeviceProvider(
+            StarCatalog.LoadCsv(CatalogPath), options);
+
+        using ICamera camera = provider.OpenCamera("sim-camera");
+        using var session = new AlignmentSession(camera, mount, new PerfectSolver(simulated));
+        var recorder = new Recorder();
+        using IDisposable subscription = session.Events.Subscribe(recorder);
+
+        await session.SendAsync(new ConnectDeviceCommand(
+            DeviceKind.Camera, AlignmentSession.AttachedProviderName, "camera"));
+        await session.SendAsync(new ConnectDeviceCommand(
+            DeviceKind.Mount, AlignmentSession.AttachedProviderName, "mount"));
+
+        // Before a sequence: accepted.
+        await session.SendAsync(new SetReadoutModeCommand(1));
+        Assert.Equal(8, recorder.Last<ReadoutModeChangedEvent>()!.BitDepth);
+
+        await session.SendAsync(new ConfigureSiteCommand(
+            Site.LatitudeDegrees, Site.LongitudeDegrees, Site.HeightMeters));
+        await session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 60.0, TimeSpan.FromSeconds(1))));
+
+        // During one: refused.
+        await session.SendAsync(new SetReadoutModeCommand(0));
+
+        CommandRejectedEvent? rejected = recorder.Last<CommandRejectedEvent>();
+        Assert.True(rejected is not null, recorder.Trail());
+        Assert.Contains("sequence", rejected!.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(8, recorder.Last<ReadoutModeChangedEvent>()!.BitDepth);
+    }
+
+    private static string CatalogPath =>
+        Path.Combine(AppContext.BaseDirectory, "fixtures", "tycho2_subset.csv");
+
+    /// <summary>
+    /// The camera reports its readout modes on connect, so the UI can offer them
+    /// without a second round trip.
+    /// </summary>
+    [Fact]
+    public async Task ConnectingReportsTheAvailableReadoutModes()
+    {
+        var options = new SimulatedMountOptions(Site, new MountMisalignment(10.0, 10.0));
+        var provider = new SimulatedDeviceProvider(StarCatalog.LoadCsv(CatalogPath), options);
+
+        using ICamera camera = provider.OpenCamera("sim-camera");
+        using IMount mount = provider.OpenMount("sim-mount");
+        using var session = new AlignmentSession(camera, mount, new PerfectSolver(provider.MountInstance));
+
+        var recorder = new Recorder();
+        using IDisposable subscription = session.Events.Subscribe(recorder);
+
+        await session.SendAsync(new ConnectDeviceCommand(
+            DeviceKind.Camera, AlignmentSession.AttachedProviderName, "camera"));
+
+        CameraDescription? description = recorder.Last<DeviceConnectedEvent>()!.Camera;
+        Assert.NotNull(description);
+        Assert.Equal(2, description!.ReadoutModes!.Count);
+        Assert.Contains(description.ReadoutModes, m => m.BitDepth == 16);
+        Assert.Contains(description.ReadoutModes, m => m.BitDepth == 8);
+
+        // The label carries the depth, since that is the part of the choice that
+        // has consequences.
+        Assert.All(description.ReadoutModes, m => Assert.Contains("-bit", m.Label, StringComparison.Ordinal));
     }
 
     // ---- Site disagreement ----

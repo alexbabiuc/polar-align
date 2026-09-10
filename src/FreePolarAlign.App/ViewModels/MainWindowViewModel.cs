@@ -58,6 +58,15 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     /// </summary>
     private bool _statusPollInFlight;
 
+    private CameraReadoutModeDescription? _selectedReadoutMode;
+    private double _stretchTarget = Imaging.Display.ImageStretch.DefaultTargetBackground;
+    private bool _autoStretch = true;
+    private Avalonia.Media.Imaging.Bitmap? _framePreview;
+    private string? _framePreviewProblem;
+    private string _framePreviewCaption = "No frame captured yet.";
+    private string? _loadedFramePath;
+    private int _loadedFrameIndex;
+
     public MainWindowViewModel(
         IAlignmentEngine? engine,
         DeviceCatalog? catalog,
@@ -315,6 +324,102 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     public bool HasEntryError => EntryError is not null;
+
+    /// <summary>
+    /// The readout mode the user has picked. Setting it sends the command; the
+    /// engine confirms with its own event, and only that event moves
+    /// <see cref="UiState.ReadoutModeIndex"/>. So the picker never claims a mode
+    /// the camera has not actually accepted.
+    /// </summary>
+    public CameraReadoutModeDescription? SelectedReadoutMode
+    {
+        get => _selectedReadoutMode;
+        set
+        {
+            if (!SetField(ref _selectedReadoutMode, value))
+            {
+                return;
+            }
+
+            if (value is not null && value.Index != State.ReadoutModeIndex)
+            {
+                _ = SendAsync(new SetReadoutModeCommand(value.Index));
+            }
+        }
+    }
+
+    public IReadOnlyList<CameraReadoutModeDescription> ReadoutModes => State.ReadoutModes;
+
+    /// <summary>
+    /// True when the driver offers a genuine choice. A camera with one readout
+    /// shows nothing here rather than a menu of one.
+    /// </summary>
+    public bool HasReadoutModes => State.ReadoutModes.Count > 0;
+
+    /// <summary>
+    /// Where the sky background is placed in the preview, from nearly black to
+    /// nearly white. This is the "make it lighter" control, and it changes only
+    /// what is displayed -- nothing measured is computed from the preview.
+    /// </summary>
+    public double StretchTarget
+    {
+        get => _stretchTarget;
+        set
+        {
+            if (SetField(ref _stretchTarget, value))
+            {
+                ReloadFramePreview();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Off shows the frame as captured, which almost always looks black. Offered
+    /// so a user can see what the stretch is doing rather than wonder whether
+    /// the image has been altered in some way that matters.
+    /// </summary>
+    public bool AutoStretch
+    {
+        get => _autoStretch;
+        set
+        {
+            if (SetField(ref _autoStretch, value))
+            {
+                OnPropertyChanged(nameof(StretchEnabled));
+                ReloadFramePreview();
+            }
+        }
+    }
+
+    public bool StretchEnabled => _autoStretch;
+
+    public Avalonia.Media.Imaging.Bitmap? FramePreview
+    {
+        get => _framePreview;
+        private set => SetField(ref _framePreview, value);
+    }
+
+    public bool HasFramePreview => _framePreview is not null;
+
+    public string FramePreviewCaption
+    {
+        get => _framePreviewCaption;
+        private set => SetField(ref _framePreviewCaption, value);
+    }
+
+    public string? FramePreviewProblem
+    {
+        get => _framePreviewProblem;
+        private set
+        {
+            if (SetField(ref _framePreviewProblem, value))
+            {
+                OnPropertyChanged(nameof(HasFramePreviewProblem));
+            }
+        }
+    }
+
+    public bool HasFramePreviewProblem => _framePreviewProblem is not null;
 
     // ---- Derived display ----
 
@@ -646,8 +751,125 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
                 SeedProposalCoordinates(next.Proposal);
             }
 
+            if (engineEvent is FrameCapturedEvent frame)
+            {
+                _loadedFramePath = frame.FitsPath;
+                _loadedFrameIndex = frame.PointIndex;
+                LoadFramePreviewAsync(frame.FitsPath, frame.PointIndex, StretchTarget, AutoStretch);
+            }
+
+            // Kept in step with what the camera actually accepted, rather than
+            // with what was clicked. The picker follows the engine, so it cannot
+            // sit showing a mode the driver refused.
+            if (engineEvent is DeviceConnectedEvent { Kind: DeviceKind.Camera } or ReadoutModeChangedEvent)
+            {
+                _selectedReadoutMode = next.ReadoutModeIndex is { } index
+                    ? next.ReadoutModes.FirstOrDefault(m => m.Index == index)
+                    : null;
+
+                OnPropertyChanged(nameof(SelectedReadoutMode));
+                OnPropertyChanged(nameof(ReadoutModes));
+                OnPropertyChanged(nameof(HasReadoutModes));
+
+                // A remembered readout mode is re-applied on connect, because
+                // otherwise it would silently revert to the driver's default and
+                // change the data without changing anything on screen. Only when
+                // the camera still offers that mode -- a different camera may
+                // have a different list, and index 1 on one is not index 1 on
+                // another.
+                if (engineEvent is DeviceConnectedEvent &&
+                    _settings.ReadoutModeIndex is { } remembered &&
+                    remembered != next.ReadoutModeIndex &&
+                    next.ReadoutModes.Any(m => m.Index == remembered))
+                {
+                    _ = SendAsync(new SetReadoutModeCommand(remembered));
+                }
+            }
+
             Remember(engineEvent);
         });
+    }
+
+    /// <summary>
+    /// Reads the newest frame and stretches it, off the UI thread.
+    ///
+    /// Fire-and-forget, and deliberately not queued: if a new frame arrives, or
+    /// the user drags the stretch slider, the load in progress is for a picture
+    /// nobody is waiting for any more. The guard is the path-and-index pair
+    /// captured before the await -- when it no longer matches on the way back,
+    /// the result is dropped rather than shown, so dragging the slider cannot
+    /// leave an out-of-date image behind whichever load happens to finish last.
+    /// </summary>
+    private void ReloadFramePreview()
+    {
+        if (_loadedFramePath is not { } path)
+        {
+            return;
+        }
+
+        LoadFramePreviewAsync(path, _loadedFrameIndex, StretchTarget, AutoStretch);
+    }
+
+    private void LoadFramePreviewAsync(string path, int index, double target, bool autoStretch)
+    {
+        _ = Load();
+
+        async Task Load()
+        {
+            Services.FramePreview loaded;
+            try
+            {
+                loaded = await Services.FramePreviewLoader
+                    .LoadAsync(path, target, autoStretch).ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                loaded = new Services.FramePreview(null, null, 0, 0, 1, $"Could not build a preview: {ex.Message}");
+            }
+
+            _postToUiThread(() =>
+            {
+                // Superseded while it was loading.
+                if (_loadedFramePath != path ||
+                    !Equals(target, StretchTarget) ||
+                    autoStretch != AutoStretch)
+                {
+                    loaded.Bitmap?.Dispose();
+                    return;
+                }
+
+                FramePreview?.Dispose();
+                FramePreview = loaded.Bitmap;
+                FramePreviewProblem = loaded.Problem;
+                FramePreviewCaption = DescribeFrame(index, loaded);
+
+                OnPropertyChanged(nameof(HasFramePreview));
+            });
+        }
+    }
+
+    /// <summary>
+    /// The caption under the preview. It carries the background level and the
+    /// noise because those two numbers answer most of what a person is
+    /// squinting at the image to find out -- whether the exposure is long
+    /// enough, whether the sky is brightening, whether the frame is saturated.
+    /// </summary>
+    private static string DescribeFrame(int index, Services.FramePreview preview)
+    {
+        if (preview.Statistics is not { } statistics)
+        {
+            return $"Frame {index}";
+        }
+
+        string scale = preview.Decimation > 1
+            ? FormattableString.Invariant($"  ·  shown at 1/{preview.Decimation}")
+            : string.Empty;
+
+        return FormattableString.Invariant($"Frame {index}  ·  {preview.SourceWidth}×{preview.SourceHeight}") +
+               scale +
+               FormattableString.Invariant($"  ·  background {statistics.MedianAdu:F0} ADU") +
+               FormattableString.Invariant($"  ·  noise {statistics.MadAdu:F0} ADU") +
+               FormattableString.Invariant($"  ·  peak {statistics.MaximumAdu:F0} ADU");
     }
 
     private void SeedProposalCoordinates(ProposalView? proposal)
@@ -689,6 +911,8 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
                 FocalLengthMillimetres = e.FocalLengthMillimetres,
                 IsFocalLengthSolved = e.IsFocalLengthSolved,
             },
+
+            ReadoutModeChangedEvent e => _settings with { ReadoutModeIndex = e.Index },
 
             DeviceConnectedEvent { Kind: DeviceKind.Camera } e => _settings with
             {
@@ -808,6 +1032,8 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(FaultReason),
         nameof(HasCaptureWarning),
         nameof(CaptureWarning),
+        nameof(ReadoutModes),
+        nameof(HasReadoutModes),
         nameof(HasRejectionReason),
         nameof(RejectionReason),
         nameof(HasManualInstruction),
@@ -815,5 +1041,9 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(Log),
     };
 
-    public void Dispose() => _subscription?.Dispose();
+    public void Dispose()
+    {
+        _subscription?.Dispose();
+        _framePreview?.Dispose();
+    }
 }

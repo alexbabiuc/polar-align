@@ -38,6 +38,7 @@ public sealed class SimulatedCamera : ICamera
     private readonly AtmosphericConditions _atmosphere;
     private readonly string _workingDirectory;
     private int _exposureCount;
+    private int _readoutModeIndex;
 
     public SimulatedCamera(SimulatedMount mount, StarCatalog catalog, SimulatedCameraOptions options, string? workingDirectory = null)
     {
@@ -65,6 +66,35 @@ public sealed class SimulatedCamera : ICamera
     public double PixelSizeMicrons => Options.PixelSizeMicrons;
 
     public bool IsConnected { get; private set; }
+
+    /// <summary>
+    /// Two genuinely different readouts, not labels. Sixteen bits is what the
+    /// renderer produces; eight really does quantise the frame to 256 levels and
+    /// write it as such, so the cost of choosing it -- coarser centroids, and a
+    /// sky background that may collapse into one or two levels on a short
+    /// exposure -- shows up in the measurement rather than only in the menu.
+    /// </summary>
+    public IReadOnlyList<CameraReadoutMode> ReadoutModes { get; } = new[]
+    {
+        new CameraReadoutMode(0, "High dynamic range", 16),
+        new CameraReadoutMode(1, "Fast", 8),
+    };
+
+    public int? ReadoutModeIndex => _readoutModeIndex;
+
+    public Task SetReadoutModeAsync(int index, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (index < 0 || index >= ReadoutModes.Count)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(index), index, $"This camera has {ReadoutModes.Count} readout modes.");
+        }
+
+        _readoutModeIndex = index;
+        return Task.CompletedTask;
+    }
 
     /// <summary>Simulates the camera dropping off the bus mid-sequence.</summary>
     public void SimulateDisconnection() => IsConnected = false;
@@ -124,7 +154,7 @@ public sealed class SimulatedCamera : ICamera
             _catalog, trueWcs, Options.WidthPixels, Options.HeightPixels, _conditions,
             new Random(Options.RandomSeed + Interlocked.Increment(ref _exposureCount)));
 
-        FitsImage frame = WithoutPlateSolution(rendered, duration);
+        FitsImage frame = WithoutPlateSolution(AtReadoutDepth(rendered), duration);
 
         string path = Path.Combine(_workingDirectory, $"capture-{_exposureCount:D4}.fits");
         FitsFile.Write(path, frame);
@@ -137,6 +167,42 @@ public sealed class SimulatedCamera : ICamera
     /// would be handing the solver the answer, and every solve in the project's
     /// test suite would be meaningless.
     /// </summary>
+    /// <summary>
+    /// Requantises the rendered frame to the selected readout depth.
+    ///
+    /// Written as genuine eight-bit data rather than eight-bit values in a
+    /// sixteen-bit container, because the point of offering the mode is to be
+    /// able to find out what it costs -- and one of the things it can cost is a
+    /// solver or a header reader that handles the narrower format badly.
+    /// </summary>
+    private FitsImage AtReadoutDepth(FitsImage rendered)
+    {
+        CameraReadoutMode mode = ReadoutModes[_readoutModeIndex];
+        if (mode.BitDepth is not 8)
+        {
+            return rendered;
+        }
+
+        // The renderer works in the full sixteen-bit well, so the whole range
+        // maps onto 256 levels. That is what a camera switching to an eight-bit
+        // readout does: the well is unchanged and the steps between levels get
+        // 257 times coarser.
+        const double LevelsPerStep = 65535.0 / 255.0;
+
+        var quantised = new double[rendered.Height, rendered.Width];
+        for (int y = 0; y < rendered.Height; y++)
+        {
+            for (int x = 0; x < rendered.Width; x++)
+            {
+                quantised[y, x] = Math.Clamp(Math.Round(rendered.Pixels[y, x] / LevelsPerStep), 0.0, 255.0);
+            }
+        }
+
+        return new FitsImage(
+            rendered.Width, rendered.Height, FitsBitPix.Byte,
+            bzero: 0.0, bscale: 1.0, quantised, rendered.ExtraHeader);
+    }
+
     private static FitsImage WithoutPlateSolution(FitsImage rendered, TimeSpan duration)
     {
         var header = new FitsHeader();

@@ -1003,6 +1003,16 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             // since a capture taken without motion was never asked anything.
             MountPosition position = await _mount!.GetPositionAsync(cancellationToken).ConfigureAwait(false);
 
+            // Reported onwards because it has already been paid for. A UI
+            // polling on its own timer would otherwise show the pre-slew
+            // position for another second or two after every move, which reads
+            // as a mount that has not gone anywhere.
+            _events.Publish(new MountStatusEvent(
+                position.RaDegrees,
+                position.DecDegrees,
+                MapTracking(position.Tracking),
+                MapPierSide(position.PierSide)));
+
             if (!await PassesSafetyChecksAsync(position, cancellationToken).ConfigureAwait(false))
             {
                 return;

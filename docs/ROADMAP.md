@@ -309,8 +309,39 @@ for), and the confirm-before-slew flow, which runs against the real mount
 mechanics with a noiseless solver so that it needs no quad database and any
 discrepancy in a commanded coordinate is unambiguous.
 
+**A bug that every other test was blind to.** Running the window found the
+camera would not stay connected, which also disabled the focal length and with
+it the whole loop. The cause was in the view model's thread marshalling: a
+single command routinely publishes several events — connecting a camera reports
+the device and then its plate scale — and they arrive synchronously while the UI
+queue still holds the earlier ones. The reduction happened *before* the post, so
+every event of a command was folded against the same stale state and the last
+post won: the plate scale arrived and the connection was overwritten away.
+
+Nothing detected it because a test dispatcher that runs inline makes the two
+orderings identical, which is exactly what all the existing presentation tests
+used. The fix is to post the event and reduce inside the posted action, so each
+action folds from whatever the previous one left; it also confines the state to
+one thread, where reducing on the publishing thread was a plain data race.
+There is now a `DeferredDispatcherTests` suite whose dispatcher genuinely
+queues — five of its tests fail against the old ordering, verified by reverting
+the fix.
+
+Two smaller defects from the same session: the status poll queued behind a
+capture, so a two-minute solve would leave sixty polls to discharge at once (it
+now skips rather than queues), and the mount position read during every capture
+was being discarded instead of reported, leaving the coordinate readout showing
+the pre-slew position until the next timer tick.
+
+**The loop runs end to end on the simulator**, driven through the view model
+with a deferring dispatcher: six points, focal length measured from the first
+solve at 100.1 mm against a true 100.0, and the injected misalignment recovered
+as +27.0′ ± 0.2′ altitude and −19.0′ ± 0.3′ azimuth against an injected 27.0 and
+−19.0. The commanded declination visibly moves 9′ across the sweep while the
+mechanical declination is held constant, which is D16 doing its job.
+
 **Still outstanding:** the correction reticle (D12) remains a placeholder, and
-the window itself is still unverified beyond launching.
+the window's own rendering is still only verified by having been looked at.
 
 ---
 

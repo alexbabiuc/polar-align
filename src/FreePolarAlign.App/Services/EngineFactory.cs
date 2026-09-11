@@ -165,13 +165,49 @@ public static class EngineFactory
 
     private static string PluginsDirectory() => Path.Combine(AppContext.BaseDirectory, "plugins");
 
-    /// <summary>Env var override first, matching the pattern the end-to-end tests already use; otherwise the D13 default install location.</summary>
-    private static string ResolveQuadDatabaseDirectory()
+    private static string ResolveQuadDatabaseDirectory() => ResolveQuadDatabaseDirectory(
+        Environment.GetEnvironmentVariable("FPA_QUADDB_DIR"),
+        AppContext.BaseDirectory,
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        HasUsableQuadDatabase);
+
+    /// <summary>
+    /// Where the quad database is, tried in order: an explicit override, a copy
+    /// bundled next to the executable, then the D13 default install location.
+    ///
+    /// The bundled-next-to-the-exe case exists for a fully offline distribution
+    /// (a USB stick, a machine that will never see the installer that would
+    /// normally populate the default location): the database and the
+    /// application then travel and run together with nothing to configure,
+    /// which matters because this location is the one place a user cannot be
+    /// asked to set an environment variable or run a setup script first. It is
+    /// checked before the user-profile default, not instead of it, so an
+    /// existing install at the default location is left alone if a build
+    /// happens not to carry its own copy.
+    ///
+    /// Takes every input as a parameter, including the "is this directory
+    /// usable" check, so the precedence itself -- the part actually worth
+    /// getting right -- can be tested without touching a real filesystem or a
+    /// real environment variable.
+    /// </summary>
+    internal static string ResolveQuadDatabaseDirectory(
+        string? environmentOverride,
+        string applicationDirectory,
+        string userProfileDirectory,
+        Func<string, bool> hasUsableQuadDatabase)
     {
-        string? overridden = Environment.GetEnvironmentVariable("FPA_QUADDB_DIR");
-        return !string.IsNullOrWhiteSpace(overridden)
-            ? overridden
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".free-polar-align", "quaddb");
+        if (!string.IsNullOrWhiteSpace(environmentOverride))
+        {
+            return environmentOverride;
+        }
+
+        string bundled = Path.Combine(applicationDirectory, "quaddb");
+        if (hasUsableQuadDatabase(bundled))
+        {
+            return bundled;
+        }
+
+        return Path.Combine(userProfileDirectory, ".free-polar-align", "quaddb");
     }
 
     private static bool HasUsableQuadDatabase(string directory) =>

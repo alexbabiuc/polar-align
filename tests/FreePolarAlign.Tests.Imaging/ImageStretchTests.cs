@@ -88,6 +88,131 @@ public class ImageStretchTests
 
     private static double MeanOf(byte[] gray) => gray.Average(b => (double)b);
 
+    private static int CountAtValue(FitsImage image, double value)
+    {
+        int count = 0;
+        for (int y = 0; y < image.Height; y++)
+        {
+            for (int x = 0; x < image.Width; x++)
+            {
+                if (image.Pixels[y, x] == value)
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    // ---- Full range, nothing clipped ----
+
+    /// <summary>
+    /// The frame's own darkest and brightest pixels are the black and white
+    /// points, so the preview uses the whole output range.
+    /// </summary>
+    [Theory]
+    [InlineData(0.05)]
+    [InlineData(0.25)]
+    [InlineData(0.7)]
+    public void TheDarkestPixelIsBlackAndTheBrightestIsWhite(double target)
+    {
+        ImagePreview preview = ImageStretch.Create(RealisticFrame(), target);
+
+        Assert.Equal(0, preview.Gray8.Min());
+        Assert.Equal(255, preview.Gray8.Max());
+    }
+
+    /// <summary>
+    /// The guarantee this stretch is built around: a pixel renders as black only
+    /// if it *is* the darkest pixel in the frame.
+    ///
+    /// An earlier version clipped everything below median - 2.8 sigma, which on
+    /// this frame is several hundred pixels -- the entire bottom tail of the
+    /// noise, flattened to a single value. Checked as an exact count rather than
+    /// a proportion, because "hardly anything is clipped" is the claim that
+    /// version would also have passed.
+    /// </summary>
+    [Fact]
+    public void OnlyTheDarkestPixelsRenderBlack()
+    {
+        FitsImage frame = RealisticFrame();
+        ImagePreview preview = ImageStretch.Create(frame, ImageStretch.DefaultTargetBackground);
+
+        Assert.Equal(1, preview.Decimation);
+
+        int darkestInSource = CountAtValue(frame, preview.Statistics.MinimumAdu);
+        int blackInPreview = preview.Gray8.Count(b => b == 0);
+
+        Assert.Equal(darkestInSource, blackInPreview);
+    }
+
+    /// <summary>
+    /// The same at the top: only the brightest pixel saturates. A preview that
+    /// blew the cores of every star to a single flat white would hide
+    /// saturation, which is one of the things a person checks a frame for.
+    /// </summary>
+    [Fact]
+    public void OnlyTheBrightestPixelsRenderWhite()
+    {
+        FitsImage frame = RealisticFrame();
+        ImagePreview preview = ImageStretch.Create(frame, ImageStretch.DefaultTargetBackground);
+
+        int brightestInSource = CountAtValue(frame, preview.Statistics.MaximumAdu);
+        int whiteInPreview = preview.Gray8.Count(b => b == 255);
+
+        Assert.Equal(brightestInSource, whiteInPreview);
+    }
+
+    /// <summary>
+    /// The bottom of the noise survives as structure rather than as a flat
+    /// floor. This is what the old shadow clipping destroyed, and it is the
+    /// reason to care: an uneven background -- dew, twilight, a light leak -- is
+    /// read off the dark end of the histogram, and a display that crushes it
+    /// answers "is the background even?" with a confident yes whatever the truth.
+    /// </summary>
+    [Fact]
+    public void TheDarkEndKeepsItsStructure()
+    {
+        FitsImage frame = RealisticFrame();
+        ImagePreview preview = ImageStretch.Create(frame, ImageStretch.DefaultTargetBackground);
+
+        // Distinct levels strictly below the background, where the old version
+        // had exactly one: black.
+        double normalisedMedian =
+            (preview.Statistics.MedianAdu - preview.Statistics.BlackPointAdu)
+            / (preview.Statistics.MaximumAdu - preview.Statistics.BlackPointAdu);
+        byte backgroundLevel = (byte)Math.Round(
+            ImageStretch.ApplyMidtone(preview.Statistics.Midtone, normalisedMedian) * 255.0);
+
+        int levelsBelowBackground = preview.Gray8.Where(b => b < backgroundLevel).Distinct().Count();
+
+        Assert.True(
+            levelsBelowBackground > 20,
+            $"only {levelsBelowBackground} distinct grey levels below the background of {backgroundLevel}");
+    }
+
+    /// <summary>
+    /// The brightness control is a histogram stretch, not a black point: moving
+    /// it changes the curve between the endpoints and leaves the endpoints where
+    /// the frame put them.
+    /// </summary>
+    [Fact]
+    public void TheBrightnessControlLeavesTheBlackAndWhitePointsAlone()
+    {
+        FitsImage frame = RealisticFrame();
+
+        StretchStatistics dark = ImageStretch.Create(frame, 0.05).Statistics;
+        StretchStatistics bright = ImageStretch.Create(frame, 0.8).Statistics;
+
+        Assert.Equal(dark.BlackPointAdu, bright.BlackPointAdu);
+        Assert.Equal(dark.MaximumAdu, bright.MaximumAdu);
+        Assert.Equal(dark.MinimumAdu, dark.BlackPointAdu);
+
+        // And it does change something, or it would not be a control.
+        Assert.NotEqual(dark.Midtone, bright.Midtone);
+    }
+
     // ---- The point of the whole thing ----
 
     /// <summary>
@@ -123,11 +248,10 @@ public class ImageStretchTests
         // the check is against the transform itself at the measured background.
         StretchStatistics statistics = preview.Statistics;
         double normalisedMedian =
-            (statistics.MedianAdu - statistics.NormalisationLowAdu)
-            / (statistics.MaximumAdu - statistics.NormalisationLowAdu);
-        double afterBlackPoint = (normalisedMedian - statistics.BlackPoint) / (1.0 - statistics.BlackPoint);
+            (statistics.MedianAdu - statistics.BlackPointAdu)
+            / (statistics.MaximumAdu - statistics.BlackPointAdu);
 
-        Assert.Equal(target, ImageStretch.ApplyMidtone(statistics.Midtone, afterBlackPoint), precision: 3);
+        Assert.Equal(target, ImageStretch.ApplyMidtone(statistics.Midtone, normalisedMedian), precision: 3);
     }
 
     /// <summary>
@@ -394,11 +518,16 @@ public class ImageStretchTests
     // ---- Bit depth ----
 
     /// <summary>
-    /// An eight-bit frame stretches as readily as a sixteen-bit one. The
-    /// transform is placed from the median and the noise, both measured in the
-    /// data's own units, so nothing in it assumes a particular full-well value
-    /// -- which is what lets the readout mode be switched without the preview
-    /// going black or white.
+    /// An eight-bit frame stretches as readily as a sixteen-bit one, and it is
+    /// the case the full-range normalisation has to be careful about.
+    ///
+    /// Eight-bit readout quantises the noise away entirely -- a 480 ADU sky with
+    /// 12 ADU of noise lands on a single level -- so the background *is* the
+    /// darkest value in the frame. Mapping the darkest value to 0, which is what
+    /// every other frame wants, would pin the sky to black with no way to lift
+    /// it: the transfer function fixes 0, so the brightness control would move
+    /// nothing. Create places the black point one output level lower in exactly
+    /// this case, which is what this test guards.
     /// </summary>
     [Fact]
     public void AnEightBitFrameStretchesToo()

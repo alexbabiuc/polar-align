@@ -8,31 +8,25 @@ namespace FreePolarAlign.Imaging.Display;
 /// standard deviation it is barely moved by the stars, which are the outliers
 /// here rather than the signal being characterised.
 /// </param>
-/// <param name="BlackPoint">Normalised value mapped to black, below which everything is clipped.</param>
+/// <param name="BlackPointAdu">
+/// The value rendered as 0. Normally the darkest pixel in the frame, so the
+/// output range is used fully and nothing below it is crushed -- there is
+/// nothing below it. The one exception is a frame whose background *is* its
+/// darkest value, described on <see cref="ImageStretch.Create"/>.
+/// </param>
+/// <param name="MaximumAdu">The white point: the brightest pixel, rendered as 255.</param>
 /// <param name="Midtone">
 /// The midtone balance handed to the transfer function. Small values brighten
-/// hard; 0.5 is no change.
-/// </param>
-/// <param name="NormalisationLowAdu">
-/// The value treated as zero before the transform is applied -- normally zero
-/// itself, and the observed minimum only when the data contains negative values.
-///
-/// Deliberately *not* the observed minimum for ordinary data, which was the
-/// first attempt and was wrong. Normalising from the darkest pixel present means
-/// that whenever the background happens to be the darkest value -- which is what
-/// an eight-bit readout produces, because it quantises the noise away entirely --
-/// the background sits at exactly zero, and the transfer function fixes zero at
-/// zero. The stretch then cannot lift it and the frame renders black however far
-/// the slider is dragged.
+/// hard; 0.5 is no change. This is the only thing the brightness control
+/// changes -- the black and white points stay at the frame's own limits.
 /// </param>
 public sealed record StretchStatistics(
     double MinimumAdu,
     double MaximumAdu,
     double MedianAdu,
     double MadAdu,
-    double BlackPoint,
-    double Midtone,
-    double NormalisationLowAdu);
+    double BlackPointAdu,
+    double Midtone);
 
 /// <param name="Decimation">
 /// How many source pixels went into each preview pixel, per axis. 1 means the
@@ -65,9 +59,19 @@ public sealed record ImagePreview(
 /// all it is -- nothing measured is computed from these bytes.
 ///
 /// The transform is the standard midtone transfer function, placed from the
-/// median and the median absolute deviation. Both are robust statistics, and
-/// that is the point: a mean and a standard deviation would be dragged around by
-/// the stars, which here are the outliers rather than the thing being measured.
+/// median, which is a robust statistic and that is the point: a mean would be
+/// dragged around by the stars, which here are the outliers rather than the
+/// thing being measured.
+///
+/// It is the *only* thing applied. The frame's own darkest and brightest pixels
+/// are the black and white points, so the output range is used fully and no
+/// pixel is crushed to 0 or blown to 255 unless it genuinely is the darkest or
+/// brightest one in the frame. An earlier version clipped everything below
+/// median - 2.8 sigma to black, which threw away the bottom of the noise
+/// distribution -- a quarter of a percent of pixels on a Gaussian background,
+/// and visibly more wherever the sky was not flat. Since one of the things a
+/// person looks at this preview to judge is whether the background is even, a
+/// display that flattened the dark end was answering that question wrongly.
 /// </summary>
 public static class ImageStretch
 {
@@ -79,17 +83,8 @@ public static class ImageStretch
     /// </summary>
     public const double DefaultTargetBackground = 0.25;
 
-    /// <summary>
-    /// How far below the median, in noise units, is treated as black. Just under
-    /// three sigma clips the bottom of the noise distribution without eating
-    /// into it: a preview that clipped the noise flat would hide exactly the
-    /// gradient a user is looking for when they suspect dew, twilight or a light
-    /// leak.
-    /// </summary>
-    public const double DefaultShadowClipping = 2.8;
-
-    /// <summary>Scales a median absolute deviation to a standard-deviation-equivalent for Gaussian noise.</summary>
-    private const double MadToSigma = 1.4826;
+    /// <summary>Distinct levels an eight-bit output has, which is what the preview renders to.</summary>
+    private const int OutputLevels = 256;
 
     /// <summary>
     /// Statistics are taken from every fourth pixel on each axis. A sixteenth of
@@ -100,8 +95,25 @@ public static class ImageStretch
     private const int StatisticsStride = 4;
 
     /// <summary>
-    /// Builds a preview with the background placed at
-    /// <paramref name="targetBackground"/>.
+    /// Builds a preview using the frame's full range -- darkest pixel to black,
+    /// brightest to white -- with the background placed at
+    /// <paramref name="targetBackground"/> by the midtone transfer function.
+    ///
+    /// Nothing is clipped at either end. Every pixel strictly between the
+    /// darkest and the brightest lands strictly between 0 and 255, because the
+    /// only transform applied is monotonic and fixes both endpoints. A pixel
+    /// renders as 0 exactly when it is the darkest in the frame, and 255 exactly
+    /// when it is the brightest.
+    ///
+    /// The one exception, and it has to be one: a frame whose background *is*
+    /// its darkest value. An eight-bit readout does this -- it quantises the
+    /// noise away entirely, so a 600 ADU sky with 9 ADU of noise becomes a
+    /// single level with nothing below it. Mapping that level to 0 would pin the
+    /// sky to black with no way to lift it, since every monotonic transform that
+    /// fixes 0 leaves it there, and the brightness control would do nothing at
+    /// all. So in that case alone the black point is placed one output level
+    /// below the darkest pixel, which is the smallest displacement that gives
+    /// the sky somewhere to be lifted from, and still clips nothing.
     /// </summary>
     /// <param name="targetBackground">
     /// Higher is lighter. Clamped to a range that stays meaningful: at zero the
@@ -128,35 +140,44 @@ public static class ImageStretch
             return Uniform(image, minimum, maximum, maximumWidth, maximumHeight);
         }
 
-        double low = NormalisationLow(minimum);
+        double low = minimum;
         double span = maximum - low;
-
         double medianNormalised = Median(image, low, span);
+
+        if (medianNormalised <= 0.0)
+        {
+            // The background is the darkest value in the frame -- see the
+            // eight-bit case in this method's doc comment. One output level of
+            // headroom below it, and no more.
+            low = minimum - (span / (OutputLevels - 1));
+            span = maximum - low;
+            medianNormalised = Median(image, low, span);
+        }
+
         double madNormalised = MedianAbsoluteDeviation(image, low, span, medianNormalised);
-
-        double blackPoint = madNormalised > 0.0
-            ? Math.Clamp(medianNormalised - (DefaultShadowClipping * MadToSigma * madNormalised), 0.0, 0.999)
-            : 0.0;
-
-        double medianAfterBlackPoint = (medianNormalised - blackPoint) / (1.0 - blackPoint);
-        double midtone = Midtone(medianAfterBlackPoint, target);
+        double midtone = Midtone(medianNormalised, target);
 
         var statistics = new StretchStatistics(
             minimum,
             maximum,
             low + (medianNormalised * span),
             madNormalised * span,
-            blackPoint,
-            midtone,
-            low);
+            low,
+            midtone);
 
-        return Render(image, low, span, blackPoint, midtone, maximumWidth, maximumHeight, statistics);
+        return Render(image, low, span, midtone, maximumWidth, maximumHeight, statistics);
     }
 
     /// <summary>
     /// A faithful preview: the full range mapped straight onto the output, no
-    /// stretch at all. Almost always shows very little, and is offered so a user
-    /// can see what the stretch is doing rather than wonder.
+    /// stretch at all.
+    ///
+    /// No longer reachable from the application, which always stretches -- an
+    /// unstretched astronomical exposure is a black rectangle, and offering one
+    /// was offering a broken picture as a choice. It is kept because it is the
+    /// evidence for that: the test that a linear rendering of a realistic frame
+    /// comes out below 6/255 is what justifies the stretch being the only mode,
+    /// and it needs something to render linearly.
     /// </summary>
     public static ImagePreview CreateLinear(FitsImage image, int maximumWidth = 1024, int maximumHeight = 1024)
     {
@@ -169,17 +190,17 @@ public static class ImageStretch
             return Uniform(image, minimum, maximum, maximumWidth, maximumHeight);
         }
 
-        // A faithful rendering shows the data as it is, so it normalises across
-        // the observed range rather than from zero: the point of this mode is to
-        // show what the frame really looks like, not to be kind to it.
+        // The same full-range normalisation the stretched path uses, with the
+        // midtone left at a half, which is the identity. The two modes differ by
+        // the curve alone, not by where black and white sit.
         double span = maximum - minimum;
         double medianNormalised = Median(image, minimum, span);
         double madNormalised = MedianAbsoluteDeviation(image, minimum, span, medianNormalised);
 
         var statistics = new StretchStatistics(
-            minimum, maximum, minimum + (medianNormalised * span), madNormalised * span, 0.0, 0.5, minimum);
+            minimum, maximum, minimum + (medianNormalised * span), madNormalised * span, minimum, 0.5);
 
-        return Render(image, minimum, span, blackPoint: 0.0, midtone: 0.5, maximumWidth, maximumHeight, statistics);
+        return Render(image, minimum, span, midtone: 0.5, maximumWidth, maximumHeight, statistics);
     }
 
     /// <summary>
@@ -255,9 +276,8 @@ public static class ImageStretch
 
     private static ImagePreview Render(
         FitsImage image,
-        double minimum,
+        double blackPointAdu,
         double span,
-        double blackPoint,
         double midtone,
         int maximumWidth,
         int maximumHeight,
@@ -269,17 +289,24 @@ public static class ImageStretch
 
         byte[] gray = new byte[width * height];
 
-        // Precomputed lookup over the transfer function. The function is
-        // expensive enough per pixel to matter on a five megapixel frame and
-        // monotonic, so 4096 steps are indistinguishable from evaluating it
-        // everywhere.
-        const int LookupSize = 4096;
+        // Precomputed lookup over the transfer function, which is expensive
+        // enough per pixel to matter on a five megapixel frame.
+        //
+        // The size is not arbitrary and 4096 was not enough. The input axis is
+        // linear in ADU while everything worth seeing is crowded into its first
+        // fraction of a percent: on a realistic frame the sky sits about 0.13%
+        // of the way from the darkest pixel to the brightest, so a 4096-entry
+        // table resolved the entire noise distribution -- the whole background,
+        // and any unevenness in it -- into five steps, and the preview showed
+        // six distinct grey levels below the sky where it should show dozens.
+        // 65536 gives 16-bit data one entry per ADU, which is as fine as the
+        // data itself, for 64 KB and a table build of well under a millisecond.
+        const int LookupSize = 65536;
         byte[] lookup = new byte[LookupSize];
         for (int i = 0; i < LookupSize; i++)
         {
             double normalised = i / (double)(LookupSize - 1);
-            double afterBlackPoint = blackPoint >= 1.0 ? 0.0 : (normalised - blackPoint) / (1.0 - blackPoint);
-            lookup[i] = (byte)Math.Clamp(Math.Round(ApplyMidtone(midtone, afterBlackPoint) * 255.0), 0.0, 255.0);
+            lookup[i] = (byte)Math.Clamp(Math.Round(ApplyMidtone(midtone, normalised) * (OutputLevels - 1)), 0.0, OutputLevels - 1);
         }
 
         for (int outputRow = 0; outputRow < height; outputRow++)
@@ -322,7 +349,7 @@ public static class ImageStretch
                     }
                 }
 
-                double normalised = double.IsNegativeInfinity(peak) ? 0.0 : (peak - minimum) / span;
+                double normalised = double.IsNegativeInfinity(peak) ? 0.0 : (peak - blackPointAdu) / span;
                 int index = (int)Math.Clamp(Math.Round(normalised * (LookupSize - 1)), 0.0, LookupSize - 1);
                 gray[(outputRow * width) + outputColumn] = lookup[index];
             }
@@ -343,15 +370,8 @@ public static class ImageStretch
 
         return new ImagePreview(
             width, height, image.Width, image.Height, decimation, gray,
-            new StretchStatistics(minimum, maximum, minimum, 0.0, 0.0, 0.5, minimum));
+            new StretchStatistics(minimum, maximum, minimum, 0.0, minimum, 0.5));
     }
-
-    /// <summary>
-    /// Where zero sits for the purpose of the stretch: the origin for ordinary
-    /// sensor data, and the observed minimum only when the frame contains
-    /// negative values, as a bias-subtracted or calibrated float frame can.
-    /// </summary>
-    private static double NormalisationLow(double minimum) => Math.Min(0.0, minimum);
 
     private static int Decimation(int width, int height, int maximumWidth, int maximumHeight)
     {

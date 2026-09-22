@@ -26,15 +26,25 @@ public sealed class AscomMappingTests
         Assert.Equal(expected, AscomMapping.MapPierSide(ascomValue));
     }
 
-    [Theory]
-    [InlineData(2, true)]
-    [InlineData(0, false)]
-    [InlineData(1, false)]
-    [InlineData(3, false)]
-    [InlineData(4, false)]
-    public void IsJ2000_OnlyTrueForAscomEquJ2000Value(int equatorialSystemValue, bool expected)
+    /// <summary>
+    /// Written as a single fact rather than a theory because
+    /// <see cref="AscomEquatorialSystem"/> is internal to the Ascom assembly, so
+    /// it cannot appear in a public test method's signature.
+    /// </summary>
+    [Fact]
+    public void MapEquatorialSystem_MapsKnownAscomValues_AndDefaultsOtherwise()
     {
-        Assert.Equal(expected, AscomMapping.IsJ2000(equatorialSystemValue));
+        Assert.Equal(AscomEquatorialSystem.Other, AscomMapping.MapEquatorialSystem(0));
+        Assert.Equal(AscomEquatorialSystem.Topocentric, AscomMapping.MapEquatorialSystem(1));
+        Assert.Equal(AscomEquatorialSystem.J2000, AscomMapping.MapEquatorialSystem(2));
+        Assert.Equal(AscomEquatorialSystem.J2050, AscomMapping.MapEquatorialSystem(3));
+        Assert.Equal(AscomEquatorialSystem.B1950, AscomMapping.MapEquatorialSystem(4));
+
+        // A driver bug or a future enum member is Other, never a guess at the
+        // nearest known system.
+        Assert.Equal(AscomEquatorialSystem.Other, AscomMapping.MapEquatorialSystem(-1));
+        Assert.Equal(AscomEquatorialSystem.Other, AscomMapping.MapEquatorialSystem(99));
+        Assert.Equal(AscomEquatorialSystem.Other, AscomMapping.MapEquatorialSystem(int.MinValue));
     }
 
     [Theory]

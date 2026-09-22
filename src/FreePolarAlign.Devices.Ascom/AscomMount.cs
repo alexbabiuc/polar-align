@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using FreePolarAlign.Core.Astrometry;
 
 namespace FreePolarAlign.Devices.Ascom;
 
@@ -8,19 +9,30 @@ namespace FreePolarAlign.Devices.Ascom;
 /// against a real driver -- see that class's doc comment and
 /// docs/MOUNT-COMPATIBILITY.md.
 ///
-/// Known contract/ASCOM mismatch (worth recording since <see cref="IMount"/>
+/// Contract/ASCOM epoch mismatch (worth recording since <see cref="IMount"/>
 /// is frozen): <see cref="IMount.SlewToCoordinatesAsync"/> is documented as
 /// taking absolute J2000 coordinates, but ASCOM's <c>ITelescope.SlewToCoordinatesAsync</c>
-/// interprets its RA/Dec arguments according to whatever the driver reports
-/// via its own <c>EquatorialSystem</c> property (J2000, JNow/topocentric,
-/// B1950, ...), which is a per-driver, sometimes per-mount-setting choice.
-/// There is no ASCOM call that means "always J2000 regardless of driver
-/// configuration". This class refuses to guess: it slews only when the
-/// driver reports <c>equJ2000</c>, and throws <see cref="NotSupportedException"/>
-/// otherwise, naming the driver's actual coordinate system so the failure is
-/// diagnosable rather than a silently-wrong slew. A real integration would
-/// need either a driver configured for J2000 (many EQMOD/SynScan setups
-/// default to JNow) or a J2000-to-apparent conversion at this layer.
+/// interprets its RA/Dec arguments -- and reports <c>RightAscension</c>/
+/// <c>Declination</c> -- according to whatever the driver says via its own
+/// <c>EquatorialSystem</c> property (J2000, JNow/topocentric, B1950, ...),
+/// which is a per-driver, sometimes per-mount-setting choice. There is no
+/// ASCOM call that means "always J2000 regardless of driver configuration",
+/// so this class translates at the boundary instead:
+///
+/// <list type="bullet">
+/// <item><c>equJ2000</c>: coordinates pass through untouched.</item>
+/// <item><c>equTopocentric</c> (JNow -- the default on many EQMOD and SynScan
+/// setups): converted with <see cref="ApparentPlace"/>, J2000 to apparent on
+/// the way out and apparent to J2000 on the way back, so that every caller
+/// still sees only J2000 as the contract promises. Ignoring the difference
+/// would shift the commanded position by the full precession offset, about 22
+/// arcminutes at the current epoch, and by a different amount at each hour
+/// angle -- which is exactly the declination drift D16 exists to prevent.</item>
+/// <item>Anything else (<c>equOther</c>, <c>equJ2050</c>, <c>equB1950</c>):
+/// <see cref="NotSupportedException"/>, naming the driver's actual system.
+/// These are rare enough in practice that a guess is worse than a diagnosable
+/// refusal.</item>
+/// </list>
 /// </summary>
 public sealed class AscomMount : IMount
 {
@@ -28,6 +40,7 @@ public sealed class AscomMount : IMount
 
     private readonly string _progId;
     private readonly dynamic _telescope;
+    private AscomEquatorialSystem? _equatorialSystem;
     private bool _disposed;
 
     public AscomMount(string progId)
@@ -71,6 +84,11 @@ public sealed class AscomMount : IMount
         }
 
         IsConnected = true;
+
+        // ASCOM only guarantees EquatorialSystem is readable while connected, and
+        // a driver's setting can change between sessions (it is usually a
+        // checkbox in the driver's setup dialog), so the cache is per connection.
+        _equatorialSystem = null;
         return Task.CompletedTask;
     }
 
@@ -92,19 +110,36 @@ public sealed class AscomMount : IMount
     public Task<MountPosition> GetPositionAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
+        // Outside the try below, so a driver in an unsupported system is reported
+        // as exactly that rather than as a driver that has stopped responding.
+        AscomEquatorialSystem system = ReadEquatorialSystem();
+
+        double raDriverDegrees;
+        double decDriverDegrees;
+        PierSide pierSide;
+        DateTime timestampUtc;
+        TrackingState tracking;
         try
         {
-            double raHours = (double)_telescope.RightAscension;
-            double decDegrees = (double)_telescope.Declination;
-            PierSide pierSide = TryGetSideOfPier();
-            var position = new MountPosition(
-                AscomMapping.RaHoursToDegrees(raHours), decDegrees, pierSide, DateTime.UtcNow, TryGetTracking());
-            return Task.FromResult(position);
+            raDriverDegrees = AscomMapping.RaHoursToDegrees((double)_telescope.RightAscension);
+            decDriverDegrees = (double)_telescope.Declination;
+            pierSide = TryGetSideOfPier();
+            tracking = TryGetTracking();
+            timestampUtc = DateTime.UtcNow;
         }
         catch (Exception ex)
         {
             throw new AscomPlatformNotAvailableException($"Failed to read position from ASCOM mount '{_progId}': {ex.Message}", ex);
         }
+
+        // The driver reports in its own equatorial system; MountPosition is J2000
+        // (see the class doc comment), so a JNow driver's reading is converted
+        // back. The conversion uses the timestamp carried on the position, so the
+        // coordinates and the instant they are stamped with agree.
+        var (raDegrees, decDegrees) = ToJ2000(system, raDriverDegrees, decDriverDegrees, timestampUtc);
+
+        return Task.FromResult(new MountPosition(raDegrees, decDegrees, pierSide, timestampUtc, tracking));
     }
 
     public async Task SlewToCoordinatesAsync(double raDegrees, double decDegrees, CancellationToken cancellationToken = default)
@@ -116,28 +151,12 @@ public sealed class AscomMount : IMount
             throw new NotSupportedException($"ASCOM mount '{_progId}' does not report CanSlewAsync; it is not usable in automatic mode (D9).");
         }
 
-        int equatorialSystem;
+        var (commandedRaDegrees, commandedDecDegrees) = FromJ2000(
+            ReadEquatorialSystem(), raDegrees, decDegrees, DateTime.UtcNow);
+        double raHours = AscomMapping.RaDegreesToHours(commandedRaDegrees);
         try
         {
-            equatorialSystem = (int)_telescope.EquatorialSystem;
-        }
-        catch (Exception ex)
-        {
-            throw new AscomPlatformNotAvailableException($"Failed to read EquatorialSystem from ASCOM mount '{_progId}': {ex.Message}", ex);
-        }
-
-        if (!AscomMapping.IsJ2000(equatorialSystem))
-        {
-            throw new NotSupportedException(
-                $"ASCOM mount '{_progId}' reports EquatorialSystem={equatorialSystem}, not equJ2000. " +
-                "This contract slews in J2000 coordinates only -- reconfigure the driver for J2000, or see " +
-                "this class's doc comment for the underlying ASCOM/contract mismatch.");
-        }
-
-        double raHours = AscomMapping.RaDegreesToHours(raDegrees);
-        try
-        {
-            _telescope.SlewToCoordinatesAsync(raHours, decDegrees);
+            _telescope.SlewToCoordinatesAsync(raHours, commandedDecDegrees);
         }
         catch (Exception ex)
         {
@@ -183,6 +202,60 @@ public sealed class AscomMount : IMount
             throw new AscomPlatformNotAvailableException($"ASCOM mount '{_progId}' does not report a usable site location: {ex.Message}", ex);
         }
     }
+
+    /// <summary>
+    /// The equatorial system the driver says it speaks, cached for the lifetime
+    /// of the connection.
+    ///
+    /// Cached because every read is an out-of-process COM call and this one is
+    /// on the path of the status poll that runs several times a second, while
+    /// the answer is a driver configuration setting rather than anything that
+    /// varies with the sky. <see cref="ConnectAsync"/> clears the cache, so
+    /// changing the setting and reconnecting is enough to pick it up.
+    /// </summary>
+    private AscomEquatorialSystem ReadEquatorialSystem()
+    {
+        if (_equatorialSystem is { } cached)
+        {
+            return cached;
+        }
+
+        int raw;
+        try
+        {
+            raw = (int)_telescope.EquatorialSystem;
+        }
+        catch (Exception ex)
+        {
+            throw new AscomPlatformNotAvailableException($"Failed to read EquatorialSystem from ASCOM mount '{_progId}': {ex.Message}", ex);
+        }
+
+        AscomEquatorialSystem system = AscomMapping.MapEquatorialSystem(raw);
+        if (system is not (AscomEquatorialSystem.J2000 or AscomEquatorialSystem.Topocentric))
+        {
+            throw new NotSupportedException(
+                $"ASCOM mount '{_progId}' reports EquatorialSystem={raw} ({system}), which this driver layer " +
+                "cannot translate. Only equJ2000 and equTopocentric (JNow) are supported -- reconfigure the " +
+                "driver for one of those, or see this class's doc comment for the underlying ASCOM/contract mismatch.");
+        }
+
+        _equatorialSystem = system;
+        return system;
+    }
+
+    /// <summary>J2000 (what the contract speaks) to whatever the driver expects.</summary>
+    private static (double RaDegrees, double DecDegrees) FromJ2000(
+        AscomEquatorialSystem system, double raDegrees, double decDegrees, DateTime utc) =>
+        system == AscomEquatorialSystem.Topocentric
+            ? ApparentPlace.FromJ2000(raDegrees, decDegrees, utc)
+            : (raDegrees, decDegrees);
+
+    /// <summary>Whatever the driver reports back to J2000, the inverse of <see cref="FromJ2000"/>.</summary>
+    private static (double RaDegrees, double DecDegrees) ToJ2000(
+        AscomEquatorialSystem system, double raDegrees, double decDegrees, DateTime utc) =>
+        system == AscomEquatorialSystem.Topocentric
+            ? ApparentPlace.ToJ2000(raDegrees, decDegrees, utc)
+            : (raDegrees, decDegrees);
 
     private bool IsSlewing()
     {

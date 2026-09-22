@@ -548,10 +548,19 @@ frequently JNow on EQMOD and SynScan setups. A driver silently treating our J200
 coordinates as JNow would shift the commanded position by the full precession
 offset — around 22 arcminutes at the current epoch — and, worse, by an amount
 that varies across the sweep, reintroducing exactly the declination drift this
-decision exists to prevent. The ASCOM provider therefore refuses to run against a
-driver whose `EquatorialSystem` is not J2000, rather than guessing. A future
-integration needs either J2000-configured drivers or an explicit conversion
-layer; see `docs/MOUNT-COMPATIBILITY.md`.
+decision exists to prevent. The ASCOM provider therefore converts at the device
+boundary rather than guessing: it reads `EquatorialSystem` once per connection,
+and for `equTopocentric` (JNow — the default on many EQMOD and SynScan setups)
+translates J2000 to apparent place on the way out and back again on the way in,
+so every caller above `IMount` still sees only J2000. The conversion
+(`Core.Astrometry.ApparentPlace`) is the first two steps of the D5 chain —
+annual aberration, then bias/precession/nutation — and stops there, because
+hour angle, the horizon rotation and refraction are what the mount itself does
+with coordinates of date; applying them here would apply them twice. It is
+geometric for the same reason the rest of this decision is. Systems other than
+J2000 and JNow (`equOther`, `equJ2050`, `equB1950`) are still refused outright,
+naming the driver's actual system: they are rare enough that a diagnosable
+refusal beats a guess. See `docs/MOUNT-COMPATIBILITY.md`.
 
 **How this was found.** Not by inspection. The residual check from D11 rejected
 the fit — residuals ten times the expected solve noise — and the reported reason

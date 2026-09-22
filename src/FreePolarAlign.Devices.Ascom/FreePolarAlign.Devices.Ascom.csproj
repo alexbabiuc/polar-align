@@ -15,6 +15,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FreePolarAlign.Devices\FreePolarAlign.Devices.csproj" />
+    <!-- For ApparentPlace: a driver configured for JNow needs its coordinates converted
+         to and from the J2000 the IMount contract speaks; see AscomMount's doc comment. -->
+    <ProjectReference Include="..\FreePolarAlign.Core\FreePolarAlign.Core.csproj" />
     <!-- Captured images are written as FITS with the project's own writer (Phase 0), not a
          new format-specific implementation; see AscomCamera.ExposeAsync. -->
     <ProjectReference Include="..\FreePolarAlign.Imaging\FreePolarAlign.Imaging.csproj" />

@@ -60,12 +60,9 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
     private CameraReadoutModeDescription? _selectedReadoutMode;
     private double _stretchTarget = Imaging.Display.ImageStretch.DefaultTargetBackground;
-    private bool _autoStretch = true;
     private Avalonia.Media.Imaging.Bitmap? _framePreview;
     private string? _framePreviewProblem;
-    private string _framePreviewCaption = "No frame captured yet.";
     private string? _loadedFramePath;
-    private int _loadedFrameIndex;
 
     public MainWindowViewModel(
         IAlignmentEngine? engine,
@@ -373,26 +370,6 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>
-    /// Off shows the frame as captured, which almost always looks black. Offered
-    /// so a user can see what the stretch is doing rather than wonder whether
-    /// the image has been altered in some way that matters.
-    /// </summary>
-    public bool AutoStretch
-    {
-        get => _autoStretch;
-        set
-        {
-            if (SetField(ref _autoStretch, value))
-            {
-                OnPropertyChanged(nameof(StretchEnabled));
-                ReloadFramePreview();
-            }
-        }
-    }
-
-    public bool StretchEnabled => _autoStretch;
-
     public Avalonia.Media.Imaging.Bitmap? FramePreview
     {
         get => _framePreview;
@@ -400,12 +377,6 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     public bool HasFramePreview => _framePreview is not null;
-
-    public string FramePreviewCaption
-    {
-        get => _framePreviewCaption;
-        private set => SetField(ref _framePreviewCaption, value);
-    }
 
     public string? FramePreviewProblem
     {
@@ -754,8 +725,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             if (engineEvent is FrameCapturedEvent frame)
             {
                 _loadedFramePath = frame.FitsPath;
-                _loadedFrameIndex = frame.PointIndex;
-                LoadFramePreviewAsync(frame.FitsPath, frame.PointIndex, StretchTarget, AutoStretch);
+                LoadFramePreviewAsync(frame.FitsPath, StretchTarget);
             }
 
             // Kept in step with what the camera actually accepted, rather than
@@ -807,10 +777,10 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        LoadFramePreviewAsync(path, _loadedFrameIndex, StretchTarget, AutoStretch);
+        LoadFramePreviewAsync(path, StretchTarget);
     }
 
-    private void LoadFramePreviewAsync(string path, int index, double target, bool autoStretch)
+    private void LoadFramePreviewAsync(string path, double target)
     {
         _ = Load();
 
@@ -820,19 +790,17 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 loaded = await Services.FramePreviewLoader
-                    .LoadAsync(path, target, autoStretch).ConfigureAwait(true);
+                    .LoadAsync(path, target).ConfigureAwait(true);
             }
             catch (Exception ex)
             {
-                loaded = new Services.FramePreview(null, null, 0, 0, 1, $"Could not build a preview: {ex.Message}");
+                loaded = new Services.FramePreview(null, $"Could not build a preview: {ex.Message}");
             }
 
             _postToUiThread(() =>
             {
                 // Superseded while it was loading.
-                if (_loadedFramePath != path ||
-                    !Equals(target, StretchTarget) ||
-                    autoStretch != AutoStretch)
+                if (_loadedFramePath != path || !Equals(target, StretchTarget))
                 {
                     loaded.Bitmap?.Dispose();
                     return;
@@ -841,35 +809,10 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
                 FramePreview?.Dispose();
                 FramePreview = loaded.Bitmap;
                 FramePreviewProblem = loaded.Problem;
-                FramePreviewCaption = DescribeFrame(index, loaded);
 
                 OnPropertyChanged(nameof(HasFramePreview));
             });
         }
-    }
-
-    /// <summary>
-    /// The caption under the preview. It carries the background level and the
-    /// noise because those two numbers answer most of what a person is
-    /// squinting at the image to find out -- whether the exposure is long
-    /// enough, whether the sky is brightening, whether the frame is saturated.
-    /// </summary>
-    private static string DescribeFrame(int index, Services.FramePreview preview)
-    {
-        if (preview.Statistics is not { } statistics)
-        {
-            return $"Frame {index}";
-        }
-
-        string scale = preview.Decimation > 1
-            ? FormattableString.Invariant($"  ·  shown at 1/{preview.Decimation}")
-            : string.Empty;
-
-        return FormattableString.Invariant($"Frame {index}  ·  {preview.SourceWidth}×{preview.SourceHeight}") +
-               scale +
-               FormattableString.Invariant($"  ·  background {statistics.MedianAdu:F0} ADU") +
-               FormattableString.Invariant($"  ·  noise {statistics.MadAdu:F0} ADU") +
-               FormattableString.Invariant($"  ·  peak {statistics.MaximumAdu:F0} ADU");
     }
 
     private void SeedProposalCoordinates(ProposalView? proposal)

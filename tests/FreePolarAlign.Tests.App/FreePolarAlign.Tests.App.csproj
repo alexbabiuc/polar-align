@@ -10,6 +10,19 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
+    <!--
+      Renders the real window off-screen so its layout can be asserted. Layout
+      only: no Skia, no drawing, no captured pixels. What this project needs to
+      check is that a panel stays inside the space it was given, and that is in
+      the bounds, not in the pixels.
+    -->
+    <PackageReference Include="Avalonia.Headless" Version="12.1.2" />
+    <!--
+      Skia, so text measures the way it measures in the real window. Headless
+      Avalonia's stub text shaper gives labels and controls different heights,
+      and the whole point here is how much room they leave for the picture.
+    -->
+    <PackageReference Include="Avalonia.Skia" Version="12.1.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>

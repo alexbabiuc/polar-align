@@ -199,7 +199,22 @@
       </ScrollViewer>
 
       <!-- ================= Measurement ================= -->
-      <Grid Grid.Column="1" RowDefinitions="Auto,*" RowSpacing="10">
+      <!--
+        The one column that does not scroll, and deliberately: the numbers stay
+        where they are and the frame view takes the height that is left.
+
+        Scrolling was tried here and is worse. Inside a ScrollViewer a child is
+        measured with unlimited height, so the image asked for its natural size
+        (a 1200x800 frame in a 566px-wide column wants 377px) and the column
+        scrolled even on a window with room to spare, putting the brightness
+        control below the fold on every session. Letting the image shrink to the
+        space available is what "Uniform" is for, and it only works when the
+        space available is finite.
+
+        ClipToBounds is the backstop: whatever the arithmetic, this column paints
+        inside its own bounds rather than over its neighbours.
+      -->
+      <Grid Grid.Column="1" x:Name="MeasurementColumn" RowDefinitions="Auto,*" RowSpacing="10" ClipToBounds="True">
         <Border Grid.Row="0" Classes="panel">
           <StackPanel Spacing="10">
             <TextBlock Classes="h" FontSize="18" Text="Alignment estimate" />
@@ -243,19 +258,66 @@
         </Border>
 
         <!--
-          The captured frame. A linear rendering of an astronomical exposure is a
-          black rectangle, so the default is a stretched view and the slider says
-          so; nothing measured is computed from these pixels.
+          The captured frame, always stretched. A linear rendering of an
+          astronomical exposure is a black rectangle, so showing one unstretched
+          was never a mode worth offering. The slider covers everything the old
+          on/off toggle did, and covers it continuously. Nothing measured is
+          computed from these pixels.
+
+          A DockPanel rather than a Grid with a star row, because the frame view
+          has to be whatever is *left over* and that is a subtraction, not a
+          share. The previous version asked a star row for the remaining height
+          and then put a 220px minimum on the image inside it: on a window short
+          enough that the header and slider already filled the panel
+          (any window with the install warnings banner showing), the panel
+          demanded 220px it had not been given, and the image was drawn
+          across the panels above and below it. Docking makes the leftover
+          height exactly the leftover height, including when that is nothing.
         -->
-        <Border Grid.Row="1" Classes="panel">
-          <Grid RowDefinitions="Auto,*,Auto,Auto" RowSpacing="6">
-            <Grid Grid.Row="0" ColumnDefinitions="Auto,*">
-              <TextBlock Grid.Column="0" Classes="h" Text="Captured frame" VerticalAlignment="Center" />
-              <CheckBox Grid.Column="1" Content="Stretch" IsChecked="{Binding AutoStretch, Mode=TwoWay}"
-                        HorizontalAlignment="Right" />
+        <!--
+          Deliberately no MinHeight: a minimum is exactly what made the panel
+          demand space it had not been given, and draw itself across its
+          neighbours when it did not get it. The row it sits in is the height
+          available, and the DockPanel inside hands the picture whatever the
+          header and the brightness control leave.
+        -->
+        <Border Grid.Row="1" x:Name="CapturedFramePanel" Classes="panel" ClipToBounds="True">
+          <DockPanel LastChildFill="True">
+            <!--
+              The correction reticle (D12) note lives on the title rather than on
+              a line of its own: it is a standing note about a feature that does
+              not exist yet, and a permanent line of it was taking its height
+              from the picture.
+            -->
+            <TextBlock DockPanel.Dock="Top" Classes="h" Text="Captured frame" Margin="0,0,0,6"
+                       ToolTip.Tip="Correction reticle (D12) still to come: its direction has to be derived from the solved CD matrix, and an arrow pointing the wrong way would be worse than none." />
+
+            <!--
+              Only shown when a frame will not open, and then it is not a detail
+              but the whole message: a camera writing truncated files, or a disk
+              that has filled up mid-session. Bottom-docked before the brightness
+              control so it sits at the very edge of the panel.
+            -->
+            <TextBlock DockPanel.Dock="Bottom" Classes="label" Foreground="#FFB0B0" TextWrapping="Wrap"
+                       Margin="0,6,0,0"
+                       Text="{Binding FramePreviewProblem}"
+                       IsVisible="{Binding HasFramePreviewProblem}" />
+
+            <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*" ColumnSpacing="8" Margin="0,6,0,0"
+                  ToolTip.Tip="The frame's darkest pixel is always black and its brightest always white. This moves the midpoint between them, so nothing is clipped at either end whichever way it is dragged.">
+              <TextBlock Grid.Column="0" Classes="label" Text="Brightness" VerticalAlignment="Center" />
+              <!--
+                Height pinned because the stock control reserves 50px for a
+                single horizontal track, and on a window at the minimum size
+                that comes straight out of the picture above it. 32px is as
+                tight as it goes: below that the thumb is clipped.
+              -->
+              <Slider Grid.Column="1" Minimum="0.02" Maximum="0.85" Value="{Binding StretchTarget, Mode=TwoWay}"
+                      TickFrequency="0.01" IsSnapToTickEnabled="True" Height="32" VerticalAlignment="Center" />
             </Grid>
 
-            <Border Grid.Row="1" Background="#0A0A0A" CornerRadius="3" MinHeight="220">
+            <!-- Fills whatever is left. -->
+            <Border Background="#0A0A0A" CornerRadius="3" ClipToBounds="True">
               <Grid>
                 <Image Source="{Binding FramePreview}" Stretch="Uniform"
                        IsVisible="{Binding HasFramePreview}" />
@@ -265,22 +327,7 @@
                            IsVisible="{Binding !HasFramePreview}" />
               </Grid>
             </Border>
-
-            <StackPanel Grid.Row="2" Spacing="2" IsVisible="{Binding StretchEnabled}">
-              <TextBlock Classes="label" Text="Brightness — drag right to lift the sky background" />
-              <Slider Minimum="0.02" Maximum="0.85" Value="{Binding StretchTarget, Mode=TwoWay}"
-                      TickFrequency="0.01" IsSnapToTickEnabled="True" />
-            </StackPanel>
-
-            <StackPanel Grid.Row="3" Spacing="2">
-              <TextBlock Classes="label" Text="{Binding FramePreviewCaption}" TextWrapping="Wrap" />
-              <TextBlock Classes="label" Foreground="#FFB0B0" TextWrapping="Wrap"
-                         Text="{Binding FramePreviewProblem}"
-                         IsVisible="{Binding HasFramePreviewProblem}" />
-              <TextBlock Classes="label" TextWrapping="Wrap"
-                         Text="Correction reticle (D12) still to come: its direction has to be derived from the solved CD matrix, and an arrow pointing the wrong way would be worse than none." />
-            </StackPanel>
-          </Grid>
+          </DockPanel>
         </Border>
       </Grid>
 
@@ -373,7 +420,13 @@
     </Grid>
 
     <!-- Commands (D6: buttons only ever send EngineCommands) and the event log. -->
-    <Grid Grid.Row="3" RowDefinitions="Auto,Auto,170" RowSpacing="6">
+    <!--
+      The log is a fixed height so the columns above it keep the rest. 120px
+      shows seven or eight lines, which is what anyone reads here before opening
+      the file itself; it was 170, taken from the frame view, which needed it
+      more on a window at the 720px minimum.
+    -->
+    <Grid Grid.Row="3" RowDefinitions="Auto,Auto,120" RowSpacing="6">
       <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
         <Button Content="Start sequence" Command="{Binding StartCommand}" />
         <Button Content="Cancel" Command="{Binding CancelCommand}" />

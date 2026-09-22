@@ -12,13 +12,14 @@ namespace FreePolarAlign.App.Services;
 /// open is itself diagnostic -- a camera writing truncated files, or a disk that
 /// has filled up mid-session.
 /// </param>
-public sealed record FramePreview(
-    Bitmap? Bitmap,
-    StretchStatistics? Statistics,
-    int SourceWidth,
-    int SourceHeight,
-    int Decimation,
-    string? Problem);
+/// <remarks>
+/// The stretch's statistics and the source dimensions used to travel with this
+/// and be printed under the picture. They are not carried any more: nothing
+/// displays them, and a preview that reported numbers nobody reads is a preview
+/// pretending to be a measurement. <see cref="ImageStretch"/> still computes
+/// them for the transform, so bringing them back is a field, not a rewrite.
+/// </remarks>
+public sealed record FramePreview(Bitmap? Bitmap, string? Problem);
 
 /// <summary>
 /// Reads a captured FITS frame from disk and turns it into something the window
@@ -45,31 +46,28 @@ public static class FramePreviewLoader
 
     private const int MaximumPreviewHeight = 1400;
 
-    public static Task<FramePreview> LoadAsync(string path, double targetBackground, bool autoStretch) =>
-        Task.Run(() => Load(path, targetBackground, autoStretch));
+    /// <param name="targetBackground">
+    /// Where the sky lands in the output range: the brightness control, and the
+    /// only display choice there is. The stretch itself is not optional -- an
+    /// unstretched astronomical exposure is a black rectangle, so the toggle
+    /// that used to offer one was offering a broken picture as a feature.
+    /// </param>
+    public static Task<FramePreview> LoadAsync(string path, double targetBackground) =>
+        Task.Run(() => Load(path, targetBackground));
 
-    private static FramePreview Load(string path, double targetBackground, bool autoStretch)
+    private static FramePreview Load(string path, double targetBackground)
     {
         try
         {
             FitsImage image = FitsFile.Read(path);
+            ImagePreview preview = ImageStretch.Create(image, targetBackground, MaximumPreviewWidth, MaximumPreviewHeight);
 
-            ImagePreview preview = autoStretch
-                ? ImageStretch.Create(image, targetBackground, MaximumPreviewWidth, MaximumPreviewHeight)
-                : ImageStretch.CreateLinear(image, MaximumPreviewWidth, MaximumPreviewHeight);
-
-            return new FramePreview(
-                ToBitmap(preview),
-                preview.Statistics,
-                preview.SourceWidth,
-                preview.SourceHeight,
-                preview.Decimation,
-                Problem: null);
+            return new FramePreview(ToBitmap(preview), Problem: null);
         }
         catch (Exception ex) when (ex is IOException or FormatException or UnauthorizedAccessException
                                    or InvalidDataException or ArgumentException)
         {
-            return new FramePreview(null, null, 0, 0, 1, $"Could not read '{Path.GetFileName(path)}': {ex.Message}");
+            return new FramePreview(null, $"Could not read '{Path.GetFileName(path)}': {ex.Message}");
         }
     }
 

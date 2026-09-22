@@ -32,4 +32,51 @@
     <None Include="..\..\docs\fixtures\tycho2_subset.csv" Link="fixtures\tycho2_subset.csv" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!--
+    Stamps the git commit into the assembly's informational version, so the
+    session log's first line can name the exact build that wrote it (see
+    Services/AppVersion.cs for why that turned out to matter). The SDK appends
+    "+$(SourceRevisionId)" to InformationalVersion on its own once the property
+    is set.
+
+    ContinueOnError and IgnoreExitCode throughout: a build from a source archive,
+    or on a machine without git, must still succeed. It just has no commit to
+    report, and AppVersion says so rather than claiming a wrong one. Only this
+    project runs it, since only this project logs the result.
+  -->
+  <Target Name="StampSourceRevision"
+          BeforeTargets="GetAssemblyVersion;GenerateAssemblyInfo"
+          Condition="'$(SourceRevisionId)' == ''">
+    <Exec Command="git rev-parse --short=12 HEAD"
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          ConsoleToMSBuild="true"
+          StandardOutputImportance="low"
+          StandardErrorImportance="low"
+          ContinueOnError="true"
+          IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_GitCommit" />
+      <Output TaskParameter="ExitCode" PropertyName="_GitCommitExitCode" />
+    </Exec>
+
+    <!--
+      Uncommitted changes get a "dirty" suffix. Without it the stamp would name
+      a commit whose code is not what is actually running, which is the very
+      confusion this target exists to end.
+    -->
+    <Exec Command="git status --porcelain --untracked-files=no"
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          ConsoleToMSBuild="true"
+          StandardOutputImportance="low"
+          StandardErrorImportance="low"
+          ContinueOnError="true"
+          IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_GitStatus" />
+    </Exec>
+
+    <PropertyGroup Condition="'$(_GitCommitExitCode)' == '0' and '$(_GitCommit)' != ''">
+      <SourceRevisionId>$(_GitCommit.Trim())</SourceRevisionId>
+      <SourceRevisionId Condition="'$(_GitStatus)' != ''">$(_GitCommit.Trim())-dirty</SourceRevisionId>
+    </PropertyGroup>
+  </Target>
+
 </Project>

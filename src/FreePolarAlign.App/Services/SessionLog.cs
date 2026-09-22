@@ -62,6 +62,12 @@ public sealed class SessionLog : IDisposable
 
             var log = new SessionLog(writer, path, null);
             log.Write(LogSeverity.Info, $"free-polar-align session log started {DateTimeOffset.UtcNow:O}.");
+
+            // Immediately after the start line, before anything can go wrong:
+            // every later line in this file is only interpretable if you know
+            // which build wrote it. See AppVersion for the incident that taught
+            // us that.
+            log.Write(LogSeverity.Info, AppVersion.Describe());
             return log;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)

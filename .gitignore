@@ -7,3 +7,6 @@ obj/
 
 # Local build output for Windows hardware deployment (large; not part of source).
 /dist/
+
+# Frames dropped here for diagnosis, replaced whenever something needs looking at.
+/test_data/

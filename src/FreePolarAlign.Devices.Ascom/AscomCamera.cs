@@ -277,7 +277,9 @@ public sealed class AscomCamera : ICamera
             throw new AscomPlatformNotAvailableException($"Failed to read ImageArray from ASCOM camera '{_progId}': {ex.Message}", ex);
         }
 
-        FitsImage fitsImage = BuildFitsImage(imageArray);
+        // Asked per capture rather than cached: MaxADU tracks the selected
+        // readout mode, so a mode change between exposures changes the answer.
+        FitsImage fitsImage = BuildFitsImage(imageArray, TryGetBitDepth());
 
         Directory.CreateDirectory(_workingDirectory);
         string path = Path.Combine(_workingDirectory, $"{startUtc:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}.fits");
@@ -315,12 +317,18 @@ public sealed class AscomCamera : ICamera
     /// <summary>
     /// Converts an ASCOM <c>ImageArray</c> (2D, indexed <c>[x, y]</c>) into a
     /// <see cref="FitsImage"/> (indexed <c>[y, x]</c> per that type's own
-    /// convention). BITPIX is fixed at 32-bit integer: ASCOM's ImageArray is
-    /// documented to return whichever integer width the driver's SafeArray
-    /// uses (commonly Int32), and widening everything to Int32 loses nothing
-    /// for real sensor bit depths (typically 8-16 bits).
+    /// convention).
+    ///
+    /// The on-disk type is <see cref="FitsImage.ForCapturedFrame"/>'s business,
+    /// given the depth the driver reports for the selected readout mode, and it
+    /// matters more than it looks: this method used to fix BITPIX at 32 on
+    /// the reasoning that ASCOM's ImageArray is an Int32 SafeArray and widening
+    /// loses nothing. It loses no data, and it lost every solve -- Watney
+    /// detects zero stars in a BITPIX 32 frame, so every capture against real
+    /// hardware failed with NoStarsDetected while the simulator, which writes
+    /// 16-bit, solved perfectly. See that method for the measurement.
     /// </summary>
-    private static FitsImage BuildFitsImage(Array imageArray)
+    private static FitsImage BuildFitsImage(Array imageArray, int? bitsPerPixel)
     {
         if (imageArray.Rank != 2)
         {
@@ -341,7 +349,7 @@ public sealed class AscomCamera : ICamera
             }
         }
 
-        return new FitsImage(width, height, FitsBitPix.Int32, 0.0, 1.0, pixels);
+        return FitsImage.ForCapturedFrame(width, height, pixels, bitsPerPixel);
     }
 
     public void Dispose()

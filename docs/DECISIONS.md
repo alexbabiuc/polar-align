@@ -723,6 +723,53 @@ costs only a retype.
 
 ---
 
+## D20 — Captured frames are written at the camera's own depth
+
+A captured frame is written as 8-bit unsigned when the driver reports an 8-bit
+readout mode, 16-bit unsigned (BZERO 32768) when it reports anything from 9 to
+16 bits, and otherwise at whatever the frame's own range requires. The depth is
+never widened for convenience.
+
+**Why.** The ASCOM path used to write BITPIX 32 unconditionally, on the
+reasoning that ASCOM's `ImageArray` is an Int32 SafeArray and widening loses no
+data. No data is lost, and every solve was: Watney detects **zero** stars in a
+BITPIX 32 frame. Measured on one real frame, the identical pixels written as
+BITPIX 16 gave 176 detected stars and a solve in 651 ms, and as BITPIX 32 gave
+zero stars and `NoStarsDetected`. Sensor values occupy the bottom sixteen bits
+either way, so in a 32-bit container the frame reads as very nearly black to
+anything that scales by the container's range rather than the data's. Watney's
+own error text claims BITPIX 8, 16 and 32 are supported; 32 measurably is not.
+
+The depth comes from the driver rather than from the pixels because the pixels
+cannot answer it: a dark 16-bit frame whose brightest pixel happens to fall
+under 255 is not an 8-bit frame, and only the driver knows the difference. It is
+believed only as far as the data allows — a driver claiming 8 bits while
+returning values past 255 is contradicting itself, and the data wins, because
+honouring the claim there would discard most of the frame. Values that fit no
+integer depth at all (a negative pedestal, binned wells past 65535) get BZERO
+and BSCALE chosen to fit, which is what FITS provides them for.
+
+**Consequences.** The capture path and the simulator now agree on what a frame
+looks like on disk, which they did not before — and that disagreement is exactly
+why nothing caught this. The simulator wrote 16-bit and solved perfectly through
+every end-to-end test while every frame from real hardware failed. A test that
+renders a star field, writes it *through the capture path*, and solves it now
+guards the class: it fails on the old behaviour with the same `NoStarsDetected`
+the field reported.
+
+**Open, and not this decision's to close.** Two of four real frames from the
+same session still fail to match under Watney with plenty of stars detected
+(64 and 95), while nova.astrometry.net solves them. The frames are good — 91 of
+150 detections fall within 4 px of a Tycho-2 star, median residual 1.6 px, no
+meaningful distortion — and the index covers the position, since a synthetic
+field built from catalogue stars at that exact position solves in 561 ms. The
+two that fail are the two sparsest fields (12 and 18 stars/deg², against 24 and
+33 for the two that solve). Binning, blurring, cropping, exact position hints
+and wider density passes were all tried and none changed the outcome. D3's
+optional ASTAP is the obvious fallback.
+
+---
+
 ## Open decisions
 
 **O1 — Licence.** ~~MIT is the natural fit and imposes nothing on Watney. GPL

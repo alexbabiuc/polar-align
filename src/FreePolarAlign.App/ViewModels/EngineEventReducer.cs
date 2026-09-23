@@ -33,6 +33,15 @@ public static class EngineEventReducer
 
             DeviceDisconnectedEvent e => ApplyDisconnected(withLog, e),
 
+            CameraSetupDialogChangedEvent e => withLog with
+            {
+                CameraSetupDialogOpen = e.IsOpen,
+                RejectionReason = null,
+                StatusMessage = e.IsOpen
+                    ? "The camera driver's settings window is open. Close it to carry on."
+                    : "Camera driver settings closed.",
+            },
+
             SiteConfiguredEvent e => withLog with
             {
                 SiteLatitudeDegrees = e.LatitudeDegrees,
@@ -249,6 +258,7 @@ public static class EngineEventReducer
                 CameraHeightPixels = e.Camera?.SensorHeightPixels ?? 0,
                 ReadoutModes = e.Camera?.ReadoutModes ?? Array.Empty<CameraReadoutModeDescription>(),
                 ReadoutModeIndex = e.Camera?.ReadoutModeIndex,
+                CameraHasSetupDialog = e.Camera?.HasSetupDialog ?? false,
                 RejectionReason = null,
                 StatusMessage = $"Camera connected: {e.DisplayName}.",
             };
@@ -282,6 +292,7 @@ public static class EngineEventReducer
                 CameraHeightPixels = 0,
                 ReadoutModes = Array.Empty<CameraReadoutModeDescription>(),
                 ReadoutModeIndex = null,
+                CameraHasSetupDialog = false,
                 StatusMessage = e.Reason ?? "Camera disconnected.",
             };
         }

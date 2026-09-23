@@ -89,6 +89,33 @@ public interface ICamera : IDisposable
     /// </summary>
     Task SetReadoutModeAsync(int index, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// True when the driver has a settings window of its own that this
+    /// application can put in front of the user.
+    ///
+    /// It matters because there are camera settings this project deliberately
+    /// does not model -- gain, offset, USB bandwidth, cooling -- and on a real
+    /// driver they decide whether a frame is usable at all. The alternative to
+    /// opening the driver's own window is either reimplementing its settings or
+    /// telling the user to go and find another program, and both are worse.
+    ///
+    /// Defaulted to false so that a camera which has no such window, or a test
+    /// double which has no driver at all, says so by saying nothing.
+    /// </summary>
+    bool HasSetupDialog => false;
+
+    /// <summary>
+    /// Shows the driver's own settings window and returns when the user closes
+    /// it.
+    ///
+    /// Blocking is the contract, not an implementation accident. The window
+    /// changes the state of the device this application is about to expose
+    /// frames with, so the caller has to know when it is finished -- and the
+    /// caller is expected to refuse every other operation until it is.
+    /// </summary>
+    Task ShowSetupDialogAsync(CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException($"Camera '{Name}' has no driver settings window.");
+
     Task ConnectAsync(CancellationToken cancellationToken = default);
 
     Task DisconnectAsync(CancellationToken cancellationToken = default);

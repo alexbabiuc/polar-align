@@ -244,6 +244,9 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 case SetReadoutModeCommand readout:
                     await SetReadoutModeAsync(readout, cancellationToken).ConfigureAwait(false);
                     break;
+                case OpenCameraSetupDialogCommand:
+                    await OpenCameraSetupDialogAsync(cancellationToken).ConfigureAwait(false);
+                    break;
                 case StartSessionCommand start:
                     await StartAsync(start, cancellationToken).ConfigureAwait(false);
                     break;
@@ -350,7 +353,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 camera.SensorWidthPixels,
                 camera.SensorHeightPixels,
                 camera.ReadoutModes.Select(Describe).ToArray(),
-                camera.ReadoutModeIndex)));
+                camera.ReadoutModeIndex,
+                camera.HasSetupDialog)));
 
         PublishEquipment();
     }
@@ -644,6 +648,82 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         }
 
         CameraReadoutMode mode = _camera.ReadoutModes[command.Index];
+        _events.Publish(new ReadoutModeChangedEvent(mode.Index, mode.Name, mode.BitDepth));
+    }
+
+    /// <summary>
+    /// Puts the driver's own settings window in front of the user and waits for
+    /// it to close.
+    ///
+    /// The wait happens inside the command gate, so no other command runs while
+    /// the window is open. That is deliberate: the window changes the device the
+    /// next exposure comes from, and a capture straddling it would be taken
+    /// half under the old settings and half under the new. The events either
+    /// side let the UI refuse clicks for the same reason -- an application that
+    /// looked idle while another window held the device would invite exactly
+    /// that overlap.
+    /// </summary>
+    private async Task OpenCameraSetupDialogAsync(CancellationToken cancellationToken)
+    {
+        if (_camera is null || !_camera.IsConnected)
+        {
+            _events.Publish(new CommandRejectedEvent(
+                "Connect a camera before opening its driver settings."));
+            return;
+        }
+
+        if (_sessionActive)
+        {
+            _events.Publish(new CommandRejectedEvent(
+                "Cannot change driver settings during a sequence. The frames already captured would have been " +
+                "taken under different settings, and the fit weights them all alike."));
+            return;
+        }
+
+        if (!_camera.HasSetupDialog)
+        {
+            _events.Publish(new CommandRejectedEvent(
+                $"'{_camera.Name}' has no driver settings window to open."));
+            return;
+        }
+
+        _events.Publish(new CameraSetupDialogChangedEvent(IsOpen: true));
+        try
+        {
+            await _camera.ShowSetupDialogAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _events.Publish(new CommandRejectedEvent(
+                $"The camera driver could not show its settings window: {ex.Message}"));
+        }
+        finally
+        {
+            // In a finally block because the alternative is an application
+            // permanently convinced a window is open and refusing every command
+            // for the rest of the session.
+            _events.Publish(new CameraSetupDialogChangedEvent(IsOpen: false));
+        }
+
+        // The window may have changed the readout mode, and the depth this
+        // reports is read from whatever mode is now current.
+        PublishReadoutMode();
+    }
+
+    /// <summary>Re-reports the camera's current readout mode, for when something outside this class may have changed it.</summary>
+    private void PublishReadoutMode()
+    {
+        if (_camera?.ReadoutModeIndex is not { } index ||
+            index < 0 || index >= _camera.ReadoutModes.Count)
+        {
+            return;
+        }
+
+        CameraReadoutMode mode = _camera.ReadoutModes[index];
         _events.Publish(new ReadoutModeChangedEvent(mode.Index, mode.Name, mode.BitDepth));
     }
 

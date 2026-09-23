@@ -104,12 +104,19 @@ public sealed record CapturePoint(
 /// common case: most cameras have one readout, and presenting a menu of one
 /// implies a decision the user does not have to make.
 /// </param>
+/// <param name="HasSetupDialog">
+/// True when the driver has a settings window of its own. Reported at connect
+/// time because it decides whether the UI can offer to open it, and there are
+/// settings behind that window -- gain above all -- that this project does not
+/// model and that decide whether a frame is usable.
+/// </param>
 public sealed record CameraDescription(
     double PixelSizeMicrons,
     int SensorWidthPixels,
     int SensorHeightPixels,
     IReadOnlyList<CameraReadoutModeDescription>? ReadoutModes = null,
-    int? ReadoutModeIndex = null);
+    int? ReadoutModeIndex = null,
+    bool HasSetupDialog = false);
 
 /// <param name="BitDepth">
 /// Bits per pixel where the driver reveals it, null otherwise. Null is a real
@@ -175,6 +182,22 @@ public sealed record RefreshMountStatusCommand : EngineCommand;
 /// the fit weights them all alike.
 /// </summary>
 public sealed record SetReadoutModeCommand(int Index) : EngineCommand;
+
+/// <summary>
+/// Open the camera driver's own settings window, and do not return until the
+/// user closes it.
+///
+/// The engine handles this like any other command, which means it holds the
+/// command gate for as long as the window is open and nothing else runs. That
+/// is the intent rather than a side effect: the window changes the device the
+/// next exposure will come from, so a capture overlapping it would be taken
+/// half under the old settings and half under the new.
+///
+/// Refused during a sequence for the same reason the readout mode is: the
+/// frames already captured would have been taken under different settings, and
+/// the fit weights them all alike.
+/// </summary>
+public sealed record OpenCameraSetupDialogCommand : EngineCommand;
 
 /// <summary>
 /// Plan a sequence anchored where the mount is already pointing. Connects
@@ -243,6 +266,16 @@ public sealed record DeviceConnectedEvent(
     string DriverInfo,
     CameraDescription? Camera = null,
     bool CanSlew = false) : EngineEvent;
+
+/// <summary>
+/// The camera driver's settings window has opened or closed.
+///
+/// Published either side of a blocking call, so a UI can refuse every other
+/// operation while it is open. Without it the application would sit there
+/// looking idle and accepting clicks while a modal window belonging to another
+/// process's UI stack had the device.
+/// </summary>
+public sealed record CameraSetupDialogChangedEvent(bool IsOpen) : EngineEvent;
 
 /// <param name="Reason">Null for a deliberate disconnect; a message when the device dropped or failed to open.</param>
 public sealed record DeviceDisconnectedEvent(DeviceKind Kind, string? Reason = null) : EngineEvent;

@@ -130,36 +130,44 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             _state = _state with { StatusMessage = "No engine available. See the warnings above." };
         }
 
+        // Every predicate starts from Ready, which is "there is an engine and it
+        // is not blocked behind the driver's settings window". Repeating the
+        // second half in each of them is exactly the kind of condition that gets
+        // added to nine commands and forgotten on the tenth.
         ConnectCameraCommand = new RelayCommand(
             () => ConnectAsync(DeviceKind.Camera, SelectedCamera),
-            () => _engine is not null && SelectedCamera is not null && !State.Camera.IsConnected && !State.SessionActive);
+            () => Ready && SelectedCamera is not null && !State.Camera.IsConnected && !State.SessionActive);
 
         DisconnectCameraCommand = new RelayCommand(
             () => SendAsync(new DisconnectDeviceCommand(DeviceKind.Camera)),
-            () => _engine is not null && State.Camera.IsConnected && !State.SessionActive);
+            () => Ready && State.Camera.IsConnected && !State.SessionActive);
+
+        OpenCameraSetupCommand = new RelayCommand(
+            () => SendAsync(new OpenCameraSetupDialogCommand()),
+            () => Ready && State.Camera.IsConnected && State.CameraHasSetupDialog && !State.SessionActive);
 
         ConnectMountCommand = new RelayCommand(
             () => ConnectAsync(DeviceKind.Mount, SelectedMount),
-            () => _engine is not null && SelectedMount is not null && !State.Mount.IsConnected && !State.SessionActive);
+            () => Ready && SelectedMount is not null && !State.Mount.IsConnected && !State.SessionActive);
 
         DisconnectMountCommand = new RelayCommand(
             () => SendAsync(new DisconnectDeviceCommand(DeviceKind.Mount)),
-            () => _engine is not null && State.Mount.IsConnected && !State.SessionActive);
+            () => Ready && State.Mount.IsConnected && !State.SessionActive);
 
-        ConfirmSiteCommand = new RelayCommand(ConfirmSiteAsync, () => _engine is not null && !State.SessionActive);
+        ConfirmSiteCommand = new RelayCommand(ConfirmSiteAsync, () => Ready && !State.SessionActive);
 
         ApplyFocalLengthCommand = new RelayCommand(
             ApplyFocalLengthAsync,
-            () => _engine is not null && State.Camera.IsConnected);
+            () => Ready && State.Camera.IsConnected);
 
         StartCommand = new RelayCommand(
             StartAsync,
-            () => _engine is not null && !State.SessionActive &&
+            () => Ready && !State.SessionActive &&
                   State.Camera.IsConnected && State.Mount.IsConnected && State.IsSiteConfigured);
 
         ConfirmProposalCommand = new RelayCommand(
             ConfirmProposalAsync,
-            () => _engine is not null && State.Proposal is not null);
+            () => Ready && State.Proposal is not null);
 
         RestoreProposalCoordinatesCommand = new RelayCommand(
             () =>
@@ -168,15 +176,15 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
                 EntryError = null;
                 return Task.CompletedTask;
             },
-            () => State.Proposal is not null);
+            () => !State.CameraSetupDialogOpen && State.Proposal is not null);
 
         CancelCommand = new RelayCommand(
             () => SendAsync(new CancelSessionCommand()),
-            () => _engine is not null && State.SessionActive);
+            () => Ready && State.SessionActive);
 
         AbortCommand = new RelayCommand(
             () => SendAsync(new AbortSessionCommand("Aborted by operator.")),
-            () => _engine is not null && State.SessionActive);
+            () => Ready && State.SessionActive);
 
         _subscription = _engine?.Events.Subscribe(new DelegateObserver<EngineEvent>(OnEngineEvent));
     }
@@ -189,6 +197,17 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     public IReadOnlyList<string> Warnings { get; }
 
     public bool HasWarnings => Warnings.Count > 0;
+
+    /// <summary>
+    /// There is an engine, and it is not blocked behind the camera driver's
+    /// settings window. Every command's precondition begins here.
+    ///
+    /// The window matters because the engine holds its command gate for as long
+    /// as it is open, so anything sent meanwhile does not fail -- it queues, and
+    /// then runs later against a camera whose settings have changed. Refusing at
+    /// the button is what makes that impossible rather than merely unlikely.
+    /// </summary>
+    private bool Ready => _engine is not null && !State.CameraSetupDialogOpen;
 
     public string WarningText => string.Join(Environment.NewLine + Environment.NewLine, Warnings);
 
@@ -211,6 +230,13 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     public RelayCommand ConfirmSiteCommand { get; }
 
     public RelayCommand ApplyFocalLengthCommand { get; }
+
+    /// <summary>
+    /// Opens the camera driver's own settings window. Everything this project
+    /// deliberately does not model lives behind it -- gain above all, which the
+    /// application never sets and which decides whether the sky swamps the stars.
+    /// </summary>
+    public RelayCommand OpenCameraSetupCommand { get; }
 
     public RelayCommand StartCommand { get; }
 
@@ -388,6 +414,22 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     /// shows nothing here rather than a menu of one.
     /// </summary>
     public bool HasReadoutModes => State.ReadoutModes.Count > 0;
+
+    /// <summary>
+    /// Whether to offer the driver settings button at all. Shown only once a
+    /// camera whose driver has such a window is connected: before that there is
+    /// no driver to ask, and a button that is always there and usually dead
+    /// teaches the user to ignore it.
+    /// </summary>
+    public bool HasCameraSetupDialog => State.CameraHasSetupDialog;
+
+    /// <summary>
+    /// True while the driver's settings window is open, which is when the rest
+    /// of the window must refuse to do anything. The engine is blocked waiting
+    /// on that window in any case, so a UI that still took clicks would only be
+    /// queueing them behind something it cannot see.
+    /// </summary>
+    public bool IsCameraSetupDialogOpen => State.CameraSetupDialogOpen;
 
     /// <summary>
     /// Where the sky background is placed in the preview. This is the "make it
@@ -979,6 +1021,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
         ConnectCameraCommand.RaiseCanExecuteChanged();
         DisconnectCameraCommand.RaiseCanExecuteChanged();
+        OpenCameraSetupCommand.RaiseCanExecuteChanged();
         ConnectMountCommand.RaiseCanExecuteChanged();
         DisconnectMountCommand.RaiseCanExecuteChanged();
         ConfirmSiteCommand.RaiseCanExecuteChanged();
@@ -1040,6 +1083,8 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(CaptureWarning),
         nameof(ReadoutModes),
         nameof(HasReadoutModes),
+        nameof(HasCameraSetupDialog),
+        nameof(IsCameraSetupDialogOpen),
         nameof(HasRejectionReason),
         nameof(RejectionReason),
         nameof(HasManualInstruction),

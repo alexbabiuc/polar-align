@@ -29,7 +29,21 @@
     </Style>
   </Window.Styles>
 
-  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="12" RowSpacing="8">
+  <Panel>
+
+    <!--
+      Everything is disabled while the driver's settings window is open, which
+      is the whole of "modal" as far as this application can enforce it. The
+      window belongs to the driver and sits on its own UI stack, so this process
+      cannot own it; what it can do is refuse to do anything else, which is what
+      the binding below does.
+
+      The engine is blocked anyway, holding the command gate for as long as the
+      window is up, so clicks that got through would queue behind something the
+      user cannot see and arrive in a surprising order once it closed.
+    -->
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="12" RowSpacing="8"
+        IsEnabled="{Binding !IsCameraSetupDialogOpen}">
 
     <!--
       Standing install-level warnings: a missing quad database (D13), a plugin
@@ -69,6 +83,16 @@
               <StackPanel Orientation="Horizontal" Spacing="6">
                 <Button Content="Connect" Command="{Binding ConnectCameraCommand}" />
                 <Button Content="Disconnect" Command="{Binding DisconnectCameraCommand}" />
+                <!--
+                  Shown only once a camera whose driver has such a window is
+                  connected. Gain, offset, USB bandwidth and cooling live behind
+                  it; this application models none of them and never sets them,
+                  so a camera left at a high gain by whatever ran last stays
+                  there, and the only fix is the driver's own window.
+                -->
+                <Button Content="Driver settings..." Command="{Binding OpenCameraSetupCommand}"
+                        IsVisible="{Binding HasCameraSetupDialog}"
+                        ToolTip.Tip="Opens the ASCOM driver's own settings window. Everything stops until you close it." />
               </StackPanel>
               <TextBlock Classes="value" Text="{Binding CameraSummary}" />
               <TextBlock Classes="label" Text="Sensor" />
@@ -472,4 +496,22 @@
       </Border>
     </Grid>
   </Grid>
+
+    <!--
+      Over the top, and hit-testable: a disabled control still lets a click
+      through to whatever is behind it, and the point here is that nothing is
+      behind it.
+    -->
+    <Border IsVisible="{Binding IsCameraSetupDialogOpen}" Background="#CC101010">
+      <Border Classes="panel" Background="#1E1E1E" MaxWidth="460"
+              HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel Spacing="8">
+          <TextBlock Classes="h" Text="The camera driver's settings window is open" />
+          <TextBlock Classes="label" TextWrapping="Wrap"
+                     Text="It may have opened behind this window. Close it to carry on -- nothing else can happen until it is closed, because the settings behind it decide what the next exposure looks like." />
+        </StackPanel>
+      </Border>
+    </Border>
+
+  </Panel>
 </Window>

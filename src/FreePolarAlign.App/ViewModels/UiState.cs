@@ -83,6 +83,21 @@ public sealed record UiState
     public int? ReadoutModeIndex { get; init; }
 
     /// <summary>
+    /// True when the connected camera's driver has a settings window this
+    /// application can open. False for the simulator, and for any camera that is
+    /// not reached through a driver with one.
+    /// </summary>
+    public bool CameraHasSetupDialog { get; init; }
+
+    /// <summary>
+    /// True while that window is open. Everything else must be refused until it
+    /// closes: the window changes the device the next exposure comes from, and
+    /// the engine is in any case blocked waiting for it, so a UI that still
+    /// accepted clicks would only queue them up behind a window it could not see.
+    /// </summary>
+    public bool CameraSetupDialogOpen { get; init; }
+
+    /// <summary>
     /// The most recently exposed frame, on disk. Set as soon as the exposure
     /// finishes and before the solve is attempted, because a frame the solver
     /// could not read is exactly the one worth looking at.

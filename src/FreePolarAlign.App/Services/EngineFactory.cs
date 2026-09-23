@@ -103,7 +103,9 @@ public static class EngineFactory
         // distinction decides how tightly the solver is allowed to bound its
         // search. It is re-measured from the first solve of the night anyway.
         var options = new AlignmentSessionOptions(
-            EquipmentProfile: null);
+            EquipmentProfile: null,
+            ApplicationName: AppVersion.ProductName,
+            ApplicationVersion: AppVersion.Identifier());
 
         var session = new AlignmentSession(catalog, solver, options);
 

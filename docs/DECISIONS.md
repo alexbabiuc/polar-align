@@ -749,6 +749,18 @@ honouring the claim there would discard most of the frame. Values that fit no
 integer depth at all (a negative pedestal, binned wells past 65535) get BZERO
 and BSCALE chosen to fit, which is what FITS provides them for.
 
+**Every frame also carries its provenance**, since the same investigation was
+slowed by files that said nothing about themselves: capture software and
+version, camera, pixel size, exposure start *and* midpoint, the focal length in
+use and the pixel scale it implies, and the mount's reported position. The
+conventional keywords, so other astronomy software reads them without being
+told. The mount's position goes in `RA`/`DEC` and `OBJCTRA`/`OBJCTDEC` and
+never in `CRVAL1`/`CRVAL2`: the CRVAL keywords assert a *solved* centre, and a
+mount's belief is wrong by exactly the error this software exists to measure —
+writing it there would make every capture look like a plate solution, to this
+program as much as to any other. What is not known is omitted rather than
+written as zero, because a zero focal length reads as a measurement.
+
 **Consequences.** The capture path and the simulator now agree on what a frame
 looks like on disk, which they did not before — and that disagreement is exactly
 why nothing caught this. The simulator wrote 16-bit and solved perfectly through

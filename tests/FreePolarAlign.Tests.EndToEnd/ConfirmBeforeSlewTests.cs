@@ -114,7 +114,11 @@ public class ConfirmBeforeSlewTests
             return Task.CompletedTask;
         }
 
-        public Task<CapturedImage> ExposeAsync(TimeSpan duration, CancellationToken cancellationToken = default)
+        /// <summary>What the session handed down with the most recent exposure.</summary>
+        public CaptureContext? LastContext { get; private set; }
+
+        public Task<CapturedImage> ExposeAsync(
+            TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default)
         {
             if (!IsConnected)
             {
@@ -122,6 +126,7 @@ public class ConfirmBeforeSlewTests
             }
 
             Exposures++;
+            LastContext = context;
             return Task.FromResult(new CapturedImage("stub.fits", DateTime.UtcNow, duration));
         }
 
@@ -653,6 +658,32 @@ public class ConfirmBeforeSlewTests
         Assert.True(frameAt >= 0, harness.Recorder.Trail());
         Assert.True(frameAt < solvedAt, "the frame must be available before the solve resolves it");
         Assert.Equal(1, harness.Recorder.Last<FrameCapturedEvent>()!.PointIndex);
+    }
+
+    /// <summary>
+    /// The session tells the camera what only the session knows, so the frame
+    /// can record it.
+    ///
+    /// Where the mount believes it is pointing and what focal length is in use
+    /// are not the camera's to discover, and a frame found in a temp directory
+    /// afterwards is a rectangle of numbers without them. The position asserted
+    /// here is the one the session had just read from the mount and published,
+    /// so the frame and the event agree about the same instant.
+    /// </summary>
+    [Fact]
+    public async Task TheCameraIsToldWhereTheMountThinksItIsPointing()
+    {
+        using var harness = new Harness();
+        await harness.ReadyAsync();
+
+        await harness.Session.SendAsync(new CaptureNextPointCommand());
+
+        CaptureContext? context = harness.Camera.LastContext;
+        Assert.NotNull(context);
+
+        MountStatusEvent status = harness.Recorder.Last<MountStatusEvent>()!;
+        Assert.Equal(status.RaDegrees, context!.MountRaDegrees!.Value, precision: 9);
+        Assert.Equal(status.DecDegrees, context.MountDecDegrees!.Value, precision: 9);
     }
 
     /// <summary>

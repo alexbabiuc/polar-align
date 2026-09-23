@@ -112,7 +112,8 @@ public sealed class SimulatedCamera : ICamera
         return Task.CompletedTask;
     }
 
-    public async Task<CapturedImage> ExposeAsync(TimeSpan duration, CancellationToken cancellationToken = default)
+    public async Task<CapturedImage> ExposeAsync(
+        TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default)
     {
         if (!IsConnected)
         {
@@ -155,6 +156,13 @@ public sealed class SimulatedCamera : ICamera
             new Random(Options.RandomSeed + Interlocked.Increment(ref _exposureCount)));
 
         FitsImage frame = WithoutPlateSolution(AtReadoutDepth(rendered), duration);
+
+        // The same provenance a real capture carries, so a simulated frame and
+        // a real one can be looked at with the same tools and told apart by
+        // what they say rather than by where they came from.
+        frame = new FitsImage(
+            frame.Width, frame.Height, frame.BitPix, frame.Bzero, frame.Bscale, frame.Pixels,
+            CaptureHeader.Build(frame.ExtraHeader, this, duration, start, midpoint, context));
 
         string path = Path.Combine(_workingDirectory, $"capture-{_exposureCount:D4}.fits");
         FitsFile.Write(path, frame);

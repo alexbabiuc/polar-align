@@ -240,7 +240,8 @@ public sealed class AscomCamera : ICamera
         return Task.CompletedTask;
     }
 
-    public async Task<CapturedImage> ExposeAsync(TimeSpan duration, CancellationToken cancellationToken = default)
+    public async Task<CapturedImage> ExposeAsync(
+        TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -280,12 +281,19 @@ public sealed class AscomCamera : ICamera
         // Asked per capture rather than cached: MaxADU tracks the selected
         // readout mode, so a mode change between exposures changes the answer.
         FitsImage fitsImage = BuildFitsImage(imageArray, TryGetBitDepth());
+        DateTime midpointUtc = AscomMapping.ComputeExposureMidpointUtc(startUtc, duration);
+
+        // Everything known about this frame at the moment it was taken, written
+        // into it: a file recovered from a temp directory later is otherwise a
+        // rectangle of numbers.
+        FitsImage described = new(
+            fitsImage.Width, fitsImage.Height, fitsImage.BitPix, fitsImage.Bzero, fitsImage.Bscale, fitsImage.Pixels,
+            CaptureHeader.Build(fitsImage.ExtraHeader, this, duration, startUtc, midpointUtc, context));
 
         Directory.CreateDirectory(_workingDirectory);
         string path = Path.Combine(_workingDirectory, $"{startUtc:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}.fits");
-        FitsFile.Write(path, fitsImage);
+        FitsFile.Write(path, described);
 
-        DateTime midpointUtc = AscomMapping.ComputeExposureMidpointUtc(startUtc, duration);
         return new CapturedImage(path, midpointUtc, duration);
     }
 

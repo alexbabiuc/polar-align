@@ -57,7 +57,9 @@ public sealed record AlignmentSessionOptions(
     bool ManualMode = false,
     double ExpectedSolveNoiseArcseconds = 3.0,
     AtmosphericConditions? Atmosphere = null,
-    EquipmentProfile? EquipmentProfile = null)
+    EquipmentProfile? EquipmentProfile = null,
+    string? ApplicationName = null,
+    string? ApplicationVersion = null)
 {
     public TimeSpan EffectiveExposure => ExposureDuration == default ? TimeSpan.FromSeconds(2) : ExposureDuration;
 
@@ -1070,8 +1072,19 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 return;
             }
 
+            // Handed to the camera rather than looked up by it: where the mount
+            // believes it is pointing and what focal length is in use are the
+            // session's knowledge, and they are the two things that make a frame
+            // found afterwards interpretable.
+            var captureContext = new CaptureContext(
+                _options.ApplicationName,
+                _options.ApplicationVersion,
+                position.RaDegrees,
+                position.DecDegrees,
+                _profile?.FocalLengthMillimetres);
+
             CapturedImage captured = await _camera!
-                .ExposeAsync(_exposure, cancellationToken).ConfigureAwait(false);
+                .ExposeAsync(_exposure, captureContext, cancellationToken).ConfigureAwait(false);
 
             // Announced before the solve is attempted, so that a frame the
             // solver cannot make sense of is still on screen while the user

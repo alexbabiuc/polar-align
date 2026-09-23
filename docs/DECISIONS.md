@@ -870,6 +870,55 @@ through JSON is a way to silently lose a setting.
 
 ---
 
+## D23 — The driver's own settings window, and everything stops while it is open
+
+The camera panel offers a **Driver settings...** button whenever the connected
+camera reports having such a window. Pressing it opens the driver's dialog and
+blocks the entire application until the user closes it.
+
+**Why offer it.** This project models almost nothing about a camera: not gain,
+not offset, not USB bandwidth, not cooling. On real hardware those decide
+whether a frame is usable — a camera left at a high gain by whatever ran last
+put the sky at 57% of full well, which left 23 to 28 detectable stars against
+the 115 or more the same camera gave elsewhere, and the solves failed. The
+application could not change the one number that mattered. The alternatives were
+to reimplement the driver's settings, which means guessing at what each one
+does, or to tell the user to go and open another program.
+
+Exposure is deliberately **not** among them: it is not a driver setting at all
+but an argument to `StartExposure`, which is why it gets a control of its own
+(D22).
+
+**Why it blocks everything.** The window changes the device the next exposure
+comes from. A capture straddling it would be taken half under the old settings
+and half under the new, with nothing in the frame to say which. The engine
+therefore holds its command gate for as long as the window is up, which is the
+real enforcement — and it is *why* the UI has to refuse clicks rather than
+merely look busy: a command sent meanwhile does not fail, it queues, and then
+runs later against a camera that has changed underneath it.
+
+Refused outright during a sequence, for the reason the readout mode is (D20's
+neighbourhood): the frames already captured were taken under different settings
+and the fit weights every observation alike.
+
+**The refusal is in two places on purpose.** The whole window is disabled in
+XAML, and every command's own precondition begins from a single `Ready` property
+that includes it. The binding alone would be one forgotten attribute away from
+letting a click through; the predicates alone would not stop a text box being
+edited. The test enumerates every command rather than spot-checking, because the
+failure worth guarding against is a new command added later with the condition
+left off.
+
+**A driver that throws still reports the window closed**, from a `finally`
+block. The alternative is an application convinced a window is open and refusing
+every command for the rest of the session.
+
+**Unverified:** the window is shown from a dedicated STA thread rather than the
+client's UI thread, which is not what ASCOM's convention assumes. See
+`docs/MOUNT-COMPATIBILITY.md`.
+
+---
+
 ## Open decisions
 
 **O1 — Licence.** ~~MIT is the natural fit and imposes nothing on Watney. GPL

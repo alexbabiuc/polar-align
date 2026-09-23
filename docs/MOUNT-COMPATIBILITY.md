@@ -257,6 +257,15 @@ treated as more solid than its tag says.
   and if so from what source.
 - Any meridian-flip firmware behaviour specific to the SynScan driver
   analogous to iOptron's "Meridian Treatment" setting.
+- **[UNKNOWN]** Whether a camera driver's `SetupDialog` behaves correctly when
+  called from a dedicated STA thread rather than from the client's own UI
+  thread. ASCOM's convention is the latter; this application calls it from a
+  thread it creates and marks STA, because everything else it does with a
+  driver happens on thread-pool threads and a modal Windows form pumped from a
+  multi-threaded apartment is a known way to get a window that will not repaint
+  or will not close. If a driver's settings window misbehaves — blank, frozen,
+  or refusing to close — this is the first thing to suspect. See
+  `AscomCamera.ShowSetupDialogAsync`.
 - Real-world `SideOfPier` behaviour on current (2025-2026-era) firmware for
   any of the three drivers — everything above is changelog/forum evidence,
   most of it years old; a driver update since could have changed any of it.

@@ -209,6 +209,67 @@ public sealed class AscomCamera : ICamera
 
     public bool IsConnected { get; private set; }
 
+    /// <summary>
+    /// Every ASCOM driver has one: <c>SetupDialog</c> is on the base interface
+    /// all of them implement, not on the camera interface.
+    /// </summary>
+    public bool HasSetupDialog => true;
+
+    /// <summary>
+    /// Shows the driver's own settings window, on a thread of its own, and
+    /// returns when the user closes it.
+    ///
+    /// This is the only way to reach the settings this project does not model.
+    /// Gain in particular: the application never sets it, so a camera left at a
+    /// high gain by whatever ran last produces a sky bright enough to swamp the
+    /// stars, and nothing in this program could change that.
+    ///
+    /// The thread is single-threaded-apartment because the window is a Windows
+    /// form, and a form pumped from a multi-threaded apartment is a well-known
+    /// way to get one that does not repaint or does not close. Everything else
+    /// here talks to the driver from thread-pool threads, which COM marshals;
+    /// a modal window is the one call that genuinely wants an apartment of its
+    /// own. UNVERIFIED against a real driver -- see docs/MOUNT-COMPATIBILITY.md.
+    ///
+    /// Cancellation is honoured only up to the point the window opens. After
+    /// that the user has to close it: there is no supported way to dismiss a
+    /// driver's dialog from outside, and pretending otherwise would leave a
+    /// window on screen that the application believed was gone.
+    /// </summary>
+    public Task ShowSetupDialogAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                _camera.SetupDialog();
+                finished.SetResult();
+            }
+            catch (Exception ex)
+            {
+                finished.SetException(new AscomPlatformNotAvailableException(
+                    $"ASCOM camera '{_progId}' could not show its settings window: {ex.Message}", ex));
+            }
+        });
+
+        // Only meaningful on Windows, which is the only platform an ASCOM COM
+        // driver exists on; elsewhere this assembly does not load at all.
+        if (OperatingSystem.IsWindows())
+        {
+            thread.SetApartmentState(ApartmentState.STA);
+        }
+
+        thread.IsBackground = true;
+        thread.Start();
+
+        return finished.Task;
+    }
+
     public Task ConnectAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

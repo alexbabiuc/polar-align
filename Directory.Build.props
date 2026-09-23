@@ -16,7 +16,7 @@
       the only one that moves until every roadmap phase is done and the user
       calls the project ready. See CLAUDE.md.
     -->
-    <Version>0.0.1</Version>
+    <Version>0.0.2</Version>
     <Deterministic>true</Deterministic>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>

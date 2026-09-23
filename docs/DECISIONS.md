@@ -833,6 +833,43 @@ and only that — the solver reads the FITS file, never the preview.
 
 ---
 
+## D22 — The exposure is a short fixed list, chosen next to the picture
+
+The exposure is picked from 0.1, 0.2, 0.5, 1, 1.5 and 2 seconds, in the captured
+frame panel, and remembered between sessions.
+
+**Why there is a control at all.** There was none: every capture ran at a
+hardcoded two seconds. On a 105 mm lens under a moderately bright sky that put
+the background at 57% of full well, the detector found 23 to 28 stars where the
+same camera through other software gave 115 or more, and the solves failed. The
+sky was swamping the stars and nothing in the application could change it —
+exposure is not a driver setting, it is an argument to `StartExposure`, so the
+ASCOM setup dialog could not help either.
+
+**Why a list and not a number box.** The useful range is narrow and the failure
+it exists to prevent is at one end of it. These frames are measured for star
+positions, not looked at; nothing wants 30 s, and a typed field invites it as
+readily as 0.3 s.
+
+**Why in the captured frame panel.** That is where the result of the choice is
+visible. Too long an exposure shows up as a washed-out frame in the picture
+directly above the control.
+
+It shares a row with the brightness slider rather than taking one of its own. A
+second row cost the picture 38 px, which at the minimum window size with the
+install warnings showing put it under the floor the layout test holds it to.
+
+**Why it is read at sequence start rather than sent as a command.** It is not
+device state. The session passes it on every capture, so changing it mid-sequence
+would change the frames halfway through the fit they are being combined into;
+the picker is disabled while a sequence runs.
+
+**A remembered value that is not on the list snaps to the nearest one** rather
+than being dropped, because an exact comparison against a double round-tripped
+through JSON is a way to silently lose a setting.
+
+---
+
 ## Open decisions
 
 **O1 — Licence.** ~~MIT is the natural fit and imposes nothing on Watney. GPL

@@ -53,6 +53,14 @@ public sealed record AppSettings
     /// </summary>
     public int? ReadoutModeIndex { get; init; }
 
+    /// <summary>
+    /// The exposure last chosen, in seconds. Remembered for the same reason as
+    /// the readout mode: it is a judgement about the sky and the optics that
+    /// does not change between one night and the next, and re-making it every
+    /// session is how a frame ends up over-exposed again.
+    /// </summary>
+    public double? ExposureSeconds { get; init; }
+
     public string? CameraProviderName { get; init; }
 
     public string? CameraDeviceId { get; init; }

@@ -2,6 +2,53 @@ using FreePolarAlign.Imaging.Fits;
 
 namespace FreePolarAlign.Imaging.Display;
 
+/// <summary>
+/// The display curve itself: everything needed to turn a normalised pixel into a
+/// normalised brightness, and nothing else.
+///
+/// It is a public type rather than a private lambda because the tests, and any
+/// future caption or histogram overlay, need to ask what the picture on screen
+/// actually did to a given value. Answering that by re-deriving it from a
+/// midtone alone stopped being possible once the curve gained a second segment.
+/// </summary>
+/// <param name="HighlightAnchor">
+/// Where the core ends and the highlight segment begins, normalised between the
+/// black point and the brightest pixel. Above this the frame holds almost
+/// nothing, so the range above it is compressed rather than spent.
+/// </param>
+/// <param name="CoreCeiling">The output brightness <paramref name="HighlightAnchor"/> maps to.</param>
+/// <param name="Midtone">
+/// The midtone balance of the core segment. Small values brighten hard; 0.5
+/// leaves the core linear.
+/// </param>
+public sealed record StretchCurve(double HighlightAnchor, double CoreCeiling, double Midtone)
+{
+    /// <summary>The identity: no stretch, no highlight compression.</summary>
+    public static StretchCurve Linear { get; } = new(1.0, 1.0, 0.5);
+
+    /// <param name="normalised">
+    /// A pixel expressed as a fraction of the way from the black point to the
+    /// brightest pixel in the frame.
+    /// </param>
+    /// <returns>Brightness from 0 to 1. Strictly increasing, with 0 and 1 fixed.</returns>
+    public double Apply(double normalised)
+    {
+        double x = Math.Clamp(normalised, 0.0, 1.0);
+
+        if (x > HighlightAnchor)
+        {
+            // Linear to the white point. A curve here would buy nothing: the
+            // segment exists to be small, and what is inside it is star cores.
+            return Math.Clamp(
+                CoreCeiling + ((1.0 - CoreCeiling) * (x - HighlightAnchor) / (1.0 - HighlightAnchor)),
+                0.0,
+                1.0);
+        }
+
+        return CoreCeiling * ImageStretch.ApplyMidtone(Midtone, x / HighlightAnchor);
+    }
+}
+
 /// <param name="MedianAdu">Background level, in the image's own units. The single most useful number for "is this frame any good".</param>
 /// <param name="MadAdu">
 /// Median absolute deviation of the pixels. A robust noise estimate: unlike a
@@ -16,17 +63,20 @@ namespace FreePolarAlign.Imaging.Display;
 /// </param>
 /// <param name="MaximumAdu">The white point: the brightest pixel, rendered as 255.</param>
 /// <param name="Midtone">
-/// The midtone balance handed to the transfer function. Small values brighten
-/// hard; 0.5 is no change. This is the only thing the brightness control
-/// changes -- the black and white points stay at the frame's own limits.
+/// The midtone balance of the curve's core segment. Kept as its own field
+/// because it is the number the brightness control moves, but it no longer
+/// describes the whole transform on its own -- use <paramref name="Curve"/> for
+/// that.
 /// </param>
+/// <param name="Curve">The transform actually applied, black point to white point.</param>
 public sealed record StretchStatistics(
     double MinimumAdu,
     double MaximumAdu,
     double MedianAdu,
     double MadAdu,
     double BlackPointAdu,
-    double Midtone);
+    double Midtone,
+    StretchCurve Curve);
 
 /// <param name="Decimation">
 /// How many source pixels went into each preview pixel, per axis. 1 means the
@@ -58,20 +108,36 @@ public sealed record ImagePreview(
 /// faithful one, and it is described as a *display* transform because that is
 /// all it is -- nothing measured is computed from these bytes.
 ///
-/// The transform is the standard midtone transfer function, placed from the
-/// median, which is a robust statistic and that is the point: a mean would be
-/// dragged around by the stars, which here are the outliers rather than the
-/// thing being measured.
+/// The frame's own darkest and brightest pixels are the black and white points.
+/// The transform between them is strictly increasing, so no pixel is clipped at
+/// either end and no two pixels swap order.
 ///
-/// It is the *only* thing applied. The frame's own darkest and brightest pixels
-/// are the black and white points, so the output range is used fully and no
-/// pixel is crushed to 0 or blown to 255 unless it genuinely is the darkest or
-/// brightest one in the frame. An earlier version clipped everything below
-/// median - 2.8 sigma to black, which threw away the bottom of the noise
-/// distribution -- a quarter of a percent of pixels on a Gaussian background,
-/// and visibly more wherever the sky was not flat. Since one of the things a
-/// person looks at this preview to judge is whether the background is even, a
-/// display that flattened the dark end was answering that question wrongly.
+/// Between them the curve has two segments, and the second one is the difference
+/// between a stretch and a brightness knob. A single midtone transfer function
+/// spread over the whole range spends output on the part of the histogram where
+/// there are no pixels, and on a frame whose background sits well up the range
+/// it spends so much that the picture comes out *flatter* than no stretch at
+/// all. Measured on a real over-exposed frame from a 105 mm lens and an
+/// ASI290MM -- background at 40% of full range, noise 8.7% of it -- the middle
+/// half of the pixels landed on grey levels 53 to 76 with the stretch and 53 to
+/// 159 without it. Dragging the brightness control then did the only thing left
+/// to do: slide the whole picture up and down, which is exactly what it looked
+/// like from the outside.
+///
+/// So the range above <see cref="StretchCurve.HighlightAnchor"/> -- a point just
+/// above the noise and above all but the brightest half-percent of pixels, which
+/// on that frame was the top quarter of the range holding a thousandth of the
+/// pixels -- is compressed instead of spent, and the freed output goes to the
+/// core where the pixels actually are. The same frame then gives 50 to 83 at the
+/// default setting, and going darker keeps a picture rather than fading to
+/// black. Nothing is clipped: the compression is a gentler slope, never a
+/// clamp, and the brightest pixel still renders as 255.
+///
+/// An earlier version also clipped everything below median - 2.8 sigma to black.
+/// That is gone and stays gone -- it threw away the bottom of the noise
+/// distribution, a quarter of a percent of pixels on a Gaussian background and
+/// visibly more wherever the sky was not flat, and one of the things a person
+/// looks at this preview to judge is whether the background is even.
 /// </summary>
 public static class ImageStretch
 {
@@ -82,6 +148,22 @@ public static class ImageStretch
     /// implementations of this transform settle on.
     /// </summary>
     public const double DefaultTargetBackground = 0.25;
+
+    /// <summary>
+    /// The darkest and lightest the brightness control is allowed to go.
+    ///
+    /// Narrower than the range the transform will accept, because outside it the
+    /// control stops being a stretch. There are only so many output levels below
+    /// the background, and at a background of 2% of full brightness the middle
+    /// half of the pixels shares four of them -- the picture goes black except
+    /// for the stars, which is what a black point does, not a stretch. The same
+    /// happens inverted at the top. These bounds are where the measured spread
+    /// of the middle half of the pixels stops shrinking faster than the
+    /// brightness changes.
+    /// </summary>
+    public const double MinimumTargetBackground = 0.08;
+
+    public const double MaximumTargetBackground = 0.75;
 
     /// <summary>Distinct levels an eight-bit output has, which is what the preview renders to.</summary>
     private const int OutputLevels = 256;
@@ -94,16 +176,55 @@ public static class ImageStretch
     /// </summary>
     private const int StatisticsStride = 4;
 
+    /// <summary>Scales a median absolute deviation to a Gaussian standard deviation.</summary>
+    private const double MadToSigma = 1.4826;
+
+    /// <summary>
+    /// How far above the background the highlight anchor is held, in noise
+    /// sigmas, whatever the histogram says. The core segment has to contain the
+    /// whole noise distribution or the thing the stretch exists to show ends up
+    /// in the compressed part.
+    /// </summary>
+    private const double HighlightAnchorSigmas = 4.0;
+
+    /// <summary>
+    /// Fraction of pixels left above the highlight anchor. Half a percent is
+    /// comfortably more than the star pixels of a wide-field frame, so the
+    /// anchor lands above the sky and below the star cores.
+    /// </summary>
+    private const double HighlightAnchorQuantile = 0.995;
+
+    /// <summary>
+    /// The least the highlight segment's slope may fall to, relative to a linear
+    /// rendering. Compressing the empty top of the histogram is the point, but
+    /// compressing it without limit would flatten every star to the same white
+    /// on a frame whose stars genuinely span that range -- which is most
+    /// correctly exposed frames. A third of linear is enough to free the output
+    /// that an over-exposed frame wastes and mild enough to leave star cores
+    /// distinguishable.
+    /// </summary>
+    private const double MinimumHighlightSlope = 0.35;
+
+    /// <summary>Output the highlight segment gets even when it covers almost no range, so the white point is never a cliff.</summary>
+    private const double MinimumHighlightOutput = 0.08;
+
+    /// <summary>
+    /// Output kept above the requested background. Without it a bright setting
+    /// could ask for a background above the core's own ceiling, which no midtone
+    /// can deliver and which piles the whole frame onto one grey level.
+    /// </summary>
+    private const double TargetHeadroom = 0.08;
+
     /// <summary>
     /// Builds a preview using the frame's full range -- darkest pixel to black,
     /// brightest to white -- with the background placed at
-    /// <paramref name="targetBackground"/> by the midtone transfer function.
+    /// <paramref name="targetBackground"/>.
     ///
     /// Nothing is clipped at either end. Every pixel strictly between the
     /// darkest and the brightest lands strictly between 0 and 255, because the
-    /// only transform applied is monotonic and fixes both endpoints. A pixel
-    /// renders as 0 exactly when it is the darkest in the frame, and 255 exactly
-    /// when it is the brightest.
+    /// transform applied is strictly increasing and fixes both endpoints. A
+    /// pixel renders as 0 exactly when it is the darkest in the frame, and 255
+    /// exactly when it is the brightest.
     ///
     /// The one exception, and it has to be one: a frame whose background *is*
     /// its darkest value. An eight-bit readout does this -- it quantises the
@@ -142,7 +263,8 @@ public static class ImageStretch
 
         double low = minimum;
         double span = maximum - low;
-        double medianNormalised = Median(image, low, span);
+        double[] samples = Sample(image, low, span);
+        double medianNormalised = MedianOf(samples);
 
         if (medianNormalised <= 0.0)
         {
@@ -151,11 +273,12 @@ public static class ImageStretch
             // headroom below it, and no more.
             low = minimum - (span / (OutputLevels - 1));
             span = maximum - low;
-            medianNormalised = Median(image, low, span);
+            samples = Sample(image, low, span);
+            medianNormalised = MedianOf(samples);
         }
 
-        double madNormalised = MedianAbsoluteDeviation(image, low, span, medianNormalised);
-        double midtone = Midtone(medianNormalised, target);
+        double madNormalised = MedianAbsoluteDeviation(samples, medianNormalised);
+        StretchCurve curve = CurveFor(medianNormalised, madNormalised, Quantile(samples, HighlightAnchorQuantile), target);
 
         var statistics = new StretchStatistics(
             minimum,
@@ -163,9 +286,10 @@ public static class ImageStretch
             low + (medianNormalised * span),
             madNormalised * span,
             low,
-            midtone);
+            curve.Midtone,
+            curve);
 
-        return Render(image, low, span, midtone, maximumWidth, maximumHeight, statistics);
+        return Render(image, low, span, curve, maximumWidth, maximumHeight, statistics);
     }
 
     /// <summary>
@@ -191,16 +315,61 @@ public static class ImageStretch
         }
 
         // The same full-range normalisation the stretched path uses, with the
-        // midtone left at a half, which is the identity. The two modes differ by
-        // the curve alone, not by where black and white sit.
+        // identity curve. The two modes differ by the curve alone, not by where
+        // black and white sit.
         double span = maximum - minimum;
-        double medianNormalised = Median(image, minimum, span);
-        double madNormalised = MedianAbsoluteDeviation(image, minimum, span, medianNormalised);
+        double[] samples = Sample(image, minimum, span);
+        double medianNormalised = MedianOf(samples);
+        double madNormalised = MedianAbsoluteDeviation(samples, medianNormalised);
 
         var statistics = new StretchStatistics(
-            minimum, maximum, minimum + (medianNormalised * span), madNormalised * span, minimum, 0.5);
+            minimum,
+            maximum,
+            minimum + (medianNormalised * span),
+            madNormalised * span,
+            minimum,
+            0.5,
+            StretchCurve.Linear);
 
-        return Render(image, minimum, span, midtone: 0.5, maximumWidth, maximumHeight, statistics);
+        return Render(image, minimum, span, StretchCurve.Linear, maximumWidth, maximumHeight, statistics);
+    }
+
+    /// <summary>
+    /// Places the two segments: where the core ends, how much output the
+    /// highlights keep, and the midtone that puts the background on target.
+    ///
+    /// All three are decided from the frame's own statistics, which is why an
+    /// over-exposed frame and a correctly exposed one both come out usable from
+    /// the same code. On the over-exposed frame the anchor lands at three
+    /// quarters of the range and frees a sixth of the output; on a frame whose
+    /// sky is a fraction of a percent above bias the anchor lands just above the
+    /// sky and the slope floor stops it flattening the stars.
+    /// </summary>
+    public static StretchCurve CurveFor(
+        double medianNormalised, double madNormalised, double highQuantile, double targetBackground)
+    {
+        double background = Math.Clamp(medianNormalised, 0.0, 1.0);
+        double target = Math.Clamp(targetBackground, 0.01, 0.9);
+        double sigma = Math.Max(0.0, madNormalised) * MadToSigma;
+
+        double anchor = Math.Clamp(
+            Math.Max(highQuantile, background + (HighlightAnchorSigmas * sigma)),
+            Math.Min(background + 1e-6, 1.0),
+            1.0);
+
+        double output = Math.Clamp(
+            Math.Max(MinimumHighlightOutput, MinimumHighlightSlope * (1.0 - anchor)),
+            0.0,
+            1.0 - anchor);
+
+        double ceiling = Math.Max(1.0 - output, Math.Min(0.99, target + TargetHeadroom));
+
+        // The core is asked for the background as a fraction of its own domain
+        // and its own output, so the midtone solves the same equation it always
+        // did -- just on the segment rather than on the whole range.
+        double midtone = Midtone(background / anchor, target / ceiling);
+
+        return new StretchCurve(anchor, ceiling, midtone);
     }
 
     /// <summary>
@@ -278,7 +447,7 @@ public static class ImageStretch
         FitsImage image,
         double blackPointAdu,
         double span,
-        double midtone,
+        StretchCurve curve,
         int maximumWidth,
         int maximumHeight,
         StretchStatistics statistics)
@@ -306,7 +475,7 @@ public static class ImageStretch
         for (int i = 0; i < LookupSize; i++)
         {
             double normalised = i / (double)(LookupSize - 1);
-            lookup[i] = (byte)Math.Clamp(Math.Round(ApplyMidtone(midtone, normalised) * (OutputLevels - 1)), 0.0, OutputLevels - 1);
+            lookup[i] = (byte)Math.Clamp(Math.Round(curve.Apply(normalised) * (OutputLevels - 1)), 0.0, OutputLevels - 1);
         }
 
         for (int outputRow = 0; outputRow < height; outputRow++)
@@ -370,7 +539,7 @@ public static class ImageStretch
 
         return new ImagePreview(
             width, height, image.Width, image.Height, decimation, gray,
-            new StretchStatistics(minimum, maximum, minimum, 0.0, minimum, 0.5));
+            new StretchStatistics(minimum, maximum, minimum, 0.0, minimum, 0.5, StretchCurve.Linear));
     }
 
     private static int Decimation(int width, int height, int maximumWidth, int maximumHeight)
@@ -410,28 +579,24 @@ public static class ImageStretch
         return double.IsFinite(minimum) && double.IsFinite(maximum) ? (minimum, maximum) : (0.0, 0.0);
     }
 
-    private static double Median(FitsImage image, double minimum, double span)
+    private static double MedianAbsoluteDeviation(double[] sortedSamples, double median)
     {
-        double[] samples = Sample(image, minimum, span);
-        return samples.Length == 0 ? 0.0 : MedianOf(samples);
-    }
-
-    private static double MedianAbsoluteDeviation(FitsImage image, double minimum, double span, double median)
-    {
-        double[] samples = Sample(image, minimum, span);
-        if (samples.Length == 0)
+        if (sortedSamples.Length == 0)
         {
             return 0.0;
         }
 
-        for (int i = 0; i < samples.Length; i++)
+        double[] deviations = new double[sortedSamples.Length];
+        for (int i = 0; i < sortedSamples.Length; i++)
         {
-            samples[i] = Math.Abs(samples[i] - median);
+            deviations[i] = Math.Abs(sortedSamples[i] - median);
         }
 
-        return MedianOf(samples);
+        Array.Sort(deviations);
+        return MedianOf(deviations);
     }
 
+    /// <summary>Samples the frame on a stride, normalised to the black point and span, and sorted.</summary>
     private static double[] Sample(FitsImage image, double minimum, double span)
     {
         int rows = (image.Height + StatisticsStride - 1) / StatisticsStride;
@@ -451,16 +616,32 @@ public static class ImageStretch
             }
         }
 
-        return samples.ToArray();
+        double[] sorted = samples.ToArray();
+        Array.Sort(sorted);
+        return sorted;
     }
 
-    private static double MedianOf(double[] values)
+    private static double Quantile(double[] sortedSamples, double fraction)
     {
-        Array.Sort(values);
+        if (sortedSamples.Length == 0)
+        {
+            return 1.0;
+        }
 
-        int middle = values.Length / 2;
-        return values.Length % 2 == 1
-            ? values[middle]
-            : 0.5 * (values[middle - 1] + values[middle]);
+        int at = (int)Math.Clamp(Math.Round(fraction * (sortedSamples.Length - 1)), 0, sortedSamples.Length - 1);
+        return sortedSamples[at];
+    }
+
+    private static double MedianOf(double[] sortedValues)
+    {
+        if (sortedValues.Length == 0)
+        {
+            return 0.0;
+        }
+
+        int middle = sortedValues.Length / 2;
+        return sortedValues.Length % 2 == 1
+            ? sortedValues[middle]
+            : 0.5 * (sortedValues[middle - 1] + sortedValues[middle]);
     }
 }

@@ -183,7 +183,7 @@ public class ImageStretchTests
             (preview.Statistics.MedianAdu - preview.Statistics.BlackPointAdu)
             / (preview.Statistics.MaximumAdu - preview.Statistics.BlackPointAdu);
         byte backgroundLevel = (byte)Math.Round(
-            ImageStretch.ApplyMidtone(preview.Statistics.Midtone, normalisedMedian) * 255.0);
+            preview.Statistics.Curve.Apply(normalisedMedian) * 255.0);
 
         int levelsBelowBackground = preview.Gray8.Where(b => b < backgroundLevel).Distinct().Count();
 
@@ -251,7 +251,7 @@ public class ImageStretchTests
             (statistics.MedianAdu - statistics.BlackPointAdu)
             / (statistics.MaximumAdu - statistics.BlackPointAdu);
 
-        Assert.Equal(target, ImageStretch.ApplyMidtone(statistics.Midtone, normalisedMedian), precision: 3);
+        Assert.Equal(target, statistics.Curve.Apply(normalisedMedian), precision: 3);
     }
 
     /// <summary>
@@ -550,6 +550,199 @@ public class ImageStretchTests
 
         Assert.True(MeanOf(preview.Gray8) > 10.0, "an eight-bit frame came out black");
         Assert.True(preview.Gray8.Max() > 240, "the stars vanished from an eight-bit frame");
+    }
+
+    // ---- Over-exposed frames, and why the curve has two segments ----
+
+    /// <summary>
+    /// A frame shaped like the ones this stretch was rebuilt for: the sky
+    /// already 38% of the way up the range with noise a twelfth of it, and stars
+    /// saturating at the top. It is what a session at too long an exposure or too
+    /// much gain produces, and it is the case a single full-range midtone curve
+    /// handles worst -- there is no crowded bottom for it to lift, so it spends
+    /// its effort compressing the part of the histogram the pixels are in.
+    /// </summary>
+    private static FitsImage OverExposedFrame(int width = 200, int height = 150, int seed = 11)
+    {
+        var random = new Random(seed);
+        var pixels = new double[height, width];
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                double u1 = 1.0 - random.NextDouble();
+                double u2 = random.NextDouble();
+                double gaussian = Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2);
+                pixels[y, x] = Math.Clamp(26000.0 + (5700.0 * gaussian), 0.0, 65535.0);
+            }
+        }
+
+        (int X, int Y)[] stars = { (30, 40), (120, 90), (170, 20), (60, 120), (95, 65) };
+        foreach ((int starX, int starY) in stars)
+        {
+            for (int dy = -2; dy <= 2; dy++)
+            {
+                for (int dx = -2; dx <= 2; dx++)
+                {
+                    int x = starX + dx;
+                    int y = starY + dy;
+                    if (x < 0 || y < 0 || x >= width || y >= height)
+                    {
+                        continue;
+                    }
+
+                    double falloff = Math.Exp(-((dx * dx) + (dy * dy)) / 2.0);
+                    pixels[y, x] = Math.Min(65535.0, pixels[y, x] + (60000.0 * falloff));
+                }
+            }
+        }
+
+        return new FitsImage(width, height, FitsBitPix.Int16, 32768.0, 1.0, pixels);
+    }
+
+    /// <summary>Grey levels between the first and third quartile of the preview: how much of the display the bulk of the frame actually occupies.</summary>
+    private static int InterquartileSpread(byte[] gray)
+    {
+        byte[] sorted = gray.Order().ToArray();
+        return sorted[(int)(0.75 * (sorted.Length - 1))] - sorted[(int)(0.25 * (sorted.Length - 1))];
+    }
+
+    /// <summary>Renders a frame through an arbitrary curve, for comparing one against another.</summary>
+    private static byte[] RenderWith(FitsImage frame, StretchStatistics statistics, StretchCurve curve)
+    {
+        double black = statistics.BlackPointAdu;
+        double span = statistics.MaximumAdu - black;
+        var gray = new byte[frame.Width * frame.Height];
+
+        int at = 0;
+        for (int y = 0; y < frame.Height; y++)
+        {
+            for (int x = 0; x < frame.Width; x++)
+            {
+                gray[at++] = (byte)Math.Clamp(
+                    Math.Round(curve.Apply((frame.Pixels[y, x] - black) / span) * 255.0), 0.0, 255.0);
+            }
+        }
+
+        return gray;
+    }
+
+    /// <summary>
+    /// The defect this curve exists to fix, stated as a measurement.
+    ///
+    /// The old transform was a single midtone curve across the whole range, and
+    /// on an over-exposed frame it gave the middle half of the pixels *fewer*
+    /// grey levels than doing nothing at all would have -- so the brightness
+    /// control could only slide the picture up and down, which is what a black
+    /// point does. The two-segment curve takes the output back off the empty top
+    /// of the histogram and gives it to the pixels.
+    ///
+    /// Compared against the old behaviour directly rather than against a
+    /// threshold, because a threshold would have to be guessed and this does not.
+    /// </summary>
+    [Fact]
+    public void OnAnOverExposedFrame_TheCurveBeatsASingleMidtoneAcrossTheWholeRange()
+    {
+        FitsImage frame = OverExposedFrame();
+        ImagePreview preview = ImageStretch.Create(frame, ImageStretch.DefaultTargetBackground);
+        StretchStatistics statistics = preview.Statistics;
+
+        double normalisedMedian =
+            (statistics.MedianAdu - statistics.BlackPointAdu)
+            / (statistics.MaximumAdu - statistics.BlackPointAdu);
+
+        // An anchor at 1 and a ceiling at 1 is exactly the old transform: one
+        // midtone curve, endpoints fixed, no second segment.
+        var singleMidtone = new StretchCurve(
+            1.0, 1.0, ImageStretch.Midtone(normalisedMedian, ImageStretch.DefaultTargetBackground));
+
+        int now = InterquartileSpread(preview.Gray8);
+        int before = InterquartileSpread(RenderWith(frame, statistics, singleMidtone));
+
+        Assert.True(
+            now > before,
+            $"the middle half of the frame occupied {now} grey levels, no better than the {before} a single midtone curve gave");
+    }
+
+    /// <summary>
+    /// And the control keeps a picture over its whole travel, which is the part
+    /// the user sees. The old slider ran to a background of 2% of full
+    /// brightness, where the middle half of an over-exposed frame shared four
+    /// grey levels: black with stars on it, indistinguishable from a raised
+    /// black point however the code was written.
+    /// </summary>
+    [Fact]
+    public void AcrossItsWholeTravel_TheControlStillShowsStructure()
+    {
+        FitsImage frame = OverExposedFrame();
+
+        for (double target = ImageStretch.MinimumTargetBackground;
+             target <= ImageStretch.MaximumTargetBackground + 1e-9;
+             target += 0.05)
+        {
+            int spread = InterquartileSpread(ImageStretch.Create(frame, target).Gray8);
+
+            Assert.True(
+                spread >= 10,
+                $"at a background of {target:F2} the middle half of the frame shared {spread} grey levels");
+        }
+    }
+
+    // ---- The curve ----
+
+    /// <summary>
+    /// The curve is strictly increasing with 0 and 1 fixed, which is the whole
+    /// of the no-clipping guarantee: the darkest pixel and only the darkest
+    /// renders black, the brightest and only the brightest renders white, and no
+    /// two pixels swap order across the seam between the segments.
+    /// </summary>
+    [Theory]
+    [InlineData(0.08)]
+    [InlineData(0.25)]
+    [InlineData(0.75)]
+    public void TheCurveIsStrictlyIncreasingAndFixesItsEndpoints(double target)
+    {
+        StretchCurve curve = ImageStretch
+            .Create(OverExposedFrame(), target)
+            .Statistics
+            .Curve;
+
+        Assert.Equal(0.0, curve.Apply(0.0), precision: 12);
+        Assert.Equal(1.0, curve.Apply(1.0), precision: 12);
+
+        double previous = -1.0;
+        for (int i = 0; i <= 20000; i++)
+        {
+            double x = i / 20000.0;
+            double y = curve.Apply(x);
+
+            Assert.InRange(y, 0.0, 1.0);
+            Assert.True(y > previous, $"the curve did not increase at x={x}");
+            previous = y;
+        }
+    }
+
+    /// <summary>
+    /// The highlight anchor is placed from the frame, not from a constant. On an
+    /// over-exposed frame it sits well down the range, freeing the empty top; on
+    /// a correctly exposed one it sits just above the sky, where nearly all the
+    /// range above it is stars and the slope floor keeps them apart.
+    /// </summary>
+    [Fact]
+    public void TheHighlightAnchorFollowsTheFrame()
+    {
+        StretchCurve overExposed = ImageStretch.Create(OverExposedFrame()).Statistics.Curve;
+        StretchCurve normal = ImageStretch.Create(RealisticFrame()).Statistics.Curve;
+
+        Assert.InRange(overExposed.HighlightAnchor, 0.5, 0.95);
+        Assert.InRange(normal.HighlightAnchor, 0.0, 0.05);
+
+        // And the frame that has range to spare keeps most of the output for its
+        // core, while the one whose stars span the range keeps more for them.
+        Assert.True(
+            overExposed.CoreCeiling > normal.CoreCeiling,
+            $"an over-exposed frame gave its core {overExposed.CoreCeiling:F3} against {normal.CoreCeiling:F3}");
     }
 
     // ---- Output format ----

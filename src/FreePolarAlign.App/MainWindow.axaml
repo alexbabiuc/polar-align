@@ -304,7 +304,7 @@
                        IsVisible="{Binding HasFramePreviewProblem}" />
 
             <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*" ColumnSpacing="8" Margin="0,6,0,0"
-                  ToolTip.Tip="The frame's darkest pixel is always black and its brightest always white. This moves the midpoint between them, so nothing is clipped at either end whichever way it is dragged.">
+                  ToolTip.Tip="The frame's darkest pixel is always black and its brightest always white. This moves the midpoint between them, so nothing is clipped at either end whichever way it is dragged. The travel stops short of both ends on purpose: past them the picture stops gaining contrast and only fades.">
               <TextBlock Grid.Column="0" Classes="label" Text="Brightness" VerticalAlignment="Center" />
               <!--
                 Height pinned because the stock control reserves 50px for a
@@ -312,7 +312,16 @@
                 that comes straight out of the picture above it. 32px is as
                 tight as it goes: below that the thumb is clipped.
               -->
-              <Slider Grid.Column="1" Minimum="0.02" Maximum="0.85" Value="{Binding StretchTarget, Mode=TwoWay}"
+              <!--
+                The bounds are ImageStretch.MinimumTargetBackground and
+                MaximumTargetBackground; repeated here because a Slider's range
+                cannot bind to a constant. Outside them the control stops being
+                a stretch: at a background of 2% there are four output levels
+                under it for the middle half of the pixels to share, so the
+                picture goes black except for the stars, which is what a black
+                point does.
+              -->
+              <Slider Grid.Column="1" Minimum="0.08" Maximum="0.75" Value="{Binding StretchTarget, Mode=TwoWay}"
                       TickFrequency="0.01" IsSnapToTickEnabled="True" Height="32" VerticalAlignment="Center" />
             </Grid>
 

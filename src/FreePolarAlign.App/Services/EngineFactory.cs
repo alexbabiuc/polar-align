@@ -87,7 +87,16 @@ public static class EngineFactory
         log.Write(LogSeverity.Info, $"Quad database directory: {quadDatabaseDirectory}");
 
         DeviceCatalog catalog = BuildCatalog(warnings, log);
-        var solver = new WatneyPlateSolver(quadDatabaseDirectory);
+
+        // Watney first, and a frame redrawn from its own detected stars if
+        // Watney cannot match the original. Both attempts are written to the
+        // session log: "could not solve" is a great deal easier to act on when
+        // it says what was tried.
+        var watney = new WatneyPlateSolver(quadDatabaseDirectory);
+        var solver = new RestampFallbackSolver(
+            watney,
+            Path.Combine(Path.GetTempPath(), "FreePolarAlign", "restamped"),
+            message => log.Write(LogSeverity.Info, message));
 
         // The focal length is carried forward but not its measured status: a
         // remembered figure is a good hint and a poor measurement, and the

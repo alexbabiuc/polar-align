@@ -29,6 +29,28 @@ public sealed record CameraReadoutMode(int Index, string Name, int? BitDepth = n
 }
 
 /// <summary>
+/// What the application knows about a frame that the camera cannot, recorded in
+/// the file so a frame found later can be understood on its own.
+///
+/// Every field is optional because every one of them can genuinely be unknown:
+/// no mount is connected, no focal length has been entered yet, the capture came
+/// from a test harness with no application around it. An absent keyword is an
+/// honest answer; a zero would not be.
+/// </summary>
+/// <param name="MountRaDegrees">
+/// Where the mount says it is pointing, at the moment of the exposure. The
+/// mount's *belief*, not a measurement: on a misaligned mount it differs from
+/// the truth by exactly the error this software exists to measure, which is why
+/// it is written under keywords a plate solution never uses.
+/// </param>
+public sealed record CaptureContext(
+    string? ApplicationName = null,
+    string? ApplicationVersion = null,
+    double? MountRaDegrees = null,
+    double? MountDecDegrees = null,
+    double? FocalLengthMillimetres = null);
+
+/// <summary>
 /// A camera device, opened via <see cref="IDeviceProvider.OpenCamera"/>.
 /// Exposure is asynchronous because real cameras and subprocess/network
 /// simulators alike take real time and must be cancellable mid-exposure.
@@ -76,5 +98,14 @@ public interface ICamera : IDisposable
     /// to disk as FITS. The FITS file's own WCS keywords (if any) are provider
     /// output, not solver input; solving happens separately via ISolver.
     /// </summary>
-    Task<CapturedImage> ExposeAsync(TimeSpan duration, CancellationToken cancellationToken = default);
+    /// <param name="context">
+    /// What the caller knows and the camera does not -- which application is
+    /// capturing, where the mount believes it is pointing, what focal length is
+    /// in use. Written into the frame's header alongside what the camera knows
+    /// itself, so that a file recovered from a temp directory a week later can
+    /// still say what it is. Optional: a caller with nothing to add passes
+    /// nothing.
+    /// </param>
+    Task<CapturedImage> ExposeAsync(
+        TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default);
 }

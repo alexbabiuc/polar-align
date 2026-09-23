@@ -24,6 +24,23 @@ namespace FreePolarAlign.App.Services;
 /// </summary>
 public static class AppVersion
 {
+    /// <summary>The product's name, as it should appear to anything outside this program.</summary>
+    public const string ProductName = "free-polar-align";
+
+    /// <summary>
+    /// Version and commit as one compact token -- "1.1.0+1af5065d4047" -- for
+    /// recording in files rather than reading in a log. Anything captured
+    /// carries this, so a frame can name the build that took it.
+    /// </summary>
+    public static string Identifier()
+    {
+        Assembly assembly = typeof(AppVersion).Assembly;
+
+        return assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString()
+            ?? "unknown";
+    }
+
     /// <summary>
     /// A single line naming the running build: version, git commit when
     /// stamped, and when the assembly on disk was written.

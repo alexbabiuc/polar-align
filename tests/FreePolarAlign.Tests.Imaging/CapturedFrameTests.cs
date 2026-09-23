@@ -193,6 +193,78 @@ public class CapturedFrameTests
         Assert.Equal(FitsBitPix.Int16, FitsImage.ForCapturedFrame(2, 1, Frame(0.0, 60000.0)).BitPix);
     }
 
+    // ---- What actually lands on disk ----
+
+    /// <summary>
+    /// The declared depth and the bytes written are the same statement.
+    ///
+    /// Worth pinning down explicitly, because a file whose BITPIX says 16 while
+    /// its data is four bytes per pixel would be read as garbage by every other
+    /// program and is exactly the kind of mismatch a keyword-only change would
+    /// leave behind. The file size is the honest witness: a FITS file is a
+    /// 2880-byte header block followed by width x height x (BITPIX/8) bytes,
+    /// padded up to the next 2880.
+    /// </summary>
+    [Theory]
+    [InlineData(8, 255.0, 1)]
+    [InlineData(16, 65535.0, 2)]
+    [InlineData(null, 65535.0, 2)]
+    public void TheFileIsAsWideAsItSaysItIs(int? declaredBits, double maximum, int expectedBytesPerPixel)
+    {
+        const int width = 64;
+        const int height = 48;
+
+        var pixels = new double[height, width];
+        var random = new Random(3);
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                pixels[y, x] = Math.Round(random.NextDouble() * maximum);
+            }
+        }
+
+        FitsImage image = FitsImage.ForCapturedFrame(width, height, pixels, declaredBits);
+
+        using var stream = new MemoryStream();
+        FitsFile.Write(stream, image);
+
+        long dataBytes = (long)width * height * expectedBytesPerPixel;
+        long padded = (dataBytes + 2879) / 2880 * 2880;
+
+        Assert.Equal(expectedBytesPerPixel * 8, Math.Abs((int)image.BitPix));
+        Assert.Equal(2880 + padded, stream.Length);
+
+        // And the values survive the narrower container unchanged.
+        stream.Position = 0;
+        FitsImage read = FitsFile.Read(stream);
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                Assert.Equal(pixels[y, x], read.Pixels[y, x]);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The same check at the size the camera actually produces, since that is
+    /// the number a person compares against a file listing: a 1936x1096 frame
+    /// is 4,248,000 bytes at 16 bits and 8,493,120 at 32.
+    /// </summary>
+    [Fact]
+    public void AFullFrameIsTheSizeSixteenBitsImplies()
+    {
+        const int width = 1936;
+        const int height = 1096;
+        var pixels = new double[height, width];
+
+        using var stream = new MemoryStream();
+        FitsFile.Write(stream, FitsImage.ForCapturedFrame(width, height, pixels, bitsPerPixel: 16));
+
+        Assert.Equal(4_248_000, stream.Length);
+    }
+
     /// <summary>A uniform frame (lens cap on) has no range to fit and must not divide by it.</summary>
     [Fact]
     public void AUniformFrameIsWritable()

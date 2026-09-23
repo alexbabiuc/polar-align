@@ -4,6 +4,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+
+    <!--
+      One place to bump, and it must be bumped for every build handed over.
+      A build's identity ends up in the session log's second line (see
+      AppVersion), which is what makes a log from the field interpretable:
+      two different binaries once carried the same stamp and the same bug was
+      diagnosed twice. See CLAUDE.md.
+    -->
+    <Version>1.1.0</Version>
     <Deterministic>true</Deterministic>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>

@@ -10,9 +10,13 @@
       A build's identity ends up in the session log's second line (see
       AppVersion), which is what makes a log from the field interpretable:
       two different binaries once carried the same stamp and the same bug was
-      diagnosed twice. See CLAUDE.md.
+      diagnosed twice.
+
+      Pre-release counter, not SemVer: 0.0.1, 0.0.2, 0.0.3. The last field is
+      the only one that moves until every roadmap phase is done and the user
+      calls the project ready. See CLAUDE.md.
     -->
-    <Version>1.2.1</Version>
+    <Version>0.0.1</Version>
     <Deterministic>true</Deterministic>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>

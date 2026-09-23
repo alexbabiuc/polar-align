@@ -782,6 +782,57 @@ optional ASTAP is the obvious fallback.
 
 ---
 
+## D21 — The display stretch takes its output back from the empty top of the histogram
+
+The preview curve has two segments between the frame's darkest pixel (always
+black) and its brightest (always white). Below a **highlight anchor** — placed
+at the higher of the 99.5th percentile and four noise sigmas above the sky — a
+midtone transfer function puts the background where the brightness control asks.
+Above it a straight, gentler segment carries the rest to white. Nothing is
+clipped at either end: the whole curve is strictly increasing.
+
+**Why.** A single midtone curve spread across the whole range spends output
+where the histogram is empty, and on an over-exposed frame it spends so much
+that the stretch makes the picture *flatter than no stretch at all*. Measured on
+a real frame (105 mm, ASI290MM, sky at 40% of the range with noise at 8.7% of
+it): the middle half of the pixels occupied grey levels 53–76 stretched, and
+53–159 rendered linearly. The top quarter of the range held about one pixel in a
+thousand and was given a quarter of the display.
+
+With nothing left to trade, the brightness control could only slide the whole
+picture up and down — which is what a black point does, and exactly what it
+looked like from the outside. That was the reported defect: *"it appears to be
+reinterpreting the black point instead of stretching the histogram."* The same
+frame now gives 50–83 at the default setting, and at the dark end of the travel
+it stays a picture with stars in it instead of fading to black.
+
+**Why the anchor is not simply a quantile.** On a correctly exposed frame the
+sky sits a fraction of a percent above bias and *everything* above it is stars,
+spread over almost the whole range. A percentile alone lands just above the sky
+there, and compressing everything above it would flatten every star to the same
+white. So the highlight segment's slope is floored at a third of linear, and it
+always keeps at least 8% of the output. The two rules together give the
+over-exposed frame its sixth of the range back and leave the well-exposed one
+essentially untouched.
+
+**Why the shadows are not touched.** The obvious symmetric move — a soft knee
+under the sky as well — was measured and is not worth it: it widened the middle
+half by about six grey levels while putting the bottom of the noise distribution
+into a handful of them. The dark end of the histogram is where an uneven
+background is read off — dew, twilight, a light leak — and six grey levels do
+not buy that.
+
+**The brightness control's travel was narrowed to 0.08–0.75.** Outside it the
+control stops being a stretch whatever the curve does, because there is nowhere
+to put the contrast: at a background of 2% of full brightness the middle half of
+an over-exposed frame shares four grey levels. The old range ran to 0.02 and
+0.85, and both ends were dead travel that looked like the defect.
+
+**Nothing measured is computed from these pixels.** This is a display transform
+and only that — the solver reads the FITS file, never the preview.
+
+---
+
 ## Open decisions
 
 **O1 — Licence.** ~~MIT is the natural fit and imposes nothing on Watney. GPL

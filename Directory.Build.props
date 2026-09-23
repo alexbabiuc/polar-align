@@ -12,7 +12,7 @@
       two different binaries once carried the same stamp and the same bug was
       diagnosed twice. See CLAUDE.md.
     -->
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
     <Deterministic>true</Deterministic>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>

@@ -354,16 +354,25 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     public bool HasReadoutModes => State.ReadoutModes.Count > 0;
 
     /// <summary>
-    /// Where the sky background is placed in the preview, from nearly black to
-    /// nearly white. This is the "make it lighter" control, and it changes only
-    /// what is displayed -- nothing measured is computed from the preview.
+    /// Where the sky background is placed in the preview. This is the "make it
+    /// lighter" control, and it changes only what is displayed -- nothing
+    /// measured is computed from the preview.
+    ///
+    /// Clamped to the range over which it behaves as a stretch rather than as a
+    /// brightness knob. The slider already stops there; the clamp is for
+    /// anything else that sets it.
     /// </summary>
     public double StretchTarget
     {
         get => _stretchTarget;
         set
         {
-            if (SetField(ref _stretchTarget, value))
+            double clamped = Math.Clamp(
+                value,
+                Imaging.Display.ImageStretch.MinimumTargetBackground,
+                Imaging.Display.ImageStretch.MaximumTargetBackground);
+
+            if (SetField(ref _stretchTarget, clamped))
             {
                 ReloadFramePreview();
             }

@@ -13,14 +13,45 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
 
+  <!--
+    Compiled against, never shipped beside.
+
+    A plugin loads in an isolated context (D4), and PluginAssemblyLoadContext
+    resolves an assembly from the plugin's own directory before falling back to
+    the host. So a copy of FreePolarAlign.Core or FreePolarAlign.Imaging sitting
+    next to this dll is loaded as a *second*, distinct assembly identity, with
+    the host's copy still loaded alongside it. Measured, by pointing that load
+    context at a folder shaped like the published one: with the copies present
+    the plugin's Imaging and the host's are different assemblies; with them
+    absent the resolver returns nothing, the side-by-side probe finds nothing,
+    and the host's is used.
+
+    The load context already hard-codes an exemption for FreePolarAlign.Devices,
+    the contract assembly, precisely because a duplicate of it would make every
+    provider fail `is IDeviceProvider` against a type that merely looks the
+    same. Core and Imaging get no such exemption, so the only safe answer is not
+    to ship them.
+
+    The version skew is the worse half in practice. A plugin folder republished
+    one build later than the host keeps an *older* Core and Imaging and runs
+    against those, while the session log reports only the host's stamp, so the
+    binary being diagnosed would not be the binary running. That is the failure
+    CLAUDE.md's versioning rule exists to stop.
+
+    Private=false keeps them out of the build output; ExcludeAssets=runtime
+    keeps them out of publish and out of the deps.json runtime list.
+  -->
   <ItemGroup>
-    <ProjectReference Include="..\FreePolarAlign.Devices\FreePolarAlign.Devices.csproj" />
+    <ProjectReference Include="..\FreePolarAlign.Devices\FreePolarAlign.Devices.csproj"
+                      Private="false" ExcludeAssets="runtime" />
     <!-- For ApparentPlace: a driver configured for JNow needs its coordinates converted
          to and from the J2000 the IMount contract speaks; see AscomMount's doc comment. -->
-    <ProjectReference Include="..\FreePolarAlign.Core\FreePolarAlign.Core.csproj" />
+    <ProjectReference Include="..\FreePolarAlign.Core\FreePolarAlign.Core.csproj"
+                      Private="false" ExcludeAssets="runtime" />
     <!-- Captured images are written as FITS with the project's own writer (Phase 0), not a
          new format-specific implementation; see AscomCamera.ExposeAsync. -->
-    <ProjectReference Include="..\FreePolarAlign.Imaging\FreePolarAlign.Imaging.csproj" />
+    <ProjectReference Include="..\FreePolarAlign.Imaging\FreePolarAlign.Imaging.csproj"
+                      Private="false" ExcludeAssets="runtime" />
   </ItemGroup>
 
 </Project>

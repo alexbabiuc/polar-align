@@ -919,6 +919,55 @@ client's UI thread, which is not what ASCOM's convention assumes. See
 
 ---
 
+## D24 — A plugin ships only its own assembly
+
+`FreePolarAlign.Devices.Ascom` is built against the host's assemblies and ships
+none of them. Its project references carry `Private="false"` and
+`ExcludeAssets="runtime"`, so the published plugin folder holds exactly
+`FreePolarAlign.Devices.Ascom.dll`, its `.pdb` and its `.deps.json`.
+
+**Why.** `dotnet publish` copies every referenced project's output by default,
+so the plugin folder used to contain copies of `FreePolarAlign.Core`,
+`FreePolarAlign.Devices` and `FreePolarAlign.Imaging`. That is not a tidiness
+problem. A plugin loads in an isolated context (D4), and
+`PluginAssemblyLoadContext` resolves an assembly from the plugin's own directory
+before falling back to the host, so each copy loads as a *second* assembly
+identity with the host's still loaded alongside it.
+
+Measured, by pointing that load context at a folder shaped like the published
+one: with the copies present, the plugin's `FreePolarAlign.Imaging` and the
+host's came back as different assemblies; with them removed, the resolver
+returned nothing, the side-by-side probe found nothing, and the host's was used.
+
+The load context already hard-codes an exemption for `FreePolarAlign.Devices`,
+the contract assembly, precisely because a duplicate of it would make every
+provider fail `is IDeviceProvider` against a type that merely looks identical.
+Nothing exempted `Core` or `Imaging`.
+
+**The version skew is the worse half in practice.** A plugin folder republished
+one build later than the host keeps an *older* `Core` and `Imaging` and runs
+against those, while the session log reports only the host's stamp — so the
+binary being diagnosed would not be the binary running. That is exactly the
+failure the versioning rule in `CLAUDE.md` exists to prevent, and it would be
+invisible in a log.
+
+**Both halves have to go.** Deleting the files alone is not enough: the load
+context resolves through an `AssemblyDependencyResolver` built from the
+`deps.json`, so a runtime entry there is an instruction to go and find a copy.
+`ExcludeAssets="runtime"` removes the files and the manifest entries together,
+and the tests check both.
+
+**Not explained, and left on the record.** A duplicate `Imaging` should have
+broken capture outright: `AscomCamera` hands a `FitsHeader` to `CaptureHeader`
+in the host's `Devices` assembly, which is a plugin-context type meeting a
+host-context signature. It demonstrably did not — frames captured by the
+published 1.2.0 build carry the full provenance header written through that
+line. The duplicate load is verified; the failure it implies was not observed,
+and no Windows machine was available to chase the discrepancy. The packaging fix
+makes the question moot rather than answering it.
+
+---
+
 ## Open decisions
 
 **O1 — Licence.** ~~MIT is the natural fit and imposes nothing on Watney. GPL

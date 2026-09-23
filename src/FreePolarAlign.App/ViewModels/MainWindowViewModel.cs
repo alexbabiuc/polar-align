@@ -59,6 +59,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     private bool _statusPollInFlight;
 
     private CameraReadoutModeDescription? _selectedReadoutMode;
+    private ExposureOption _selectedExposure;
     private double _stretchTarget = Imaging.Display.ImageStretch.DefaultTargetBackground;
     private Avalonia.Media.Imaging.Bitmap? _framePreview;
     private string? _framePreviewProblem;
@@ -98,6 +99,14 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
         _capturePointsText = defaultConfiguration.CapturePoints.ToString(CultureInfo.InvariantCulture);
         _sweepText = defaultConfiguration.RequestedSweepDegrees.ToString("F0", CultureInfo.InvariantCulture);
+
+        // The remembered exposure wins over the built-in default, which is the
+        // point of remembering it. Falling back to the nearest listed value to
+        // the default keeps the picker showing what a sequence would actually
+        // use, rather than a blank that means "whatever the engine decides".
+        _selectedExposure = ExposureOption.Nearest(_settings.ExposureSeconds)
+                            ?? ExposureOption.Nearest(defaultConfiguration.ExposureDuration.TotalSeconds)
+                            ?? ExposureOption.All[^1];
 
         // The stored site prefills the fields and nothing more. It takes effect
         // only when the user presses the button, because a latitude that
@@ -346,6 +355,33 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     public IReadOnlyList<CameraReadoutModeDescription> ReadoutModes => State.ReadoutModes;
+
+    public IReadOnlyList<ExposureOption> ExposureOptions => ExposureOption.All;
+
+    /// <summary>
+    /// How long each frame of the next sequence is exposed for.
+    ///
+    /// Read at <see cref="StartAsync"/> rather than sent as a command, because
+    /// there is nothing to send it to: the exposure is not device state, it is
+    /// an argument to <c>StartExposure</c> that the session passes on every
+    /// capture. Changing it mid-sequence would therefore change the frames
+    /// halfway through a fit, which is why the picker is disabled while one runs.
+    /// </summary>
+    public ExposureOption SelectedExposure
+    {
+        get => _selectedExposure;
+        set
+        {
+            // Avalonia hands back null when a ComboBox's list is rebuilt, and a
+            // null exposure has no meaning -- keep the last real choice.
+            if (value is null || !SetField(ref _selectedExposure, value))
+            {
+                return;
+            }
+
+            Remember(_settings with { ExposureSeconds = value.Duration.TotalSeconds });
+        }
+    }
 
     /// <summary>
     /// True when the driver offers a genuine choice. A camera with one readout
@@ -651,7 +687,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
         EntryError = null;
         await SendAsync(new StartSessionCommand(new SessionConfiguration(
-            points, sweep, DefaultConfiguration.ExposureDuration))).ConfigureAwait(true);
+            points, sweep, SelectedExposure.Duration))).ConfigureAwait(true);
     }
 
     /// <summary>
@@ -886,14 +922,32 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        _settings = updated;
-
         // A measured focal length is worth showing back in the field, since it
         // is now a better number than the one the user typed.
         if (engineEvent is EquipmentConfiguredEvent { IsFocalLengthSolved: true, FocalLengthMillimetres: { } solved })
         {
             FocalLengthText = solved.ToString("F1", CultureInfo.InvariantCulture);
         }
+
+        Remember(updated);
+    }
+
+    /// <summary>
+    /// Stores a settings change and writes it out.
+    ///
+    /// Separate from the event-driven overload because not everything worth
+    /// remembering is engine state. The exposure is a choice the user makes here
+    /// and the engine never hears about until a sequence starts, so there is no
+    /// event to hang it on.
+    /// </summary>
+    private void Remember(AppSettings updated)
+    {
+        if (_settingsStore is null || updated == _settings)
+        {
+            return;
+        }
+
+        _settings = updated;
 
         string? problem = _settingsStore.Save(_settings);
         if (problem is not null)

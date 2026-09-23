@@ -303,8 +303,19 @@
                        Text="{Binding FramePreviewProblem}"
                        IsVisible="{Binding HasFramePreviewProblem}" />
 
-            <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*" ColumnSpacing="8" Margin="0,6,0,0"
-                  ToolTip.Tip="The frame's darkest pixel is always black and its brightest always white. This moves the midpoint between them, so nothing is clipped at either end whichever way it is dragged. The travel stops short of both ends on purpose: past them the picture stops gaining contrast and only fades.">
+            <!--
+              Both controls on one row, and the exposure picker docked here
+              rather than in the Camera panel, because this is where the result
+              of the choice is looked at: too long an exposure shows up as a
+              washed-out frame in the picture above.
+
+              One row rather than two is not tidiness. A second row cost the
+              picture 38px, and at the minimum window size with the install
+              warnings showing that took it under the 80px floor the layout test
+              holds it to, which is the same failure mode that once had the
+              frame drawn across its neighbours.
+            -->
+            <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8" Margin="0,6,0,0">
               <TextBlock Grid.Column="0" Classes="label" Text="Brightness" VerticalAlignment="Center" />
               <!--
                 Height pinned because the stock control reserves 50px for a
@@ -312,17 +323,28 @@
                 that comes straight out of the picture above it. 32px is as
                 tight as it goes: below that the thumb is clipped.
               -->
-              <!--
-                The bounds are ImageStretch.MinimumTargetBackground and
-                MaximumTargetBackground; repeated here because a Slider's range
-                cannot bind to a constant. Outside them the control stops being
-                a stretch: at a background of 2% there are four output levels
-                under it for the middle half of the pixels to share, so the
-                picture goes black except for the stars, which is what a black
-                point does.
-              -->
               <Slider Grid.Column="1" Minimum="0.08" Maximum="0.75" Value="{Binding StretchTarget, Mode=TwoWay}"
-                      TickFrequency="0.01" IsSnapToTickEnabled="True" Height="32" VerticalAlignment="Center" />
+                      TickFrequency="0.01" IsSnapToTickEnabled="True" Height="32" VerticalAlignment="Center"
+                      ToolTip.Tip="The frame's darkest pixel is always black and its brightest always white. This moves the midpoint between them, so nothing is clipped at either end whichever way it is dragged. The travel stops short of both ends on purpose: past them the picture stops gaining contrast and only fades." />
+
+              <TextBlock Grid.Column="2" Classes="label" Text="Exposure" VerticalAlignment="Center" />
+              <!--
+                Disabled while a sequence runs. The exposure is not device state;
+                it is an argument to StartExposure passed on every capture, so
+                changing it mid-sequence would change the frames halfway through
+                the fit they are being combined into.
+              -->
+              <ComboBox Grid.Column="3" ItemsSource="{Binding ExposureOptions}"
+                        SelectedItem="{Binding SelectedExposure, Mode=TwoWay}"
+                        MinHeight="32" VerticalAlignment="Center"
+                        IsEnabled="{Binding !IsSessionActive}"
+                        ToolTip.Tip="Applies to the next sequence. Shorter is usually better here: these frames are measured for star positions, not looked at, and a sky bright enough to swamp the stars is the commonest reason a solve fails.">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:ExposureOption">
+                    <TextBlock Text="{Binding Label}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
             </Grid>
 
             <!-- Fills whatever is left. -->

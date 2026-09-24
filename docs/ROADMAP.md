@@ -405,6 +405,47 @@ D16's just-in-time resolve testable at chosen instants. Not done yet.
 **Still outstanding:** the correction reticle (D12) remains a placeholder, and
 the window's own rendering is still only verified by having been looked at.
 
+### Phase 4d — Live capture, and a mount that is optional
+
+*Planned 2026-09-24; not started.* A capture per click made every exposure or
+gain adjustment a round trip, and "manual mode" still demanded a connected
+mount. See D10, D18, D22, D23 and D25 as revised, and D26 and D27.
+
+- **The camera runs continuously while connected**, with exposure, gain and
+  readout mode changeable at any time, taking effect from the next frame.
+  Nothing is solved until **Start sequence**; **Stop sequence** returns to the
+  plain live view.
+- **Samples are triggered by events** (D26). Connected: a slew ending, whether
+  the engine's or the hand controller's, and 2 s of settling. Unconnected: a
+  blind solve 5 s after the last result, accepted when two consecutive solves
+  agree. At most one solve at a time. **Record sample** forces one.
+- **A sample must add sweep** (D27): at least the planned spacing from every
+  existing one, and no plan under 30°.
+- **No mount is an ordinary mode** (D10). The user is told the declination and
+  starting hour angle, then to leave declination alone.
+- **Proposals start east of the meridian and sweep west** (D18). A telescope
+  west of the meridian is proposed a move east first.
+- **Declination movement on a connected mount restarts the sequence** and says
+  why (D18).
+- **Frames are deleted once used**, except the last 20 failed solves; the frame
+  on screen can be saved (D26).
+
+**Exit criterion.** On the virtual observatory, with no intervention beyond what
+a user at the mount would do:
+
+1. Connected: a sequence driven entirely from outside the engine (slews made
+   directly on the simulated mount, as a hand controller would) samples itself
+   and recovers the injected misalignment.
+2. Unconnected: the same, with the engine never told the mount exists.
+3. A declination nudge on the connected mount restarts the sequence rather than
+   producing an answer.
+4. An exposure and a gain change mid-sequence appear in the next frame's header
+   and do not disturb the result.
+
+In both 1 and 2 the injected misalignment must come back within 1′, Phase 2's
+end-to-end standard. The hardware half (real hand-controller slews, and whether the
+driver reports them as slewing) is recorded as VERIFY until a night allows it.
+
 ---
 
 ## Phase 5 — Shipping

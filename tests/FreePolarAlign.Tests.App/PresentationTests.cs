@@ -120,37 +120,133 @@ public class PresentationTests
     }
 
     /// <summary>
-    /// A failed capture is not a failed session, and the UI must not present it
-    /// as one — the sequence usually continues.
+    /// A failed solve is not a failed session, and the UI must not present it
+    /// as one. In the live loop it is not even unusual (D26): most failures are
+    /// frames taken while the mount was being turned, so it neither faults
+    /// anything nor clears an estimate that the failure did not touch.
     /// </summary>
     [Fact]
-    public void CaptureFailure_IsDistinctFromASessionFault()
+    public void SolveFailure_IsNeitherAFaultNorAReasonToDropTheEstimate()
     {
         UiState state = After(
             Fresh(),
-            new SessionStartedEvent(new SessionConfiguration(6, 70.0, TimeSpan.FromSeconds(2))),
-            new CaptureFailedEvent(2, "Could not solve (NoMatchFound).", WillRetry: true));
+            new SessionStartedEvent(new SessionConfiguration(6, 70.0), SequenceMode.Unconnected),
+            new AlignmentUpdatedEvent(Estimate(4.0, 3.0, 5.0)),
+            new SolveFailedEvent(SampleTrigger.Periodic, "Could not solve (NoMatchFound).", ConsecutiveFailures: 1));
 
         Assert.Null(state.FaultReason);
-        Assert.NotNull(state.CaptureWarning);
+        Assert.NotNull(state.CurrentEstimate);
         Assert.True(state.SessionActive);
+        Assert.Equal(SamplingActivity.Failed, state.Sampling.Activity);
     }
 
-    // ---- Manual mode ----
+    // ---- Guidance ----
 
+    /// <summary>
+    /// Without a mount the instruction is the whole of the guidance (D10), and
+    /// it is spent once the sample it asked for has been taken.
+    /// </summary>
     [Fact]
-    public void ManualAction_IsSurfacedAndCleared()
+    public void AManualInstruction_IsShownUntilItsSampleIsTaken()
     {
         UiState prompted = After(
             Fresh(),
-            new SessionStartedEvent(new SessionConfiguration(6, 70.0, TimeSpan.FromSeconds(2))),
+            new SessionStartedEvent(new SessionConfiguration(6, 70.0), SequenceMode.Unconnected),
             new ManualActionRequiredEvent("Rotate the mount in RA to about 40° west. Do not touch declination.", 40.0));
 
-        Assert.True(prompted.AwaitingManualAction);
-        Assert.Contains("declination", prompted.ManualInstruction!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("declination", prompted.GuidanceInstruction!, StringComparison.OrdinalIgnoreCase);
 
         UiState proceeded = After(prompted, new PointCapturedEvent(new CapturePoint(1, 10.0, 70.0, DateTime.UtcNow)));
-        Assert.False(proceeded.AwaitingManualAction);
+        Assert.Null(proceeded.GuidanceInstruction);
+    }
+
+    /// <summary>
+    /// Whichever of the two instruction events spoke last is the one shown. A
+    /// driven sequence says what to do only through its proposal.
+    /// </summary>
+    [Fact]
+    public void AProposal_IsGuidanceToo()
+    {
+        UiState state = After(
+            Fresh(),
+            new SessionStartedEvent(new SessionConfiguration(6, 70.0)),
+            new ManualActionRequiredEvent("Set declination to 60°.", 0.0),
+            new SlewProposedEvent(2, 6, 160.0, 68.0, 26.0, 75.0, RequiresMotion: true, "Slew to 26° east."));
+
+        Assert.Equal("Slew to 26° east.", state.GuidanceInstruction);
+    }
+
+    /// <summary>
+    /// A proposal that needs no slew is not "without moving" when there is no
+    /// mount to slew: the user is about to turn the telescope by hand, and being
+    /// told nothing will move is exactly wrong.
+    /// </summary>
+    [Fact]
+    public void AnUnconnectedProposal_DoesNotSayNothingWillMove()
+    {
+        UiState state = After(
+            Fresh(),
+            new SessionStartedEvent(new SessionConfiguration(6, 70.0), SequenceMode.Unconnected),
+            new SlewProposedEvent(1, 6, 150.0, 60.0, -35.0, 50.0, RequiresMotion: false, "Set declination to 60°."));
+
+        Assert.DoesNotContain("without moving", state.StatusMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TheSequenceModeIsRecordedAtStart()
+    {
+        UiState state = After(
+            Fresh(),
+            new SessionStartedEvent(new SessionConfiguration(6, 70.0), SequenceMode.Observed));
+
+        Assert.Equal(SequenceMode.Observed, state.SequenceMode);
+    }
+
+    // ---- Restarts ----
+
+    /// <summary>
+    /// A restart discarded the samples, and a withheld result disowned the fit.
+    /// Either way the number on screen no longer stands for anything, and
+    /// leaving it there is the stale-figure failure D11 exists to prevent,
+    /// carried into the UI.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(EventsThatInvalidateTheEstimate))]
+    public void AnEventThatInvalidatesTheFit_ClearsTheEstimate(EngineEvent invalidating)
+    {
+        UiState state = After(
+            Fresh(),
+            new SessionStartedEvent(new SessionConfiguration(6, 70.0)),
+            new PointCapturedEvent(new CapturePoint(3, 150.0, 68.0, DateTime.UtcNow)),
+            new AlignmentUpdatedEvent(Estimate(4.0, 3.0, 5.0)),
+            invalidating);
+
+        Assert.Null(state.CurrentEstimate);
+    }
+
+    public static TheoryData<EngineEvent> EventsThatInvalidateTheEstimate() => new()
+    {
+        new SequenceRestartedEvent("The mount moved 3.2' in declination."),
+        new AlignmentWithheldEvent("Declination probably moved between captures."),
+    };
+
+    /// <summary>
+    /// And the count goes with the samples. "3 / 6" beside a restarted sequence
+    /// would imply the discarded samples still count towards the answer.
+    /// </summary>
+    [Fact]
+    public void ARestart_ResetsTheSampleCount_AndIsLoggedAsAWarning()
+    {
+        UiState state = After(
+            Fresh(),
+            new SessionStartedEvent(new SessionConfiguration(6, 70.0)),
+            new PointCapturedEvent(new CapturePoint(3, 150.0, 68.0, DateTime.UtcNow)),
+            new SequenceRestartedEvent("The mount moved 3.2' in declination."));
+
+        Assert.Equal(0, state.CapturedPointCount);
+        Assert.True(state.SessionActive);
+        Assert.Contains(state.Log, entry => entry.Contains("WARN", StringComparison.Ordinal) &&
+                                            entry.Contains("3.2' in declination", StringComparison.Ordinal));
     }
 
     // ---- Formatting and hemisphere ----
@@ -194,7 +290,7 @@ public class PresentationTests
     {
         UiState state = After(
             Fresh(),
-            new SessionStartedEvent(new SessionConfiguration(6, 70.0, TimeSpan.FromSeconds(2))),
+            new SessionStartedEvent(new SessionConfiguration(6, 70.0)),
             new TargetSelectedEvent(70.0, true, 6, 70.0),
             new PointCapturedEvent(new CapturePoint(1, 10.0, 70.0, DateTime.UtcNow)),
             new AlignmentWithheldEvent("Meridian crossed."),
@@ -425,7 +521,7 @@ public class PresentationTests
     {
         UiState state = After(
             Fresh(),
-            new SessionStartedEvent(new SessionConfiguration(6, 70.0, TimeSpan.FromSeconds(2))),
+            new SessionStartedEvent(new SessionConfiguration(6, 70.0)),
             new PointCapturedEvent(new CapturePoint(3, 150.0, 68.0, DateTime.UtcNow)),
             new SlewConfirmedEvent(150.0, 60.0, WasOverridden: true, ReanchoredReason: "Different declination."));
 
@@ -523,8 +619,8 @@ public class PresentationTests
     // ---- The captured frame ----
 
     /// <summary>
-    /// The frame stays on screen when the solve that followed it failed. That is
-    /// the case the preview exists for: "no stars detected" is answered by
+    /// The frame stays the latest when the solve that followed it failed. That
+    /// is the case the preview exists for: "no stars detected" is answered by
     /// looking at the picture, not by re-reading the message.
     /// </summary>
     [Fact]
@@ -532,27 +628,171 @@ public class PresentationTests
     {
         UiState state = After(
             Fresh(),
-            new FrameCapturedEvent(1, "/tmp/capture-0001.fits", DateTime.UtcNow, TimeSpan.FromSeconds(2)),
-            new CaptureFailedEvent(1, "Could not solve (NoStarsDetected).", WillRetry: true));
+            new FrameCapturedEvent("/tmp/capture-0001.fits", DateTime.UtcNow, TimeSpan.FromSeconds(2)),
+            new SolveFailedEvent(SampleTrigger.SlewEnded, "Could not solve (NoStarsDetected).", 1));
 
         Assert.Equal("/tmp/capture-0001.fits", state.LatestFramePath);
-        Assert.Equal(1, state.LatestFrameIndex);
-        Assert.NotNull(state.CaptureWarning);
+        Assert.NotNull(state.LatestFrameMidpointUtc);
     }
 
     /// <summary>
-    /// The frame path is logged. It is the only way to find the image again
-    /// afterwards, and "which frame was point 3" is the first question anyone
-    /// asks about a sequence that went wrong.
+    /// The path of a frame that was solved is logged. It is the only way to find
+    /// the image again afterwards, and "which frame was point 3" is the first
+    /// question anyone asks about a sequence that went wrong.
     /// </summary>
     [Fact]
-    public void TheFramePathIsLogged_SoTheImageCanBeFoundAgain()
+    public void ASolvedFramesPathIsLogged_SoTheImageCanBeFoundAgain()
     {
         UiState state = After(
             Fresh(),
-            new FrameCapturedEvent(3, "/tmp/fpa/capture-0003.fits", DateTime.UtcNow, TimeSpan.FromSeconds(2)));
+            new SolveStartedEvent(SampleTrigger.SlewEnded, "/tmp/fpa/capture-0003.fits"));
 
         Assert.Contains(state.Log, entry => entry.Contains("capture-0003.fits", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Every frame, though, is neither logged nor put on the status line. The
+    /// camera runs continuously (D26), and at 0.1 s a line per frame would bury
+    /// the log and wipe every status message a tenth of a second after it
+    /// appeared.
+    /// </summary>
+    [Fact]
+    public void ContinuousFrames_TouchNeitherTheLogNorTheStatusLine()
+    {
+        UiState before = After(Fresh(), new CommandRejectedEvent("Confirm the observing site first."));
+        UiState state = before;
+
+        for (int i = 0; i < 50; i++)
+        {
+            state = EngineEventReducer.Apply(
+                state, new FrameCapturedEvent($"/tmp/frame-{i}.fits", DateTime.UtcNow, TimeSpan.FromSeconds(0.1)));
+        }
+
+        Assert.Equal(before.Log.Count, state.Log.Count);
+        Assert.Equal(before.StatusMessage, state.StatusMessage);
+        Assert.Equal(before.RejectionReason, state.RejectionReason);
+        Assert.Equal("/tmp/frame-49.fits", state.LatestFramePath);
+    }
+
+    [Fact]
+    public void TheEnginesExposureIsRecorded()
+    {
+        UiState state = After(Fresh(), new ExposureChangedEvent(TimeSpan.FromSeconds(0.5)));
+
+        Assert.Equal(TimeSpan.FromSeconds(0.5), state.EngineExposure);
+    }
+
+    // ---- Sampling status (D26) ----
+
+    private static UiState Running(SequenceMode mode = SequenceMode.Unconnected) =>
+        After(Fresh(), new SessionStartedEvent(new SessionConfiguration(6, 70.0), mode));
+
+    private static readonly DateTimeOffset Noon = new(2026, 9, 24, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void OutsideASequence_ThereIsNoSamplingStatus()
+    {
+        UiState state = After(Fresh(), new SolveScheduledEvent(SampleTrigger.Periodic, TimeSpan.FromSeconds(5)) { TimestampUtc = Noon });
+
+        Assert.Null(AlignmentFormatting.SamplingStatus(state, Noon));
+    }
+
+    /// <summary>
+    /// The countdown is read from the event's own timestamp, so it counts down
+    /// between events rather than sitting at the delay it was scheduled with.
+    /// </summary>
+    [Fact]
+    public void AScheduledSolve_CountsDown()
+    {
+        UiState state = After(
+            Running(),
+            new SolveScheduledEvent(SampleTrigger.Periodic, TimeSpan.FromSeconds(5)) { TimestampUtc = Noon });
+
+        Assert.Contains("in 5 s", AlignmentFormatting.SamplingStatus(state, Noon), StringComparison.Ordinal);
+        Assert.Contains("in 2 s", AlignmentFormatting.SamplingStatus(state, Noon.AddSeconds(3)), StringComparison.Ordinal);
+        Assert.Contains("now", AlignmentFormatting.SamplingStatus(state, Noon.AddSeconds(6)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ASolveAfterASlew_IsShownAsSettling()
+    {
+        UiState state = After(
+            Running(SequenceMode.Driven),
+            new SolveScheduledEvent(SampleTrigger.SlewEnded, TimeSpan.FromSeconds(2)) { TimestampUtc = Noon });
+
+        Assert.StartsWith("Settling", AlignmentFormatting.SamplingStatus(state, Noon), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ASolveInProgress_IsShownAsSolving()
+    {
+        UiState state = After(Running(), new SolveStartedEvent(SampleTrigger.Periodic, "/tmp/f.fits"));
+
+        Assert.Equal(SamplingActivity.Solving, state.Sampling.Activity);
+        Assert.StartsWith("Solving", AlignmentFormatting.SamplingStatus(state, Noon), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The engine's own words for why a solve did not become a sample, since
+    /// they say how far the telescope has turned and how far it must (D27):
+    /// the one thing a user turning it by hand needs to know.
+    /// </summary>
+    [Fact]
+    public void ASkippedSample_SaysWhy()
+    {
+        const string reason = "The telescope has turned 5.2° from the nearest sample; samples need to be at least 14° apart.";
+        UiState state = After(Running(), new SampleSkippedEvent(reason));
+
+        Assert.Equal(reason, AlignmentFormatting.SamplingStatus(state, Noon));
+    }
+
+    /// <summary>
+    /// The run of failures survives the reschedule that follows each one, so
+    /// the count is still on screen while the next solve counts down, and a
+    /// solve that works ends it.
+    /// </summary>
+    [Fact]
+    public void ConsecutiveFailures_AreCountedAcrossTheReschedule_AndEndedByASuccess()
+    {
+        UiState failing = After(
+            Running(),
+            new SolveFailedEvent(SampleTrigger.Periodic, "Could not solve (NoMatchFound).", 3),
+            new SolveScheduledEvent(SampleTrigger.Periodic, TimeSpan.FromSeconds(5)) { TimestampUtc = Noon });
+
+        Assert.Contains("3 in a row", AlignmentFormatting.SamplingStatus(failing, Noon), StringComparison.Ordinal);
+
+        UiState recovered = After(failing, new SampleSkippedEvent("Solved. Waiting for a second solve in the same place."));
+        Assert.Equal(0, recovered.Sampling.ConsecutiveFailures);
+        Assert.DoesNotContain("in a row", AlignmentFormatting.SamplingStatus(recovered, Noon), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Any motion cancels a pending solve (D26), so a countdown shown while the
+    /// mount is moving would count down to nothing.
+    /// </summary>
+    [Fact]
+    public void AMovingMount_OverridesTheCountdown()
+    {
+        UiState state = After(
+            Running(SequenceMode.Observed),
+            new SolveScheduledEvent(SampleTrigger.SlewEnded, TimeSpan.FromSeconds(2)) { TimestampUtc = Noon },
+            new MountStatusEvent(150.0, 60.0, MountTrackingState.Tracking, MeridianSide.West, IsMoving: true));
+
+        Assert.True(state.MountIsMoving);
+        Assert.StartsWith("Mount moving", AlignmentFormatting.SamplingStatus(state, Noon), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ATakenSample_IsCountedAndSaidSo()
+    {
+        UiState state = After(
+            Running(),
+            new TargetSelectedEvent(60.0, false, 6, 70.0),
+            new PointCapturedEvent(new CapturePoint(2, 150.0, 60.0, DateTime.UtcNow), SampleTrigger.Periodic));
+
+        Assert.Equal(2, state.CapturedPointCount);
+        Assert.Equal(SamplingActivity.Sampled, state.Sampling.Activity);
+        Assert.Equal("Sample taken.", AlignmentFormatting.SamplingStatus(state, Noon));
     }
 
     // ---- Readout modes ----

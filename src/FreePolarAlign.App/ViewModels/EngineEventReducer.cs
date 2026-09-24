@@ -11,6 +11,9 @@ namespace FreePolarAlign.App.ViewModels;
 /// where the safety properties this project cares about (D11: never show a
 /// stale number as current; D18: never suggest the mount is about to move when
 /// it is not) actually live and get verified.
+///
+/// The scheduling events are turned into a due time from the event's own
+/// timestamp rather than from a clock, so the reducer stays pure.
 /// </summary>
 public static class EngineEventReducer
 {
@@ -80,16 +83,80 @@ public static class EngineEventReducer
                 MountDecDegrees = e.DecDegrees,
                 MountTracking = e.Tracking,
                 MountPierSide = e.PierSide,
+                MountIsMoving = e.IsMoving,
             },
 
-            // The frame arrives before any attempt to solve it, and is left in
-            // place afterwards whatever the solve did: a failed solve is the
-            // moment the image matters most.
+            // Every frame, sequence or not (D26), so for the reason above it
+            // leaves the status line alone: at a 0.1 s exposure a status that
+            // followed the frames would be unreadable and would wipe every
+            // message worth reading.
             FrameCapturedEvent e => withLog with
             {
                 LatestFramePath = e.FitsPath,
-                LatestFrameIndex = e.PointIndex,
-                StatusMessage = $"Frame {e.PointIndex} captured; solving.",
+                LatestFrameMidpointUtc = e.ExposureMidpointUtc,
+            },
+
+            ExposureChangedEvent e => withLog with
+            {
+                EngineExposure = e.Duration,
+            },
+
+            // D26: the scheduling events feed one line of status and nothing
+            // else. A failed solve in particular is not a warning banner:
+            // while the mount is being turned most frames fail, and a banner
+            // that is always up is a banner nobody reads.
+            SolveScheduledEvent e => withLog with
+            {
+                Sampling = state.Sampling with
+                {
+                    Activity = SamplingActivity.Scheduled,
+                    Trigger = e.Trigger,
+                    SolveDueUtc = e.TimestampUtc + e.Delay,
+                    Detail = null,
+                },
+            },
+
+            SolveStartedEvent e => withLog with
+            {
+                Sampling = state.Sampling with
+                {
+                    Activity = SamplingActivity.Solving,
+                    Trigger = e.Trigger,
+                    SolveDueUtc = null,
+                    Detail = null,
+                },
+            },
+
+            SolveFailedEvent e => withLog with
+            {
+                Sampling = state.Sampling with
+                {
+                    Activity = SamplingActivity.Failed,
+                    Trigger = e.Trigger,
+                    SolveDueUtc = null,
+                    Detail = e.Reason,
+                    ConsecutiveFailures = e.ConsecutiveFailures,
+                },
+            },
+
+            // The solve worked, so the run of failures is over, whatever
+            // became of the position.
+            SampleSkippedEvent e => withLog with
+            {
+                Sampling = new SamplingView(SamplingActivity.Skipped, Detail: e.Reason),
+            },
+
+            // The samples the estimate came from are gone, so the estimate goes
+            // with them, exactly as for a withheld result: a number left on
+            // screen after the engine has discarded its inputs is the stale
+            // figure D11 exists to prevent.
+            SequenceRestartedEvent => withLog with
+            {
+                CurrentEstimate = null,
+                CapturedPointCount = 0,
+                Proposal = null,
+                Sampling = SamplingView.Idle,
+                StatusMessage = "Sequence restarted and the samples so far discarded -- see the log for why.",
             },
 
             ReadoutModeChangedEvent e => withLog with
@@ -104,12 +171,12 @@ public static class EngineEventReducer
             SessionStartedEvent e => withLog with
             {
                 SessionActive = true,
-                AwaitingManualAction = false,
+                SequenceMode = e.Mode,
                 CurrentEstimate = null,
                 WithheldReason = null,
                 FaultReason = null,
-                ManualInstruction = null,
-                CaptureWarning = null,
+                GuidanceInstruction = null,
+                Sampling = SamplingView.Idle,
                 RejectionReason = null,
                 Proposal = null,
                 CapturedPointCount = 0,
@@ -131,7 +198,9 @@ public static class EngineEventReducer
 
             // D18: this is the engine saying "here is what I would do next" and
             // then waiting. The UI's job is to make clear that nothing has moved
-            // and nothing will until it is told to.
+            // and nothing will until it is told to. Without a slew to confirm,
+            // the telescope is either already in place or moved by hand, and
+            // saying "without moving" to someone about to turn it would be wrong.
             SlewProposedEvent e => withLog with
             {
                 Proposal = new ProposalView(
@@ -143,10 +212,13 @@ public static class EngineEventReducer
                     e.PredictedAltitudeDegrees,
                     e.RequiresMotion,
                     e.Instruction),
+                GuidanceInstruction = e.Instruction,
                 RejectionReason = null,
                 StatusMessage = e.RequiresMotion
                     ? $"Waiting for you to confirm point {e.PointIndex} of {e.PlannedCaptures}. Nothing will move until you do."
-                    : $"Ready to capture point {e.PointIndex} of {e.PlannedCaptures} without moving.",
+                    : state.SequenceMode == SequenceMode.Driven
+                        ? $"Point {e.PointIndex} of {e.PlannedCaptures} is sampled without moving, once the mount is still."
+                        : $"Point {e.PointIndex} of {e.PlannedCaptures}: move the telescope yourself -- see the next step.",
             },
 
             SlewConfirmedEvent e => withLog with
@@ -162,14 +234,15 @@ public static class EngineEventReducer
                     : "Sequence re-anchored -- see the note below.",
             },
 
+            // The instruction that led here is spent; the engine follows with
+            // the next one, or finishes.
             PointCapturedEvent e => withLog with
             {
                 CapturedPointCount = e.Point.Index,
-                AwaitingManualAction = false,
-                ManualInstruction = null,
-                CaptureWarning = null,
+                GuidanceInstruction = null,
                 Proposal = null,
-                StatusMessage = $"Captured and solved point {e.Point.Index} of {state.PlannedPointCount}.",
+                Sampling = new SamplingView(SamplingActivity.Sampled),
+                StatusMessage = $"Sample {e.Point.Index} of {state.PlannedPointCount} taken.",
             },
 
             // The two bolt figures plus the total (which the 10' success
@@ -195,25 +268,12 @@ public static class EngineEventReducer
                 StatusMessage = "Result withheld -- see reason below.",
             },
 
-            // D10: manual mode. The operator turns the mount by hand; the
-            // capture affordance then takes the frame where it stands.
+            // D10: the telescope is moved by hand, or a proposal cannot be
+            // reached. Either way it is the next thing the user must read.
             ManualActionRequiredEvent e => withLog with
             {
-                AwaitingManualAction = true,
-                ManualInstruction = e.Instruction,
-                StatusMessage = "Manual action required -- see instruction below.",
-            },
-
-            // A single failed capture is not a session fault (clouds pass),
-            // so the prior estimate is not stale and is left alone -- but the
-            // failure itself must not be silent, so it gets its own
-            // prominent, separately-tracked warning (see UiState.CaptureWarning).
-            CaptureFailedEvent e => withLog with
-            {
-                CaptureWarning = e.WillRetry
-                    ? $"Capture {e.CaptureIndex} failed: {e.Reason} (will retry)."
-                    : $"Capture {e.CaptureIndex} failed: {e.Reason} (giving up).",
-                StatusMessage = e.WillRetry ? "A capture failed and will be retried." : "A capture failed; the session is stopping.",
+                GuidanceInstruction = e.Instruction,
+                StatusMessage = "Your move -- see the next step.",
             },
 
             // A refusal, not a fault: nothing broke and nothing was torn down,
@@ -227,10 +287,10 @@ public static class EngineEventReducer
             SessionFaultedEvent e => withLog with
             {
                 SessionActive = false,
-                AwaitingManualAction = false,
                 CurrentEstimate = null,
-                ManualInstruction = null,
+                GuidanceInstruction = null,
                 Proposal = null,
+                Sampling = SamplingView.Idle,
                 FaultReason = e.Reason,
                 StatusMessage = "Session faulted -- see reason below.",
             },
@@ -241,9 +301,9 @@ public static class EngineEventReducer
             SessionCompletedEvent => withLog with
             {
                 SessionActive = false,
-                AwaitingManualAction = false,
-                ManualInstruction = null,
+                GuidanceInstruction = null,
                 Proposal = null,
+                Sampling = SamplingView.Idle,
                 StatusMessage = "Session complete.",
             },
 
@@ -280,7 +340,7 @@ public static class EngineEventReducer
             RejectionReason = null,
             StatusMessage = e.CanSlew
                 ? $"Mount connected: {e.DisplayName}."
-                : $"Mount connected: {e.DisplayName}. It reports no slew support, so use manual mode (D9/D10).",
+                : $"Mount connected: {e.DisplayName}. It reports no slew support, so move it from its hand controller (D9/D10).",
         };
     }
 
@@ -316,6 +376,7 @@ public static class EngineEventReducer
             MountDecDegrees = null,
             MountTracking = MountTrackingState.Unknown,
             MountPierSide = MeridianSide.Unknown,
+            MountIsMoving = false,
             StatusMessage = e.Reason ?? "Mount disconnected.",
         };
     }

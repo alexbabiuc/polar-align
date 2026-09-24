@@ -120,12 +120,14 @@ public sealed class AscomMount : IMount
         PierSide pierSide;
         DateTime timestampUtc;
         TrackingState tracking;
+        bool slewing;
         try
         {
             raDriverDegrees = AscomMapping.RaHoursToDegrees((double)_telescope.RightAscension);
             decDriverDegrees = (double)_telescope.Declination;
             pierSide = TryGetSideOfPier();
             tracking = TryGetTracking();
+            slewing = IsSlewing();
             timestampUtc = DateTime.UtcNow;
         }
         catch (Exception ex)
@@ -139,7 +141,7 @@ public sealed class AscomMount : IMount
         // coordinates and the instant they are stamped with agree.
         var (raDegrees, decDegrees) = ToJ2000(system, raDriverDegrees, decDriverDegrees, timestampUtc);
 
-        return Task.FromResult(new MountPosition(raDegrees, decDegrees, pierSide, timestampUtc, tracking));
+        return Task.FromResult(new MountPosition(raDegrees, decDegrees, pierSide, timestampUtc, tracking, slewing));
     }
 
     public async Task SlewToCoordinatesAsync(double raDegrees, double decDegrees, CancellationToken cancellationToken = default)

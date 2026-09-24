@@ -144,4 +144,66 @@ public static class AlignmentFormatting
         return FormattableString.Invariant(
             $"{Math.Abs(lat):F5}° {northSouth}, {Math.Abs(lon):F5}° {eastWest}{height}");
     }
+
+    /// <summary>
+    /// One line saying what the engine is doing about the next sample (D26), or
+    /// null outside a sequence. The user turning a mount by hand watches this to
+    /// know whether to keep turning, hold still, or wait.
+    ///
+    /// Solve failures are counted here rather than raised as a warning. While
+    /// the mount is being moved most frames fail, so the count measures the
+    /// user's pace, not a fault; a banner for each would be up all the time.
+    /// </summary>
+    /// <param name="now">Passed in so the countdown can be tested without a clock.</param>
+    public static string? SamplingStatus(UiState state, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+
+        if (!state.SessionActive)
+        {
+            return null;
+        }
+
+        SamplingView sampling = state.Sampling;
+        string failures = sampling.ConsecutiveFailures > 0 && sampling.Activity != SamplingActivity.Failed
+            ? FormattableString.Invariant($" Last solve failed ({sampling.ConsecutiveFailures} in a row).")
+            : string.Empty;
+
+        // Checked first: any motion cancels a pending solve, so a countdown
+        // shown while the mount is moving would be counting down to nothing.
+        if (state.MountIsMoving)
+        {
+            return "Mount moving: nothing is sampled until it stops." + failures;
+        }
+
+        string? line = sampling.Activity switch
+        {
+            SamplingActivity.Scheduled => sampling.Trigger switch
+            {
+                SampleTrigger.SlewEnded => $"Settling: solving {Countdown(sampling.SolveDueUtc, now)}.",
+                SampleTrigger.Retry => $"Retrying the solve {Countdown(sampling.SolveDueUtc, now)}.",
+                SampleTrigger.Forced => "Sample requested: solving the next frame to start.",
+                _ => $"Next solve {Countdown(sampling.SolveDueUtc, now)}.",
+            },
+            SamplingActivity.Solving => "Solving...",
+            SamplingActivity.Skipped => sampling.Detail,
+            SamplingActivity.Failed => FormattableString.Invariant(
+                $"Last solve failed ({sampling.ConsecutiveFailures} in a row): {sampling.Detail}"),
+            SamplingActivity.Sampled => "Sample taken.",
+            _ => null,
+        };
+
+        return line is null ? null : line + failures;
+    }
+
+    private static string Countdown(DateTimeOffset? due, DateTimeOffset now)
+    {
+        if (due is not { } at)
+        {
+            return "shortly";
+        }
+
+        double seconds = Math.Ceiling((at - now).TotalSeconds);
+        return seconds <= 0.0 ? "now" : FormattableString.Invariant($"in {seconds:F0} s");
+    }
 }

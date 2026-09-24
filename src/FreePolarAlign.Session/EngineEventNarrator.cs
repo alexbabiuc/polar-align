@@ -66,9 +66,11 @@ public static class EngineEventNarrator
             MountStatusEvent => new NarratedEvent(LogSeverity.Info, string.Empty),
 
             SessionStartedEvent e => Info(Inv(
-                $"Sequence started: {e.Configuration.CapturePoints} captures, ",
+                $"Sequence started: {e.Configuration.CapturePoints} samples, ",
                 $"{e.Configuration.RequestedSweepDegrees:F0}° sweep requested, ",
-                $"{e.Configuration.ExposureDuration.TotalSeconds:F1} s exposures.")),
+                $"{DescribeMode(e.Mode)}.")),
+
+            ExposureChangedEvent e => Info(Inv($"Exposure set to {e.Duration.TotalSeconds:G3} s from the next frame.")),
 
             TargetSelectedEvent e => Info(Inv(
                 $"Target: mechanical declination {e.DeclinationDegrees:F2}°, ",
@@ -91,19 +93,34 @@ public static class EngineEventNarrator
                     $"Dec {CoordinateText.FormatDeclination(e.DecDegrees)}",
                     $"{(e.WasOverridden ? " (coordinates overridden by the operator)." : ".")}")),
 
+            // Deliberately not logged: the camera runs continuously (D26), so
+            // this is every frame, most of which are only looked at. The frames
+            // that matter are the solved ones, logged with their solve.
+            FrameCapturedEvent => new NarratedEvent(LogSeverity.Info, string.Empty),
+
+            SolveScheduledEvent e => Info(e.Delay > TimeSpan.Zero
+                ? Inv($"{DescribeTrigger(e.Trigger)}: solving in {e.Delay.TotalSeconds:G3} s unless the mount moves.")
+                : $"{DescribeTrigger(e.Trigger)}: solving the next frame."),
+
             // The path is logged because it is the only way to find the frame
             // again afterwards, and "which image was point 3" is the first
             // question anyone asks about a sequence that went wrong.
-            FrameCapturedEvent e => Info(Inv(
-                $"Frame {e.PointIndex} exposed for {e.Duration.TotalSeconds:F1} s ",
-                $"(midpoint {e.ExposureMidpointUtc:yyyy-MM-dd HH:mm:ss}Z): {e.FitsPath}")),
+            SolveStartedEvent e => Info($"Solving ({DescribeTrigger(e.Trigger).ToLowerInvariant()}): {e.FitsPath}"),
+
+            SolveFailedEvent e => new NarratedEvent(LogSeverity.Warning, Inv(
+                $"Solve failed ({e.ConsecutiveFailures} in a row): {e.Reason}",
+                $"{(e.KeptFramePath is { } kept ? $" Frame kept as {kept}." : string.Empty)}")),
+
+            SampleSkippedEvent e => Info($"Not a sample: {e.Reason}"),
+
+            SequenceRestartedEvent e => new NarratedEvent(LogSeverity.Warning, $"Sequence restarted: {e.Reason}"),
 
             ReadoutModeChangedEvent e => Info(e.BitDepth is { } bits
                 ? $"Readout mode set to '{e.Name}' ({bits}-bit)."
                 : $"Readout mode set to '{e.Name}'. The driver does not report a bit depth."),
 
             PointCapturedEvent e => Info(Inv(
-                $"Point {e.Point.Index} solved: RA {CoordinateText.FormatRightAscension(e.Point.RaDegrees)}, ",
+                $"Sample {e.Point.Index}{(e.Trigger == SampleTrigger.Forced ? " (recorded on request)" : string.Empty)}: RA {CoordinateText.FormatRightAscension(e.Point.RaDegrees)}, ",
                 $"Dec {CoordinateText.FormatDeclination(e.Point.DecDegrees)}, ",
                 $"exposure midpoint {e.Point.ExposureMidpointUtc:yyyy-MM-dd HH:mm:ss}Z.")),
 
@@ -116,10 +133,6 @@ public static class EngineEventNarrator
             AlignmentWithheldEvent e => new NarratedEvent(LogSeverity.Error, $"Result withheld: {e.Reason}"),
 
             ManualActionRequiredEvent e => Info($"Manual action required: {e.Instruction}"),
-
-            CaptureFailedEvent e => new NarratedEvent(
-                LogSeverity.Warning,
-                $"Capture {e.CaptureIndex} failed: {e.Reason} ({(e.WillRetry ? "will retry" : "giving up")})."),
 
             CommandRejectedEvent e => new NarratedEvent(LogSeverity.Warning, $"Refused: {e.Reason}"),
 
@@ -164,6 +177,21 @@ public static class EngineEventNarrator
 
         return Inv($"Focal length {focalLength:F1} mm ({provenance}){scale}{field}.");
     }
+
+    private static string DescribeMode(SequenceMode mode) => mode switch
+    {
+        SequenceMode.Driven => "the mount slews on confirmation",
+        SequenceMode.Observed => "the mount is read but moved from its hand controller",
+        _ => "no mount connected, positions from blind solves",
+    };
+
+    private static string DescribeTrigger(SampleTrigger trigger) => trigger switch
+    {
+        SampleTrigger.SlewEnded => "Mount settled",
+        SampleTrigger.Periodic => "Next blind solve",
+        SampleTrigger.Retry => "Retrying after a failed solve",
+        _ => "Sample requested",
+    };
 
     private static string Kind(DeviceKind kind) => kind == DeviceKind.Camera ? "Camera" : "Mount";
 

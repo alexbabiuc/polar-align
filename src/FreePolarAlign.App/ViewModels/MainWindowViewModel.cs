@@ -22,11 +22,11 @@ namespace FreePolarAlign.App.ViewModels;
 /// to the engine's value on every event would be unusable. They are seeded from
 /// state, then owned by the user until submitted.
 ///
-/// This class itself is not unit-tested (it needs a UI thread marshaller and
-/// wires up commands), but everything it delegates to for anything that could
-/// get the safety story wrong -- <see cref="EngineEventReducer"/>,
-/// <see cref="AlignmentFormatting"/> and <see cref="CoordinateText"/> -- is,
-/// thoroughly.
+/// It is tested against a recording engine for what it sends and when it lets
+/// it be sent; everything it delegates to for anything that could get the
+/// safety story wrong -- <see cref="EngineEventReducer"/>,
+/// <see cref="AlignmentFormatting"/> and <see cref="CoordinateText"/> -- is
+/// tested directly, and thoroughly.
 /// </summary>
 public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 {
@@ -63,8 +63,20 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     private double _stretchTarget = Imaging.Display.ImageStretch.DefaultTargetBackground;
     private Avalonia.Media.Imaging.Bitmap? _framePreview;
     private string? _framePreviewProblem;
-    private string? _loadedFramePath;
+    private DisplayedFrame? _displayedFrame;
+    private string? _saveFrameProblem;
+    private bool _disposed;
 
+    private readonly IFrameSaveTarget? _saveTarget;
+    private readonly Func<Imaging.Fits.FitsImage, double, Services.FramePreview> _renderPreview;
+    private readonly LatestOnlyRunner<PreviewJob> _preview;
+
+    /// <param name="saveTarget">Where Save frame asks for a file. Null disables it.</param>
+    /// <param name="renderPreview">
+    /// Turns a frame into a bitmap. Replaceable so that the preview pipeline --
+    /// which frame is shown, which are dropped -- can be tested without a
+    /// renderer; defaults to <see cref="FramePreviewLoader.Render"/>.
+    /// </param>
     public MainWindowViewModel(
         IAlignmentEngine? engine,
         DeviceCatalog? catalog,
@@ -73,7 +85,9 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         SessionLog? log,
         IReadOnlyList<string>? warnings,
         SessionConfiguration defaultConfiguration,
-        Action<Action>? postToUiThread = null)
+        Action<Action>? postToUiThread = null,
+        IFrameSaveTarget? saveTarget = null,
+        Func<Imaging.Fits.FitsImage, double, Services.FramePreview>? renderPreview = null)
     {
         _engine = engine;
         _catalog = catalog;
@@ -81,6 +95,16 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         _log = log;
         _settings = settings ?? AppSettings.Empty;
         _postToUiThread = postToUiThread ?? (action => action());
+        _saveTarget = saveTarget;
+        _renderPreview = renderPreview ?? FramePreviewLoader.Render;
+
+        // A re-stretch never displaces a frame waiting to be shown: that frame
+        // is rendered at the current stretch anyway, and dropping it would hold
+        // the picture back by a whole exposure while the slider is dragged.
+        _preview = new LatestOnlyRunner<PreviewJob>(
+            ShowPreviewAsync,
+            merge: (waiting, arriving) => arriving is Restretch && waiting is ShowFrame ? waiting : arriving,
+            onError: ex => _postToUiThread(() => FramePreviewProblem = $"Could not build a preview: {ex.Message}"));
 
         Warnings = warnings ?? Array.Empty<string>();
         DefaultConfiguration = defaultConfiguration;
@@ -102,10 +126,11 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
         // The remembered exposure wins over the built-in default, which is the
         // point of remembering it. Falling back to the nearest listed value to
-        // the default keeps the picker showing what a sequence would actually
-        // use, rather than a blank that means "whatever the engine decides".
+        // the engine's own default keeps the picker showing what the camera is
+        // actually doing, rather than a blank that means "whatever the engine
+        // decides".
         _selectedExposure = ExposureOption.Nearest(_settings.ExposureSeconds)
-                            ?? ExposureOption.Nearest(defaultConfiguration.ExposureDuration.TotalSeconds)
+                            ?? ExposureOption.Nearest(new AlignmentSessionOptions().EffectiveExposure.TotalSeconds)
                             ?? ExposureOption.All[^1];
 
         // The stored site prefills the fields and nothing more. It takes effect
@@ -160,14 +185,22 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             ApplyFocalLengthAsync,
             () => Ready && State.Camera.IsConnected);
 
+        // No mount is an ordinary mode, not a missing device (D10 as revised):
+        // positions then come from blind solves.
         StartCommand = new RelayCommand(
             StartAsync,
-            () => Ready && !State.SessionActive &&
-                  State.Camera.IsConnected && State.Mount.IsConnected && State.IsSiteConfigured);
+            () => Ready && !State.SessionActive && State.Camera.IsConnected && State.IsSiteConfigured);
 
+        RecordSampleCommand = new RelayCommand(
+            () => SendAsync(new RecordSampleCommand()),
+            () => Ready && State.SessionActive);
+
+        // Only a proposal that needs a slew has anything to confirm. The rest are
+        // carried out at the mount and sampled once it settles (D26), and a slew
+        // button for them would offer a movement that is not going to happen.
         ConfirmProposalCommand = new RelayCommand(
             ConfirmProposalAsync,
-            () => Ready && State.Proposal is not null);
+            () => Ready && State.Proposal is { RequiresMotion: true });
 
         RestoreProposalCoordinatesCommand = new RelayCommand(
             () =>
@@ -176,7 +209,11 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
                 EntryError = null;
                 return Task.CompletedTask;
             },
-            () => !State.CameraSetupDialogOpen && State.Proposal is not null);
+            () => Ready && State.Proposal is { RequiresMotion: true });
+
+        SaveFrameCommand = new RelayCommand(
+            SaveFrameAsync,
+            () => Ready && _saveTarget is not null && _displayedFrame is not null);
 
         CancelCommand = new RelayCommand(
             () => SendAsync(new CancelSessionCommand()),
@@ -239,6 +276,20 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     public RelayCommand OpenCameraSetupCommand { get; }
 
     public RelayCommand StartCommand { get; }
+
+    /// <summary>
+    /// Forces a sample from the next frame to start, whatever the spacing and
+    /// stability checks would say (D26). For a position the user knows is good
+    /// and the engine has not yet accepted.
+    /// </summary>
+    public RelayCommand RecordSampleCommand { get; }
+
+    /// <summary>
+    /// Writes the frame on screen wherever the user chooses. The frame's own
+    /// file is deleted once a newer one arrives (D26), so this is the only way
+    /// to keep one that did not fail to solve.
+    /// </summary>
+    public RelayCommand SaveFrameCommand { get; }
 
     public RelayCommand ConfirmProposalCommand { get; }
 
@@ -377,6 +428,18 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         get => _selectedReadoutMode;
         set
         {
+            // The second half of D23's refusal. The picker is disabled in XAML
+            // too, but a binding is one forgotten attribute away from letting a
+            // change through, and one that did would queue behind the driver's
+            // window and land on a camera that had changed underneath it. A
+            // null is let through: it sends nothing, and it is what the picker
+            // writes back when a disconnect empties its list.
+            if (value is not null && !IsReadoutModeEditable)
+            {
+                OnPropertyChanged();
+                return;
+            }
+
             if (!SetField(ref _selectedReadoutMode, value))
             {
                 return;
@@ -391,22 +454,44 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
     public IReadOnlyList<CameraReadoutModeDescription> ReadoutModes => State.ReadoutModes;
 
+    /// <summary>
+    /// Whether the readout mode can be changed now: whenever a camera is
+    /// connected, sequence or not, since the bit depth changes how noisy a
+    /// solved position is and not where it is (D25 as revised).
+    /// </summary>
+    public bool IsReadoutModeEditable => Ready && State.Camera.IsConnected;
+
     public IReadOnlyList<ExposureOption> ExposureOptions => ExposureOption.All;
 
     /// <summary>
-    /// How long each frame of the next sequence is exposed for.
+    /// Whether the exposure can be changed now. At any time, a sequence
+    /// included (D22 as revised): exposure changes how noisy a solved position
+    /// is, not where it is, and a sky brightening under twilight has to be
+    /// answerable without abandoning the sequence. Not even a camera is needed,
+    /// since the engine holds the exposure and the camera starts at it.
+    /// </summary>
+    public bool IsExposureEditable => Ready;
+
+    /// <summary>
+    /// How long each frame is exposed for, from the next frame on.
     ///
-    /// Read at <see cref="StartAsync"/> rather than sent as a command, because
-    /// there is nothing to send it to: the exposure is not device state, it is
-    /// an argument to <c>StartExposure</c> that the session passes on every
-    /// capture. Changing it mid-sequence would therefore change the frames
-    /// halfway through a fit, which is why the picker is disabled while one runs.
+    /// This is the authoritative copy. It is what is remembered, the engine is
+    /// started at it (<see cref="EngineFactory"/>), every change is sent as it
+    /// is made, and if the engine ever reports a different figure it is sent
+    /// again rather than followed -- the engine's value comes from here or from
+    /// its built-in default, and only one of those is the user's choice.
     /// </summary>
     public ExposureOption SelectedExposure
     {
         get => _selectedExposure;
         set
         {
+            if (!IsExposureEditable)
+            {
+                OnPropertyChanged();
+                return;
+            }
+
             // Avalonia hands back null when a ComboBox's list is rebuilt, and a
             // null exposure has no meaning -- keep the last real choice.
             if (value is null || !SetField(ref _selectedExposure, value))
@@ -414,6 +499,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
                 return;
             }
 
+            _ = SendAsync(new SetExposureCommand(value.Duration));
             Remember(_settings with { ExposureSeconds = value.Duration.TotalSeconds });
         }
     }
@@ -444,8 +530,12 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         ? State.CameraGain is not null
         : SelectedCamera?.HasGainControl == true;
 
-    /// <summary>Editable only once the camera has said what its range is, and not mid-sequence.</summary>
-    public bool IsGainEditable => Ready && !State.SessionActive && State.CameraGain is not null;
+    /// <summary>
+    /// Editable once the camera has said what its range is, and from then on at
+    /// any time, a sequence included: gain changes the noise in a solved
+    /// position, not the position (D25 as revised).
+    /// </summary>
+    public bool IsGainEditable => Ready && State.Camera.IsConnected && State.CameraGain is not null;
 
     /// <summary>
     /// The gain as a percentage of the camera's own range. Setting it sends the
@@ -462,7 +552,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         get => State.CameraGain?.Percent;
         set
         {
-            if (value is not { } requested || State.CameraGain is not { } current)
+            if (!IsGainEditable || value is not { } requested || State.CameraGain is not { } current)
             {
                 return;
             }
@@ -510,12 +600,36 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
                 Imaging.Display.ImageStretch.MinimumTargetBackground,
                 Imaging.Display.ImageStretch.MaximumTargetBackground);
 
-            if (SetField(ref _stretchTarget, clamped))
+            if (SetField(ref _stretchTarget, clamped) && _displayedFrame is not null)
             {
-                ReloadFramePreview();
+                _preview.Submit(Restretch.Instance);
             }
         }
     }
+
+    /// <summary>
+    /// The frame on screen, bytes and all. Null until one has been read.
+    /// Everything that acts on "this frame" reads it from here, because its
+    /// file may already be gone (D26).
+    /// </summary>
+    internal DisplayedFrame? DisplayedFrame => _displayedFrame;
+
+    public bool HasDisplayedFrame => _displayedFrame is not null;
+
+    /// <summary>Why the last Save frame did not save. Cleared by the next attempt.</summary>
+    public string? SaveFrameProblem
+    {
+        get => _saveFrameProblem;
+        private set
+        {
+            if (SetField(ref _saveFrameProblem, value))
+            {
+                OnPropertyChanged(nameof(HasSaveFrameProblem));
+            }
+        }
+    }
+
+    public bool HasSaveFrameProblem => _saveFrameProblem is not null;
 
     public Avalonia.Media.Imaging.Bitmap? FramePreview
     {
@@ -542,8 +656,6 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     // ---- Derived display ----
 
     public bool IsSessionActive => State.SessionActive;
-
-    public bool IsAwaitingManualAction => State.AwaitingManualAction;
 
     public string StatusMessage => State.StatusMessage;
 
@@ -641,13 +753,28 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
     public bool HasSweepShortfall => SweepShortfall is not null;
 
-    public bool HasProposal => State.Proposal is not null;
+    /// <summary>
+    /// Whether to show the next-step panel: while a sequence runs and the
+    /// engine has said what to do. Without a mount this panel is the whole of
+    /// the guidance -- which declination to set, then how far to turn -- so it
+    /// sits at the top of its column rather than among the warnings.
+    /// </summary>
+    public bool HasGuidance => State.SessionActive && State.GuidanceInstruction is not null;
 
-    public string? ProposalInstruction => State.Proposal?.Instruction;
+    public string? GuidanceInstruction => State.GuidanceInstruction;
 
     public bool ProposalRequiresMotion => State.Proposal?.RequiresMotion ?? false;
 
-    public string ConfirmProposalText => ProposalRequiresMotion ? "Slew and capture" : "Capture here";
+    public bool HasProposalDetail => State.Proposal is not null;
+
+    /// <summary>
+    /// What the engine is doing about the next sample (D26), counting down to
+    /// the next solve. Read against the clock, so the window refreshes it on a
+    /// timer (<see cref="OnClockTick"/>) as well as on every event.
+    /// </summary>
+    public string? SamplingStatusText => AlignmentFormatting.SamplingStatus(State, DateTimeOffset.UtcNow);
+
+    public bool HasSamplingStatus => SamplingStatusText is not null;
 
     public string ProposalDetail => State.Proposal is { } proposal
         ? FormattableString.Invariant($"Point {proposal.PointIndex} of {proposal.PlannedCaptures}") +
@@ -663,28 +790,28 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
     public string? FaultReason => State.FaultReason;
 
-    public bool HasCaptureWarning => State.CaptureWarning is not null;
-
-    public string? CaptureWarning => State.CaptureWarning;
-
     public bool HasRejectionReason => State.RejectionReason is not null;
 
     public string? RejectionReason => State.RejectionReason;
 
-    public bool HasManualInstruction => State.ManualInstruction is not null;
-
-    public string? ManualInstruction => State.ManualInstruction;
-
     public IReadOnlyList<string> Log => State.Log;
 
+    /// <summary>Called by the window's clock, so a countdown shown between events keeps counting.</summary>
+    public void OnClockTick()
+    {
+        OnPropertyChanged(nameof(SamplingStatusText));
+        OnPropertyChanged(nameof(HasSamplingStatus));
+    }
+
     /// <summary>
-    /// Polls the mount for where it is and whether it is tracking. Driven from
-    /// the window's timer rather than from inside the engine, so the engine
-    /// stays a deterministic function of the commands it is given.
+    /// Polls the mount for where it is, whether it is tracking and whether it is
+    /// moving. Driven from the window's timer: the engine times its own settle
+    /// delays now, but polling stays outside it (D26), and it is these polls
+    /// that tell it a slew made from the hand controller has ended.
     ///
     /// A poll already in flight is skipped rather than queued. The engine
-    /// serialises commands behind one gate, and a capture holds that gate for
-    /// the whole exposure and solve -- minutes, on a slow blind solve. A timer
+    /// serialises commands behind one gate, and a slow command -- the driver's
+    /// settings window, a connect, a slew being started -- holds it. A timer
     /// that queued regardless would pile up dozens of waiting polls and then
     /// discharge them all at once the moment the capture finished, none of them
     /// telling the user anything the last one had not.
@@ -788,8 +915,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         }
 
         EntryError = null;
-        await SendAsync(new StartSessionCommand(new SessionConfiguration(
-            points, sweep, SelectedExposure.Duration))).ConfigureAwait(true);
+        await SendAsync(new StartSessionCommand(new SessionConfiguration(points, sweep))).ConfigureAwait(true);
     }
 
     /// <summary>
@@ -800,15 +926,8 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     /// </summary>
     private async Task ConfirmProposalAsync()
     {
-        if (State.Proposal is not { } proposal)
+        if (State.Proposal is not { RequiresMotion: true })
         {
-            return;
-        }
-
-        if (!proposal.RequiresMotion)
-        {
-            EntryError = null;
-            await SendAsync(new CaptureHereCommand()).ConfigureAwait(true);
             return;
         }
 
@@ -871,8 +990,15 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
             if (engineEvent is FrameCapturedEvent frame)
             {
-                _loadedFramePath = frame.FitsPath;
-                LoadFramePreviewAsync(frame.FitsPath, StretchTarget);
+                _preview.Submit(new ShowFrame(frame.FitsPath, frame.ExposureMidpointUtc));
+            }
+
+            // The picker is the authority (see SelectedExposure), so a figure
+            // from the engine that disagrees is answered, not adopted.
+            if (engineEvent is ExposureChangedEvent exposure &&
+                exposure.Duration != SelectedExposure.Duration && Ready)
+            {
+                _ = SendAsync(new SetExposureCommand(SelectedExposure.Duration));
             }
 
             // Kept in step with what the camera actually accepted, rather than
@@ -898,60 +1024,131 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         });
     }
 
-    /// <summary>
-    /// Reads the newest frame and stretches it, off the UI thread.
-    ///
-    /// Fire-and-forget, and deliberately not queued: if a new frame arrives, or
-    /// the user drags the stretch slider, the load in progress is for a picture
-    /// nobody is waiting for any more. The guard is the path-and-index pair
-    /// captured before the await -- when it no longer matches on the way back,
-    /// the result is dropped rather than shown, so dragging the slider cannot
-    /// leave an out-of-date image behind whichever load happens to finish last.
-    /// </summary>
-    private void ReloadFramePreview()
+    /// <summary>What the preview has been asked to do next.</summary>
+    private abstract record PreviewJob;
+
+    /// <summary>Read this frame and show it, unless it is already gone.</summary>
+    private sealed record ShowFrame(string Path, DateTime ExposureMidpointUtc) : PreviewJob;
+
+    /// <summary>Stretch the frame already in memory again, at the current brightness.</summary>
+    private sealed record Restretch : PreviewJob
     {
-        if (_loadedFramePath is not { } path)
+        public static Restretch Instance { get; } = new();
+    }
+
+    /// <summary>
+    /// Reads and stretches one frame off the UI thread, then shows it.
+    ///
+    /// Run by <see cref="LatestOnlyRunner{T}"/>, so one at a time and only for
+    /// the newest frame: frames that arrive while this runs replace one another
+    /// in the queue, and all but the last are never loaded. That is what lets
+    /// a 0.1 s exposure be shown without the picture falling ever further
+    /// behind the camera.
+    ///
+    /// A re-stretch works on the frame in memory rather than re-reading its
+    /// file, because the file is deleted as soon as a newer frame is published
+    /// (D26) -- dragging the slider would otherwise fail on every frame but the
+    /// newest.
+    /// </summary>
+    private async Task ShowPreviewAsync(PreviewJob job)
+    {
+        DisplayedFrame? frame = job switch
+        {
+            ShowFrame show => await Task.Run(() => FramePreviewLoader.Read(show.Path, show.ExposureMidpointUtc))
+                .ConfigureAwait(false),
+            _ => _displayedFrame,
+        };
+
+        // Gone before its turn came: a newer frame overtook it and is on its
+        // way, so there is nothing to say.
+        if (frame is null)
         {
             return;
         }
 
-        LoadFramePreviewAsync(path, StretchTarget);
+        double target = _stretchTarget;
+        Services.FramePreview preview = frame.Image is { } image
+            ? await Task.Run(() => _renderPreview(image, target)).ConfigureAwait(false)
+            : new Services.FramePreview(null, frame.Problem);
+
+        _postToUiThread(() =>
+        {
+            if (_disposed)
+            {
+                preview.Bitmap?.Dispose();
+                return;
+            }
+
+            Avalonia.Media.Imaging.Bitmap? previous = FramePreview;
+            _displayedFrame = frame;
+            FramePreview = preview.Bitmap;
+            FramePreviewProblem = preview.Problem;
+            if (!ReferenceEquals(previous, preview.Bitmap))
+            {
+                previous?.Dispose();
+            }
+
+            OnPropertyChanged(nameof(HasFramePreview));
+            OnPropertyChanged(nameof(HasDisplayedFrame));
+            SaveFrameCommand.RaiseCanExecuteChanged();
+        });
     }
 
-    private void LoadFramePreviewAsync(string path, double target)
+    /// <summary>For tests: completes once no preview is loading or waiting.</summary>
+    internal Task WhenPreviewIdleAsync() => _preview.WhenIdleAsync();
+
+    /// <summary>
+    /// Writes the displayed frame's original bytes wherever the user chooses.
+    ///
+    /// The bytes, not the file: the file is deleted once a newer frame arrives,
+    /// which at a short exposure is before the dialog has even opened. And the
+    /// frame is taken when the button is pressed, so the one saved is the one
+    /// that was on screen, not whichever has replaced it by the time the user
+    /// has picked a folder.
+    /// </summary>
+    private async Task SaveFrameAsync()
     {
-        _ = Load();
-
-        async Task Load()
+        if (_displayedFrame is not { } frame || _saveTarget is null)
         {
-            Services.FramePreview loaded;
-            try
+            return;
+        }
+
+        SaveFrameProblem = null;
+        try
+        {
+            Stream? destination = await _saveTarget.OpenAsync(SuggestedFileName(frame)).ConfigureAwait(true);
+            if (destination is null)
             {
-                loaded = await Services.FramePreviewLoader
-                    .LoadAsync(path, target).ConfigureAwait(true);
-            }
-            catch (Exception ex)
-            {
-                loaded = new Services.FramePreview(null, $"Could not build a preview: {ex.Message}");
+                return;
             }
 
-            _postToUiThread(() =>
+            await using (destination.ConfigureAwait(true))
             {
-                // Superseded while it was loading.
-                if (_loadedFramePath != path || !Equals(target, StretchTarget))
+                await destination.WriteAsync(frame.FitsBytes).ConfigureAwait(true);
+
+                // Overwriting a longer file must not leave its tail behind as a
+                // corrupt FITS that still opens.
+                if (destination.CanSeek)
                 {
-                    loaded.Bitmap?.Dispose();
-                    return;
+                    destination.SetLength(destination.Position);
                 }
-
-                FramePreview?.Dispose();
-                FramePreview = loaded.Bitmap;
-                FramePreviewProblem = loaded.Problem;
-
-                OnPropertyChanged(nameof(HasFramePreview));
-            });
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                   or NotSupportedException or InvalidOperationException)
+        {
+            SaveFrameProblem = $"Could not save the frame: {ex.Message}";
+            _log?.Write(LogSeverity.Warning, SaveFrameProblem);
         }
     }
+
+    /// <summary>
+    /// Named for the exposure midpoint, in UTC and to the millisecond, so saved
+    /// frames sort in the order they were taken and two frames a tenth of a
+    /// second apart do not collide.
+    /// </summary>
+    internal static string SuggestedFileName(DisplayedFrame frame) =>
+        FormattableString.Invariant($"frame_{frame.ExposureMidpointUtc:yyyyMMdd'T'HHmmss'.'fff'Z'}.fits");
 
     private void SeedProposalCoordinates(ProposalView? proposal)
     {
@@ -1080,10 +1277,9 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     /// <summary>
     /// Stores a settings change and writes it out.
     ///
-    /// Separate from the event-driven overload because not everything worth
-    /// remembering is engine state. The exposure is a choice the user makes here
-    /// and the engine never hears about until a sequence starts, so there is no
-    /// event to hang it on.
+    /// Separate from the event-driven overload because the exposure is
+    /// remembered as chosen, not as the engine echoes it: the picker is its
+    /// authoritative copy (see <see cref="SelectedExposure"/>).
     /// </summary>
     private void Remember(AppSettings updated)
     {
@@ -1130,6 +1326,8 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         ConfirmSiteCommand.RaiseCanExecuteChanged();
         ApplyFocalLengthCommand.RaiseCanExecuteChanged();
         StartCommand.RaiseCanExecuteChanged();
+        RecordSampleCommand.RaiseCanExecuteChanged();
+        SaveFrameCommand.RaiseCanExecuteChanged();
         ConfirmProposalCommand.RaiseCanExecuteChanged();
         RestoreProposalCoordinatesCommand.RaiseCanExecuteChanged();
         CancelCommand.RaiseCanExecuteChanged();
@@ -1145,7 +1343,6 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     private static readonly string[] DerivedProperties =
     {
         nameof(IsSessionActive),
-        nameof(IsAwaitingManualAction),
         nameof(StatusMessage),
         nameof(IsCameraConnected),
         nameof(IsMountConnected),
@@ -1173,34 +1370,35 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(ProgressText),
         nameof(SweepShortfall),
         nameof(HasSweepShortfall),
-        nameof(HasProposal),
-        nameof(ProposalInstruction),
+        nameof(HasGuidance),
+        nameof(GuidanceInstruction),
         nameof(ProposalRequiresMotion),
-        nameof(ConfirmProposalText),
+        nameof(HasProposalDetail),
         nameof(ProposalDetail),
+        nameof(SamplingStatusText),
+        nameof(HasSamplingStatus),
         nameof(HasWithheldReason),
         nameof(WithheldReason),
         nameof(HasFaultReason),
         nameof(FaultReason),
-        nameof(HasCaptureWarning),
-        nameof(CaptureWarning),
         nameof(ReadoutModes),
         nameof(HasReadoutModes),
         nameof(HasCameraSetupDialog),
         nameof(IsCameraSetupDialogOpen),
         nameof(ShowGainControl),
         nameof(IsGainEditable),
+        nameof(IsExposureEditable),
+        nameof(IsReadoutModeEditable),
         nameof(GainPercent),
         nameof(GainDetailText),
         nameof(HasRejectionReason),
         nameof(RejectionReason),
-        nameof(HasManualInstruction),
-        nameof(ManualInstruction),
         nameof(Log),
     };
 
     public void Dispose()
     {
+        _disposed = true;
         _subscription?.Dispose();
         _framePreview?.Dispose();
     }

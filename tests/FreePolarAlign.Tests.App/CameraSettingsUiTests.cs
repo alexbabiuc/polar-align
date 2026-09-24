@@ -130,7 +130,7 @@ public class CameraSettingsUiTests
 
         var viewModel = new MainWindowViewModel(
             engine, catalog, store, settings, log: null, warnings: null,
-            new SessionConfiguration(6, 70.0, TimeSpan.FromSeconds(2)));
+            new SessionConfiguration(6, 70.0));
 
         return (viewModel, engine, store, catalog);
     }

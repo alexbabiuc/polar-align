@@ -127,7 +127,7 @@
                 <ComboBox ItemsSource="{Binding ReadoutModes}"
                           SelectedItem="{Binding SelectedReadoutMode, Mode=TwoWay}"
                           HorizontalAlignment="Stretch"
-                          IsEnabled="{Binding !IsSessionActive}">
+                          IsEnabled="{Binding IsReadoutModeEditable}">
                   <ComboBox.ItemTemplate>
                     <DataTemplate x:DataType="engine:CameraReadoutModeDescription">
                       <TextBlock Text="{Binding Label}" />
@@ -177,7 +177,7 @@
 
               <Border Background="#5A4A1E" BorderBrush="#B3943A" BorderThickness="1" CornerRadius="3" Padding="8"
                       IsVisible="{Binding ShowSlewUnsupportedNote}">
-                <TextBlock Text="This driver reports no absolute-slew support, so automatic mode is unavailable (D9). The sequence has to be driven by hand (D10)."
+                <TextBlock Text="This driver reports no absolute-slew support (D9). Move the mount from its hand controller; each position is sampled once the mount settles (D10, D26)."
                            TextWrapping="Wrap" Foreground="#FFEFCB" FontSize="12" />
               </Border>
             </StackPanel>
@@ -332,8 +332,19 @@
               not exist yet, and a permanent line of it was taking its height
               from the picture.
             -->
-            <TextBlock DockPanel.Dock="Top" Classes="h" Text="Captured frame" Margin="0,0,0,6"
-                       ToolTip.Tip="Correction reticle (D12) still to come: its direction has to be derived from the solved CD matrix, and an arrow pointing the wrong way would be worse than none." />
+            <!--
+              Save frame shares the title's row, and is sized to the title's
+              line height, for the reason the exposure picker shares the
+              brightness row: a row of its own came out of the picture, which
+              at the minimum window size has nothing to spare.
+            -->
+            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+              <TextBlock Grid.Column="0" Classes="h" Text="Captured frame" VerticalAlignment="Center"
+                         ToolTip.Tip="Correction reticle (D12) still to come: its direction has to be derived from the solved CD matrix, and an arrow pointing the wrong way would be worse than none." />
+              <Button Grid.Column="1" Content="Save frame..." Command="{Binding SaveFrameCommand}"
+                      FontSize="12" Padding="8,1" MinHeight="0" VerticalAlignment="Center"
+                      ToolTip.Tip="Saves the frame on screen as it came from the camera. Frames are otherwise deleted once the next one arrives, except those whose solve failed." />
+            </Grid>
 
             <!--
               Only shown when a frame will not open, and then it is not a detail
@@ -345,6 +356,10 @@
                        Margin="0,6,0,0"
                        Text="{Binding FramePreviewProblem}"
                        IsVisible="{Binding HasFramePreviewProblem}" />
+            <TextBlock DockPanel.Dock="Bottom" Classes="label" Foreground="#FFB0B0" TextWrapping="Wrap"
+                       Margin="0,6,0,0"
+                       Text="{Binding SaveFrameProblem}"
+                       IsVisible="{Binding HasSaveFrameProblem}" />
 
             <!--
               Both controls on one row, and the exposure picker docked here
@@ -372,16 +387,15 @@
 
               <TextBlock Grid.Column="2" Classes="label" Text="Exposure" VerticalAlignment="Center" />
               <!--
-                Disabled while a sequence runs. The exposure is not device state;
-                it is an argument to StartExposure passed on every capture, so
-                changing it mid-sequence would change the frames halfway through
-                the fit they are being combined into.
+                Enabled during a sequence too (D22 as revised): exposure changes
+                how noisy a solved position is, not where it is, and the picture
+                above is live, so this is where a brightening sky is answered.
               -->
               <ComboBox Grid.Column="3" ItemsSource="{Binding ExposureOptions}"
                         SelectedItem="{Binding SelectedExposure, Mode=TwoWay}"
                         MinHeight="32" VerticalAlignment="Center"
-                        IsEnabled="{Binding !IsSessionActive}"
-                        ToolTip.Tip="Applies to the next sequence. Shorter is usually better here: these frames are measured for star positions, not looked at, and a sky bright enough to swamp the stars is the commonest reason a solve fails.">
+                        IsEnabled="{Binding IsExposureEditable}"
+                        ToolTip.Tip="Applies from the next frame. Shorter is usually better here: these frames are measured for star positions, not looked at, and a sky bright enough to swamp the stars is the commonest reason a solve fails.">
                 <ComboBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:ExposureOption">
                     <TextBlock Text="{Binding Label}" />
@@ -395,7 +409,7 @@
               <Grid>
                 <Image Source="{Binding FramePreview}" Stretch="Uniform"
                        IsVisible="{Binding HasFramePreview}" />
-                <TextBlock Text="No frame captured yet. The first capture appears here."
+                <TextBlock Text="No frame yet. Frames appear here as soon as a camera is connected."
                            Classes="label" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="260"
                            HorizontalAlignment="Center" VerticalAlignment="Center"
                            IsVisible="{Binding !HasFramePreview}" />
@@ -410,17 +424,25 @@
         <StackPanel Spacing="10">
 
           <!--
-            D18: the engine proposes and then waits. The coordinates are editable
-            because the engine cannot see trees, roofs or the one cloudy quadrant,
-            and a planner that insisted on its own choice would be wrong more
-            often than the user.
+            What to do next, from whichever of the proposal and the manual
+            instruction the engine gave last. At the top of the column because
+            without a mount it is the whole of the guidance (D10): which
+            declination to set, then how far to turn.
+
+            The coordinates and the slew button appear only for a proposal that
+            needs a slew. D18: the engine proposes and then waits, and the
+            coordinates are editable because the engine cannot see trees, roofs
+            or the one cloudy quadrant. Anything else is done at the mount and
+            sampled once it settles (D26), so a button there would offer a
+            movement that is not going to happen.
           -->
           <Border Background="#1E3A5A" BorderBrush="#3A7AB3" BorderThickness="1" CornerRadius="4" Padding="12"
-                  IsVisible="{Binding HasProposal}">
+                  IsVisible="{Binding HasGuidance}">
             <StackPanel Spacing="8">
               <TextBlock Text="NEXT STEP" FontWeight="Bold" Foreground="#B0D8FF" />
-              <TextBlock Text="{Binding ProposalInstruction}" TextWrapping="Wrap" Foreground="#DCEFFF" />
-              <TextBlock Text="{Binding ProposalDetail}" Classes="label" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding GuidanceInstruction}" TextWrapping="Wrap" Foreground="#DCEFFF" FontSize="15" />
+              <TextBlock Text="{Binding ProposalDetail}" Classes="label" TextWrapping="Wrap"
+                         IsVisible="{Binding HasProposalDetail}" />
 
               <StackPanel Spacing="4" IsVisible="{Binding ProposalRequiresMotion}">
                 <TextBlock Classes="label" TextWrapping="Wrap"
@@ -431,14 +453,24 @@
                 <TextBox Text="{Binding ProposalDecText, Mode=TwoWay}" FontFamily="monospace" />
                 <TextBlock Classes="label" TextWrapping="Wrap"
                            Text="Moving in declination starts a new sequence: points at different declinations do not lie on one circle about the polar axis." />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button Content="Slew" Command="{Binding ConfirmProposalCommand}" Background="#1F5A8C" />
+                  <Button Content="Restore suggested" Command="{Binding RestoreProposalCoordinatesCommand}" />
+                </StackPanel>
               </StackPanel>
+            </StackPanel>
+          </Border>
 
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="{Binding ConfirmProposalText}" Command="{Binding ConfirmProposalCommand}"
-                        Background="#1F5A8C" />
-                <Button Content="Restore suggested" Command="{Binding RestoreProposalCoordinatesCommand}"
-                        IsVisible="{Binding ProposalRequiresMotion}" />
-              </StackPanel>
+          <!--
+            One line from the scheduling events (D26). Failed solves are counted
+            here and not given a banner: while the mount is being turned most
+            frames fail, and a warning that is always up is one nobody reads.
+          -->
+          <Border Background="#262626" BorderBrush="#4A4A4A" BorderThickness="1" CornerRadius="4" Padding="10"
+                  IsVisible="{Binding HasSamplingStatus}">
+            <StackPanel Spacing="4">
+              <TextBlock Text="SAMPLING" FontWeight="Bold" Foreground="#C8C8C8" FontSize="12" />
+              <TextBlock Text="{Binding SamplingStatusText}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
 
@@ -474,21 +506,6 @@
             </StackPanel>
           </Border>
 
-          <Border Background="#5A4A1E" BorderBrush="#B3943A" BorderThickness="1" CornerRadius="4" Padding="10"
-                  IsVisible="{Binding HasCaptureWarning}">
-            <StackPanel Spacing="4">
-              <TextBlock Text="CAPTURE FAILED" FontWeight="Bold" Foreground="#FFE0A0" />
-              <TextBlock Text="{Binding CaptureWarning}" TextWrapping="Wrap" Foreground="#FFEFCB" />
-            </StackPanel>
-          </Border>
-
-          <Border Background="#1E3A5A" BorderBrush="#3A7AB3" BorderThickness="1" CornerRadius="4" Padding="10"
-                  IsVisible="{Binding HasManualInstruction}">
-            <StackPanel Spacing="4">
-              <TextBlock Text="MANUAL ACTION REQUIRED" FontWeight="Bold" Foreground="#B0D8FF" />
-              <TextBlock Text="{Binding ManualInstruction}" TextWrapping="Wrap" Foreground="#DCEFFF" />
-            </StackPanel>
-          </Border>
         </StackPanel>
       </ScrollViewer>
     </Grid>
@@ -502,8 +519,11 @@
     -->
     <Grid Grid.Row="3" RowDefinitions="Auto,Auto,120" RowSpacing="6">
       <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
-        <Button Content="Start sequence" Command="{Binding StartCommand}" />
-        <Button Content="Cancel" Command="{Binding CancelCommand}" />
+        <Button Content="Start sequence" Command="{Binding StartCommand}"
+                ToolTip.Tip="Needs a camera and a confirmed site. With no mount connected, positions come from blind solves and you move the telescope by hand." />
+        <Button Content="Record sample" Command="{Binding RecordSampleCommand}"
+                ToolTip.Tip="Uses the next frame to start as a sample now, whatever the spacing and settling checks say. The frame on screen is never used: it may have been exposed while the telescope was moving." />
+        <Button Content="Stop sequence" Command="{Binding CancelCommand}" />
         <Button Content="Abort" Command="{Binding AbortCommand}" Background="#5A1E1E" />
       </StackPanel>
 

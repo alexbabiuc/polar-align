@@ -12,4 +12,9 @@
     <ProjectReference Include="..\FreePolarAlign.Imaging\FreePolarAlign.Imaging.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- FrameStore's delete seam: a locked file cannot be simulated on macOS or Linux. -->
+    <InternalsVisibleTo Include="FreePolarAlign.Tests.EndToEnd" />
+  </ItemGroup>
+
 </Project>

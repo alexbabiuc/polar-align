@@ -118,7 +118,7 @@ public class WindowLayoutTests
                         "'FreePolarAlign.Imaging' does not contain any usable IDeviceProvider implementation.",
                     }
                     : null,
-                new SessionConfiguration(6, 70.0, TimeSpan.FromSeconds(2)),
+                new SessionConfiguration(6, 70.0),
                 postToUiThread: action => action());
 
             var window = new MainWindow { DataContext = viewModel, Width = width, Height = height };

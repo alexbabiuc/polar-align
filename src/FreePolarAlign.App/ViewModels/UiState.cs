@@ -25,9 +25,9 @@ public sealed record DeviceView(
 /// </summary>
 /// <param name="RequiresMotion">
 /// False when the telescope is already somewhere usable, or is being turned by
-/// hand (D10). The UI offers "capture" rather than "slew and capture", because
-/// presenting a movement that is not going to happen invites the user to check
-/// the sky for an obstruction that does not matter.
+/// hand (D10). The UI then offers no slew at all, because presenting a movement
+/// that is not going to happen invites the user to check the sky for an
+/// obstruction that does not matter.
 /// </param>
 public sealed record ProposalView(
     int PointIndex,
@@ -38,6 +38,41 @@ public sealed record ProposalView(
     double PredictedAltitudeDegrees,
     bool RequiresMotion,
     string Instruction);
+
+/// <summary>What the engine last said about getting the next sample (D26).</summary>
+public enum SamplingActivity
+{
+    None,
+
+    /// <summary>A solve is counting down; <see cref="SamplingView.Trigger"/> says why.</summary>
+    Scheduled,
+
+    Solving,
+
+    /// <summary>A solve succeeded but did not become a sample; <see cref="SamplingView.Detail"/> says why.</summary>
+    Skipped,
+
+    /// <summary>The last solve failed. The count is in <see cref="SamplingView.ConsecutiveFailures"/>.</summary>
+    Failed,
+
+    Sampled,
+}
+
+/// <param name="SolveDueUtc">When a scheduled solve is due, so the countdown can be shown without another event.</param>
+/// <param name="ConsecutiveFailures">
+/// Kept across the reschedule that follows a failure, and cleared only by a
+/// solve that worked. Failures while the mount is being turned are normal
+/// (D26), so the count is what the user needs, not the latest failure alone.
+/// </param>
+public sealed record SamplingView(
+    SamplingActivity Activity,
+    SampleTrigger Trigger = SampleTrigger.Periodic,
+    DateTimeOffset? SolveDueUtc = null,
+    string? Detail = null,
+    int ConsecutiveFailures = 0)
+{
+    public static SamplingView Idle { get; } = new(SamplingActivity.None);
+}
 
 /// <summary>
 /// Everything the UI shows, reconstructed entirely from the engine's event
@@ -54,10 +89,14 @@ public sealed record UiState
 {
     public bool SessionActive { get; init; }
 
-    public bool AwaitingManualAction { get; init; }
-
     public string StatusMessage { get; init; } =
-        "Idle. Connect a camera and a mount, confirm your site, then start a sequence.";
+        "Idle. Connect a camera, confirm your site, then start a sequence. A mount is optional.";
+
+    /// <summary>
+    /// How the running sequence reaches its samples. Meaningful only while
+    /// <see cref="SessionActive"/>; decided by what is connected (D10).
+    /// </summary>
+    public SequenceMode SequenceMode { get; init; } = SequenceMode.Driven;
 
     // ---- Devices ----
 
@@ -110,13 +149,20 @@ public sealed record UiState
     public bool CameraSetupDialogOpen { get; init; }
 
     /// <summary>
-    /// The most recently exposed frame, on disk. Set as soon as the exposure
-    /// finishes and before the solve is attempted, because a frame the solver
-    /// could not read is exactly the one worth looking at.
+    /// The most recently exposed frame, on disk. The camera runs continuously
+    /// (D26), so this changes every frame, and the file it names is deleted
+    /// once a newer one supersedes it: it says what to load next, never what
+    /// can still be read later.
     /// </summary>
     public string? LatestFramePath { get; init; }
 
-    public int LatestFrameIndex { get; init; }
+    public DateTime? LatestFrameMidpointUtc { get; init; }
+
+    /// <summary>
+    /// The exposure the engine says frames are being taken at. Null until it
+    /// has said; the picker is compared against it, not driven by it.
+    /// </summary>
+    public TimeSpan? EngineExposure { get; init; }
 
     /// <summary>
     /// False when the connected mount cannot perform absolute slews (D9), which
@@ -137,6 +183,13 @@ public sealed record UiState
     public MountTrackingState MountTracking { get; init; } = MountTrackingState.Unknown;
 
     public MeridianSide MountPierSide { get; init; } = MeridianSide.Unknown;
+
+    /// <summary>
+    /// The engine's judgement that the mount is being moved. Any motion
+    /// cancels a pending solve (D26), so while this is true nothing will be
+    /// sampled, and the sampling status says so.
+    /// </summary>
+    public bool MountIsMoving { get; init; }
 
     // ---- Site and equipment ----
 
@@ -184,13 +237,21 @@ public sealed record UiState
     /// <summary>Non-null exactly when the session last faulted, until a new session starts.</summary>
     public string? FaultReason { get; init; }
 
-    /// <summary>D10: the instruction to show while <see cref="AwaitingManualAction"/> is true.</summary>
-    public string? ManualInstruction { get; init; }
+    /// <summary>
+    /// What the user should do next, from whichever of
+    /// <see cref="ManualActionRequiredEvent"/> and <see cref="SlewProposedEvent"/>
+    /// spoke last. Without a mount (D10) this is the whole of the guidance:
+    /// which declination to set, then how far to turn.
+    /// </summary>
+    public string? GuidanceInstruction { get; init; }
+
+    public SamplingView Sampling { get; init; } = SamplingView.Idle;
 
     /// <summary>
-    /// What the engine has proposed and is waiting for confirmation of (D18).
-    /// Null whenever nothing is pending, which is also the condition under which
-    /// no capture affordance may be enabled.
+    /// What the engine has proposed (D18). Null whenever nothing is pending.
+    /// Only a proposal that <see cref="ProposalView.RequiresMotion"/> is waiting
+    /// on the user; the others are carried out by the user at the mount and
+    /// sampled when it settles (D26).
     /// </summary>
     public ProposalView? Proposal { get; init; }
 
@@ -214,18 +275,6 @@ public sealed record UiState
     public double? PlannedSweepDegrees { get; init; }
 
     public double? RequestedSweepDegrees { get; init; }
-
-    /// <summary>
-    /// A prominent warning surfaced during the *last* capture attempt (D11's
-    /// third named case: "Same for ... CaptureFailedEvent"). Deliberately kept
-    /// separate from <see cref="CurrentEstimate"/> rather than clearing it: a
-    /// failed capture does not retroactively invalidate the fit computed from
-    /// points already captured, so the honest response is to flag the failure
-    /// prominently alongside whatever number is still on screen, not to hide a
-    /// number that is not actually stale. It is cleared as soon as a capture
-    /// succeeds or a new session starts.
-    /// </summary>
-    public string? CaptureWarning { get; init; }
 
     public IReadOnlyList<string> Log { get; init; } = Array.Empty<string>();
 

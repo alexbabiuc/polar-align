@@ -25,6 +25,9 @@ public sealed partial class App : Application
             // UI exists (see EngineFactory.Create's own doc comment).
             _startup = EngineFactory.Create();
 
+            // The window first: its storage provider is what Save frame asks.
+            var window = new MainWindow();
+
             _viewModel = new MainWindowViewModel(
                 _startup.Engine,
                 _startup.Catalog,
@@ -33,9 +36,10 @@ public sealed partial class App : Application
                 _startup.Log,
                 _startup.Warnings,
                 _startup.DefaultConfiguration,
-                postToUiThread: action => Dispatcher.UIThread.Post(action));
+                postToUiThread: action => Dispatcher.UIThread.Post(action),
+                saveTarget: new StorageProviderFrameSaveTarget(window));
 
-            var window = new MainWindow { DataContext = _viewModel };
+            window.DataContext = _viewModel;
             desktop.MainWindow = window;
             desktop.ShutdownRequested += OnShutdownRequested;
         }

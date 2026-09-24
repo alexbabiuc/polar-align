@@ -12,7 +12,7 @@ namespace FreePolarAlign.Tests.App;
 /// captured at a hardcoded two seconds. On a 105 mm lens under a moderately
 /// bright sky that put the background at 57% of full well, which left 23 to 28
 /// detectable stars against the 115 or more the same camera gave through other
-/// software, and the solves failed. The setting has to reach a sequence and it
+/// software, and the solves failed. The setting has to reach the camera and it
 /// has to survive a restart, because a choice that quietly reverts overnight is
 /// how the same frame gets over-exposed twice.
 /// </summary>
@@ -72,7 +72,7 @@ public class ExposureChoiceTests
         }
     }
 
-    /// <summary>What StartCommand insists on before it will run: both devices connected and a confirmed site.</summary>
+    /// <summary>Everything connected and a confirmed site: as much as possible available.</summary>
     private static void MakeStartable(RecordingEngine engine) =>
         engine.Publish(
             new DeviceConnectedEvent(
@@ -115,7 +115,7 @@ public class ExposureChoiceTests
             settings: settings,
             log: null,
             warnings: null,
-            new SessionConfiguration(6, 70.0, TimeSpan.FromSeconds(2)));
+            new SessionConfiguration(6, 70.0));
 
         return (viewModel, engine, store);
     }
@@ -135,29 +135,92 @@ public class ExposureChoiceTests
     public void EveryOptionIsLabelledInSeconds() =>
         Assert.All(ExposureOption.All, option => Assert.EndsWith(" s", option.Label, StringComparison.Ordinal));
 
-    // ---- Reaching a sequence ----
+    // ---- Reaching the camera ----
+
+    private static ExposureOption Seconds(double seconds) =>
+        ExposureOption.All.Single(o => o.Duration == TimeSpan.FromSeconds(seconds));
 
     /// <summary>
-    /// The point of the control: starting a sequence uses what the picker shows,
-    /// not the built-in default. Before this existed the configuration carried
-    /// <c>DefaultConfiguration.ExposureDuration</c> and there was no way to
-    /// change it from the application at all.
+    /// The point of the control: the frames are taken at what the picker shows.
+    /// The camera runs continuously (D26), so the choice goes to the engine as
+    /// it is made rather than waiting for a sequence to start.
     /// </summary>
     [Fact]
-    public void StartingASequence_UsesTheChosenExposure()
+    public void ChoosingAnExposure_SendsItToTheEngine()
+    {
+        var (viewModel, engine, _) = Build();
+
+        viewModel.SelectedExposure = Seconds(0.5);
+
+        Assert.Equal(TimeSpan.FromSeconds(0.5), Assert.Single(engine.Commands.OfType<SetExposureCommand>()).Duration);
+    }
+
+    /// <summary>
+    /// Including mid-sequence (D22 as revised). Exposure changes how noisy a
+    /// solved position is, not where it is, and a sky brightening under
+    /// twilight has to be answerable without abandoning the sequence. The
+    /// picker used to be disabled here.
+    /// </summary>
+    [Fact]
+    public void TheExposure_CanBeChangedDuringASequence()
     {
         var (viewModel, engine, _) = Build();
         MakeStartable(engine);
+        engine.Publish(new SessionStartedEvent(new SessionConfiguration(6, 70.0)));
 
-        viewModel.SelectedExposure = ExposureOption.All.Single(o => o.Duration == TimeSpan.FromSeconds(0.5));
+        Assert.True(viewModel.IsExposureEditable);
+        viewModel.SelectedExposure = Seconds(0.2);
 
-        // Everything this command awaits completes synchronously against a
-        // recording engine, so it has run by the time Execute returns.
-        viewModel.StartCommand.Execute(null);
+        Assert.Equal(TimeSpan.FromSeconds(0.2), Assert.Single(engine.Commands.OfType<SetExposureCommand>()).Duration);
+    }
 
-        StartSessionCommand start = Assert.IsType<StartSessionCommand>(
-            Assert.Single(engine.Commands.OfType<StartSessionCommand>()));
-        Assert.Equal(TimeSpan.FromSeconds(0.5), start.Configuration.ExposureDuration);
+    /// <summary>
+    /// But not while the driver's window is open (D23): the engine is blocked
+    /// behind it, and a change sent meanwhile would queue and land afterwards on
+    /// a camera that has changed underneath it. Refused in the setter as well as
+    /// by the disabled control, and nothing is remembered either, since nothing
+    /// was applied.
+    /// </summary>
+    [Fact]
+    public void TheExposure_CannotBeChangedWhileTheDriverWindowIsOpen()
+    {
+        var (viewModel, engine, store) = Build();
+        engine.Publish(new CameraSetupDialogChangedEvent(IsOpen: true));
+
+        Assert.False(viewModel.IsExposureEditable);
+        viewModel.SelectedExposure = Seconds(0.2);
+
+        Assert.Empty(engine.Commands.OfType<SetExposureCommand>());
+        Assert.Equal(TimeSpan.FromSeconds(2), viewModel.SelectedExposure.Duration);
+        Assert.Null(store.Saved.ExposureSeconds);
+    }
+
+    /// <summary>
+    /// The picker is the authority. An engine reporting some other exposure --
+    /// one built with its own default, say -- is sent the chosen one, rather
+    /// than the picker quietly following it and the remembered choice being
+    /// lost.
+    /// </summary>
+    [Fact]
+    public void AnEngineReportingADifferentExposure_IsSentTheChosenOne()
+    {
+        var (viewModel, engine, _) = Build(AppSettings.Empty with { ExposureSeconds = 0.5 });
+
+        engine.Publish(new ExposureChangedEvent(TimeSpan.FromSeconds(2)));
+
+        Assert.Equal(TimeSpan.FromSeconds(0.5), Assert.Single(engine.Commands.OfType<SetExposureCommand>()).Duration);
+        Assert.Equal(TimeSpan.FromSeconds(0.5), viewModel.SelectedExposure.Duration);
+    }
+
+    /// <summary>And one that agrees is left alone, so the echo of a change does not bounce back and forth.</summary>
+    [Fact]
+    public void AnEngineReportingTheChosenExposure_IsNotSentItAgain()
+    {
+        var (_, engine, _) = Build(AppSettings.Empty with { ExposureSeconds = 0.5 });
+
+        engine.Publish(new ExposureChangedEvent(TimeSpan.FromSeconds(0.5)));
+
+        Assert.Empty(engine.Commands.OfType<SetExposureCommand>());
     }
 
     // ---- Persistence ----

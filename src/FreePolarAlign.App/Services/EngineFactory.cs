@@ -1,3 +1,4 @@
+using FreePolarAlign.App.ViewModels;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Devices;
 using FreePolarAlign.Devices.Simulated;
@@ -102,7 +103,15 @@ public static class EngineFactory
         // remembered figure is a good hint and a poor measurement, and the
         // distinction decides how tightly the solver is allowed to bound its
         // search. It is re-measured from the first solve of the night anyway.
+        //
+        // The remembered exposure is the engine's starting one, snapped to the
+        // picker's list exactly as the picker snaps it (D22), so the two agree
+        // from the first frame. Handing it over later by command would work too,
+        // but the camera starts exposing the moment it connects (D26), and the
+        // frame already under way would be taken at the default -- on the sky
+        // that motivated D22, a frame swamped at two seconds.
         var options = new AlignmentSessionOptions(
+            ExposureDuration: ExposureOption.Nearest(loaded.Settings.ExposureSeconds)?.Duration ?? default,
             EquipmentProfile: null,
             ApplicationName: AppVersion.ProductName,
             ApplicationVersion: AppVersion.Identifier());
@@ -111,8 +120,7 @@ public static class EngineFactory
 
         var configuration = new SessionConfiguration(
             CapturePoints: options.CaptureCount,
-            RequestedSweepDegrees: options.SweepDegrees,
-            ExposureDuration: options.EffectiveExposure);
+            RequestedSweepDegrees: options.SweepDegrees);
 
         return new EngineStartupResult(
             session,

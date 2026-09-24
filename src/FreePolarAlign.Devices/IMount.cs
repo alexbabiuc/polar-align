@@ -38,12 +38,25 @@ public sealed record GeodeticLocation(double LatitudeDegrees, double LongitudeDe
 /// a driver rather than three, which matters for a COM-based ASCOM mount where
 /// each property read is an out-of-process call.
 /// </summary>
+/// <param name="IsSlewing">
+/// The driver says the mount is moving under its own power. It exists because
+/// a sample is solved when a slew ends (D26), and a frame exposed while the
+/// mount was moving is a smear of the positions it passed through.
+///
+/// Advisory, like <see cref="PierSide"/>. ASCOM defines <c>Slewing</c> in terms
+/// of the slews, parks and axis moves a client asked for, and whether a driver
+/// also reports motion started from a hand controller or another program is
+/// unknown (see docs/DEVICE-COMPATIBILITY.md). The engine therefore also treats
+/// a reported position that is still changing as motion, and false here means
+/// only that the driver did not say otherwise.
+/// </param>
 public sealed record MountPosition(
     double RaDegrees,
     double DecDegrees,
     PierSide PierSide,
     DateTime TimestampUtc,
-    TrackingState Tracking = TrackingState.Unknown);
+    TrackingState Tracking = TrackingState.Unknown,
+    bool IsSlewing = false);
 
 /// <summary>
 /// A mount device, opened via <see cref="IDeviceProvider.OpenMount"/>. Slewing

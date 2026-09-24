@@ -24,18 +24,79 @@ public class AnchoredPlanTests
         TargetSelection.PlanFrom(site, rotation, declination, DateTime.UtcNow, captures, sweep);
 
     /// <summary>
-    /// The first capture is the current position exactly, so it can be taken
-    /// without commanding any motion.
+    /// East of the meridian with room to sweep, the first capture is the current
+    /// position exactly, so it can be taken without commanding any motion -- and
+    /// the sweep runs west from it, towards the meridian (D18).
     /// </summary>
     [Fact]
     public void ThePlanBeginsWhereTheTelescopeAlreadyPoints()
     {
-        TargetPlan plan = PlanFrom(North, rotation: 12.0, declination: 68.0);
+        TargetPlan plan = PlanFrom(North, rotation: -80.0, declination: 68.0);
 
         Assert.True(plan.Success, plan.Reason);
         Assert.True(plan.AnchoredAtCurrentPointing);
-        Assert.Equal(12.0, plan.Captures[0].MechanicalRotationDegrees, precision: 9);
+        Assert.False(plan.IsWest);
+        Assert.Equal(-80.0, plan.Captures[0].MechanicalRotationDegrees, precision: 9);
+        Assert.Equal(-10.0, plan.Captures[^1].MechanicalRotationDegrees, precision: 9);
         Assert.Equal(68.0, plan.MechanicalDeclinationDegrees, precision: 9);
+        AssertSweepsWestward(plan);
+    }
+
+    /// <summary>
+    /// West of the meridian, or inside its margin, the telescope is not
+    /// anchored, because sequences start east and sweep west (D18). Its
+    /// declination is kept, though, since that is the one choice the user made
+    /// that still carries a sweep -- so the proposed move is in hour angle only.
+    /// </summary>
+    [Theory]
+    [InlineData(30.0, 60.0)]
+    [InlineData(80.0, 68.0)]
+    [InlineData(3.0, 50.0)]
+    [InlineData(-3.0, 50.0)]
+    public void WestOfTheMeridian_TheFirstPointIsAMoveEastAtTheSameDeclination(double rotation, double declination)
+    {
+        TargetPlan plan = PlanFrom(North, rotation, declination);
+
+        Assert.True(plan.Success, plan.Reason);
+        Assert.False(plan.AnchoredAtCurrentPointing);
+        Assert.False(plan.IsWest);
+        Assert.Equal(declination, plan.MechanicalDeclinationDegrees, precision: 9);
+        Assert.Equal(70.0, plan.SweepDegrees, tolerance: 1e-9);
+        Assert.Contains("east", plan.Reason!, StringComparison.OrdinalIgnoreCase);
+        AssertSweepsWestward(plan);
+    }
+
+    /// <summary>
+    /// Sweep outranks anchoring. From 40° east only 35° of westward sweep is left
+    /// before the meridian margin, and a slew east that buys the full 70° is
+    /// worth it: uncertainty falls as the square of the sweep, so the anchored
+    /// plan would be about four times worse for the sake of one move.
+    /// </summary>
+    [Fact]
+    public void AWiderSweepIsWorthASlew_EvenWhenTheCurrentPositionCouldAnchorANarrowerOne()
+    {
+        TargetPlan plan = PlanFrom(North, rotation: -40.0, declination: 68.0);
+
+        Assert.True(plan.Success, plan.Reason);
+        Assert.False(plan.AnchoredAtCurrentPointing);
+        Assert.Equal(70.0, plan.SweepDegrees, tolerance: 1e-9);
+        Assert.Equal(68.0, plan.MechanicalDeclinationDegrees, precision: 9);
+        AssertSweepsWestward(plan);
+    }
+
+    /// <summary>
+    /// At equal sweep, not moving wins. Asked for only 30°, the same position
+    /// can carry it, so it is anchored rather than sent east.
+    /// </summary>
+    [Fact]
+    public void AtEqualSweep_TheCurrentPositionIsKept()
+    {
+        TargetPlan plan = PlanFrom(North, rotation: -40.0, declination: 68.0, sweep: 30.0);
+
+        Assert.True(plan.Success, plan.Reason);
+        Assert.True(plan.AnchoredAtCurrentPointing);
+        Assert.Equal(-40.0, plan.Captures[0].MechanicalRotationDegrees, precision: 9);
+        AssertSweepsWestward(plan);
     }
 
     /// <summary>
@@ -46,7 +107,7 @@ public class AnchoredPlanTests
     [Fact]
     public void EveryCaptureSharesOneMechanicalDeclination()
     {
-        TargetPlan plan = PlanFrom(North, 12.0, 68.0);
+        TargetPlan plan = PlanFrom(North, -80.0, 68.0);
 
         Assert.True(plan.Success, plan.Reason);
         Assert.Equal(6, plan.Captures.Count);
@@ -59,7 +120,8 @@ public class AnchoredPlanTests
     /// <summary>
     /// The whole sweep stays on one side of the meridian, margin included, so
     /// that sidereal tracking during the sequence cannot carry a capture across
-    /// it and invert the sense of cone error mid-measurement (D8).
+    /// it and invert the sense of cone error mid-measurement (D8). That side is
+    /// east wherever the telescope starts (D18).
     /// </summary>
     [Theory]
     [InlineData(8.0)]
@@ -75,7 +137,7 @@ public class AnchoredPlanTests
         Assert.True(plan.Success, plan.Reason);
         Assert.All(plan.Captures, capture =>
         {
-            Assert.Equal(Math.Sign(rotation), Math.Sign(capture.MechanicalRotationDegrees));
+            Assert.True(capture.MechanicalRotationDegrees < 0.0, $"{capture.MechanicalRotationDegrees:F2}° is west");
             Assert.True(
                 Math.Abs(capture.MechanicalRotationDegrees) >= TargetSelection.MeridianMarginDegrees,
                 $"{capture.MechanicalRotationDegrees:F2}° is inside the meridian margin");
@@ -126,9 +188,9 @@ public class AnchoredPlanTests
     [Fact]
     public void RatherThanPlanSomethingUnusable_TheSweepShrinksAndSaysSo()
     {
-        // Far enough west that a full seventy degrees more would take the target
-        // well down towards the horizon.
-        TargetPlan plan = PlanFrom(North, rotation: 70.0, declination: 50.0, sweep: 70.0);
+        // Seventy degrees from the pole, where a target seventy-five degrees
+        // east of the meridian is well down towards the horizon.
+        TargetPlan plan = PlanFrom(North, rotation: -40.0, declination: 20.0, sweep: 70.0);
 
         Assert.True(plan.Success, plan.Reason);
         Assert.All(plan.Captures, capture =>
@@ -136,7 +198,7 @@ public class AnchoredPlanTests
                 capture.PredictedAltitudeDegrees >= TargetSelection.MinimumAltitudeDegrees,
                 $"planned a capture at {capture.PredictedAltitudeDegrees:F1}°, below the floor"));
 
-        Assert.InRange(plan.SweepDegrees, TargetSelection.MinimumUsefulSweepDegrees, 70.0);
+        Assert.InRange(plan.SweepDegrees, TargetSelection.MinimumUsefulSweepDegrees, 65.0);
     }
 
     /// <summary>
@@ -148,6 +210,8 @@ public class AnchoredPlanTests
     [InlineData(12.0, 68.0, 70.0)]
     [InlineData(20.0, 55.0, 60.0)]
     [InlineData(-15.0, 68.0, 50.0)]
+    [InlineData(-80.0, 68.0, 70.0)]
+    [InlineData(-40.0, 20.0, 70.0)]
     public void TheReportedSweepMatchesThePlansActualExtent(double rotation, double declination, double requested)
     {
         TargetPlan plan = PlanFrom(North, rotation, declination, sweep: requested);
@@ -168,7 +232,7 @@ public class AnchoredPlanTests
     [Fact]
     public void CapturesAreEvenlySpacedAcrossTheSweep()
     {
-        TargetPlan plan = PlanFrom(North, 12.0, 68.0, captures: 6, sweep: 60.0);
+        TargetPlan plan = PlanFrom(North, -80.0, 68.0, captures: 6, sweep: 60.0);
         Assert.True(plan.Success, plan.Reason);
 
         double[] gaps = plan.Captures
@@ -202,14 +266,16 @@ public class AnchoredPlanTests
     /// pole in both hemispheres and is not sky declination south of the equator.
     /// </summary>
     [Theory]
-    [InlineData(12.0)]
-    [InlineData(-25.0)]
-    public void TheSouthernHemisphereWorksTheSameWay(double rotation)
+    [InlineData(-80.0, 70.0)]
+    [InlineData(-50.0, 40.0)]
+    public void TheSouthernHemisphereWorksTheSameWay(double rotation, double sweep)
     {
-        TargetPlan plan = PlanFrom(South, rotation, declination: 68.0);
+        TargetPlan plan = PlanFrom(South, rotation, declination: 68.0, sweep: sweep);
 
         Assert.True(plan.Success, plan.Reason);
         Assert.True(plan.AnchoredAtCurrentPointing);
+        Assert.Equal(sweep, plan.SweepDegrees, tolerance: 1e-9);
+        AssertSweepsWestward(plan);
         Assert.Equal(68.0, plan.MechanicalDeclinationDegrees, precision: 9);
         Assert.All(plan.Captures, capture =>
             Assert.True(capture.PredictedAltitudeDegrees >= TargetSelection.MinimumAltitudeDegrees));
@@ -290,21 +356,55 @@ public class AnchoredPlanTests
     }
 
     /// <summary>
-    /// When the direction of the sweep is free, the planner takes the one that
-    /// keeps the target higher. Altitude is not the parameter accuracy is most
-    /// sensitive to, but at equal sweep it is free to have.
+    /// A fresh target starts east of the meridian and sweeps west, ending at the
+    /// meridian margin (D18). This is also what the unconnected mode is told to
+    /// do, so it has to hold with no mount position at all, and in both
+    /// hemispheres. Where the sweep has to shrink -- near the equator -- it is
+    /// the eastern end that gives way, so the sequence still ends at the margin.
     /// </summary>
-    [Fact]
-    public void GivenAChoice_TheSweepGoesTheWayThatStaysHigher()
+    [Theory]
+    [InlineData(45.0)]
+    [InlineData(65.0)]
+    [InlineData(0.5)]
+    [InlineData(-33.9)]
+    public void AFreshlyChosenTarget_StartsEastAndSweepsWestToTheMeridian(double latitude)
     {
-        // Anchored well west, where sweeping further west descends and sweeping
-        // back towards the meridian climbs.
-        TargetPlan plan = PlanFrom(North, rotation: 55.0, declination: 60.0, sweep: 40.0);
-        Assert.True(plan.Success, plan.Reason);
+        TargetPlan plan = TargetSelection.Plan(new GeodeticLocation(latitude, 15.0, 200.0), DateTime.UtcNow, 6, 70.0);
 
-        double furthest = plan.Captures.Max(c => Math.Abs(c.MechanicalRotationDegrees));
-        Assert.True(
-            furthest <= 55.0 + 1e-9,
-            $"the sweep went further west to {furthest:F1}° when turning back towards the meridian was higher");
+        Assert.True(plan.Success, plan.Reason);
+        Assert.False(plan.IsWest);
+        Assert.Equal(
+            -(TargetSelection.MeridianMarginDegrees + plan.SweepDegrees),
+            plan.Captures[0].MechanicalRotationDegrees, tolerance: 1e-9);
+        Assert.Equal(-TargetSelection.MeridianMarginDegrees, plan.Captures[^1].MechanicalRotationDegrees, tolerance: 1e-9);
+        AssertSweepsWestward(plan);
+    }
+
+    /// <summary>
+    /// The spacing an automatic sample must add (D27) is the planned sweep over
+    /// the gaps between planned samples: 14° for the default 70° over six. It is
+    /// derived from the plan rather than configured, so a shrunk sweep tightens
+    /// it instead of leaving too few acceptable positions to fill the plan.
+    /// </summary>
+    [Theory]
+    [InlineData(6, 70.0, 14.0)]
+    [InlineData(5, 60.0, 15.0)]
+    [InlineData(3, 30.0, 15.0)]
+    public void TheSampleSpacingIsTheSweepOverTheGapsBetweenSamples(int captures, double sweep, double spacing)
+    {
+        TargetPlan plan = TargetSelection.Plan(North, DateTime.UtcNow, captures, sweep);
+
+        Assert.True(plan.Success, plan.Reason);
+        Assert.Equal(spacing, plan.SampleSpacingDegrees, tolerance: 1e-9);
+    }
+
+    private static void AssertSweepsWestward(TargetPlan plan)
+    {
+        Assert.All(
+            plan.Captures.Zip(plan.Captures.Skip(1)),
+            pair => Assert.True(
+                pair.Second.MechanicalRotationDegrees > pair.First.MechanicalRotationDegrees,
+                $"{pair.First.MechanicalRotationDegrees:F1}° is followed by {pair.Second.MechanicalRotationDegrees:F1}°, " +
+                "which is east of it"));
     }
 }

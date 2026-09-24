@@ -30,8 +30,9 @@ public sealed record PlannedCapture(
 /// </param>
 /// <param name="AnchoredAtCurrentPointing">
 /// True when the first capture is where the telescope already points, so the
-/// sequence can begin without moving anything (D18). False when the current
-/// position was unusable and a fresh target was chosen instead.
+/// sequence can begin without moving anything (D18). False when a fresh target
+/// was chosen instead -- because the current position was unusable, or because
+/// it was west of the meridian and sequences start east (D18).
 /// </param>
 public sealed record TargetPlan(
     IReadOnlyList<PlannedCapture> Captures,
@@ -42,6 +43,16 @@ public sealed record TargetPlan(
     bool AnchoredAtCurrentPointing = false)
 {
     public bool Success => Captures.Count > 0;
+
+    /// <summary>
+    /// The least mechanical rotation an automatically triggered sample must add
+    /// over every sample already taken (D27). Sweep buys accuracy as its square
+    /// and count only as the square root -- measured, 30° to 60° improved σ by
+    /// 3.9× where 3 to 10 samples improved it by 1.4× -- so a sample that does
+    /// not extend the sweep spends a planned slot on almost nothing.
+    /// </summary>
+    public double SampleSpacingDegrees =>
+        Captures.Count > 1 ? SweepDegrees / (Captures.Count - 1) : 0.0;
 }
 
 /// <summary>
@@ -138,11 +149,15 @@ public static class TargetSelection
             candidateDeclinations.Add(90.0 - poleDistance);
         }
 
-        // Largest sweep first, since uncertainty falls as its square; only then
-        // is the sweep given up degree by degree.
-        foreach (double sweep in ShrinkingSweeps(sweepDegrees))
+        // East first, and the west side only once no eastern plan survives at any
+        // sweep: sequences start east and sweep west, ending at the meridian
+        // margin (D18), which is where freeze-and-track is best conditioned
+        // (D17). Within
+        // a side, the largest sweep first, since uncertainty falls as its square;
+        // only then is the sweep given up step by step.
+        foreach (bool west in new[] { false, true })
         {
-            foreach (bool west in new[] { true, false })
+            foreach (double sweep in ShrinkingSweeps(sweepDegrees))
             {
                 foreach (double declination in candidateDeclinations)
                 {
@@ -175,13 +190,17 @@ public static class TargetSelection
         // the sequence cannot carry a capture across it.
         double nearEdge = MeridianMarginDegrees;
         double farEdge = MeridianMarginDegrees + sweepDegrees;
-        double sign = west ? 1.0 : -1.0;
 
         var captures = new List<PlannedCapture>(captureCount);
         for (int i = 0; i < captureCount; i++)
         {
             double fraction = captureCount == 1 ? 0.0 : i / (double)(captureCount - 1);
-            double rotation = sign * (nearEdge + fraction * (farEdge - nearEdge));
+
+            // Westward in both cases, which is the way the sky turns: east from
+            // the far edge in to the margin (D18), west from the margin outward.
+            double rotation = west
+                ? nearEdge + fraction * (farEdge - nearEdge)
+                : -(farEdge - fraction * (farEdge - nearEdge));
 
             HorizontalCoordinates pointing = MountMechanics.Compose(
                 site.LatitudeDegrees, MountMisalignment.Aligned, rotation, declinationDegrees);
@@ -198,12 +217,17 @@ public static class TargetSelection
     }
 
     /// <summary>
-    /// Plans a sequence that starts where the telescope is already pointing.
+    /// Plans a sequence from where the telescope is already pointing.
     ///
     /// This is what D18 needs: nothing turns until the user says so, and the
     /// cheapest first capture is the one that requires no motion at all. It also
     /// keeps the sequence in whatever part of the sky the user already chose --
     /// which they can see and the software cannot.
+    ///
+    /// Sequences start east of the meridian and sweep west towards it (D18), so
+    /// only an eastern position is anchored, and only by sweeping westward. A
+    /// telescope west of the meridian keeps its declination where that can carry
+    /// a sweep, and is proposed a move east.
     ///
     /// The anchor is taken from the mount's *own* mechanical angles rather than
     /// from a solved position, because what has to stay constant across the
@@ -214,9 +238,10 @@ public static class TargetSelection
     /// </summary>
     /// <returns>
     /// A plan whose first capture is the current position when that position is
-    /// usable, and otherwise a plan for a freshly chosen target with
-    /// <see cref="TargetPlan.AnchoredAtCurrentPointing"/> false -- in which case
-    /// the caller must propose a slew before the first capture.
+    /// usable, and otherwise a plan for another target with
+    /// <see cref="TargetPlan.AnchoredAtCurrentPointing"/> false and a
+    /// <see cref="TargetPlan.Reason"/> saying why -- in which case the caller
+    /// must propose a slew before the first capture.
     /// </returns>
     public static TargetPlan PlanFrom(
         GeodeticLocation site,
@@ -237,31 +262,65 @@ public static class TargetSelection
         }
 
         atmosphere ??= AtmosphericConditions.Vacuum;
+        double rotation = currentMechanicalRotationDegrees;
+        double declination = currentMechanicalDeclinationDegrees;
 
-        TargetPlan anchored = TryPlanFromCurrent(
-            site, currentMechanicalRotationDegrees, currentMechanicalDeclinationDegrees, captureCount, sweepDegrees);
-
-        if (anchored.Success)
+        // A declination that cannot carry a sequence is not kept at all, on
+        // either side of the meridian; a fresh target is better than refusing.
+        string? unusable = UnusableDeclinationReason(declination);
+        if (unusable is not null)
         {
-            return anchored;
+            return Fresh(Plan(site, startUtc, captureCount, sweepDegrees, atmosphere), unusable);
         }
 
-        // The current pointing cannot carry a sequence -- too near the pole, too
-        // low, or too near the meridian to sweep away from it. Choosing a fresh
-        // target is better than refusing, but the caller has to be told that the
-        // first capture now needs a slew, which is what the flag is for.
+        var observer = new ObserverSite(site.LatitudeDegrees, site.LongitudeDegrees, site.HeightMeters);
+        bool east = rotation < -MeridianMarginDegrees;
+
+        foreach (double sweep in ShrinkingSweeps(sweepDegrees))
+        {
+            // Sweep before anchoring: a wider sweep is worth a slew, since
+            // uncertainty falls as its square, but at equal sweep not moving is
+            // free. Never eastward from the anchor -- that would end the
+            // sequence further from the meridian than it began (D18).
+            if (east)
+            {
+                TargetPlan anchored = BuildWestwardSweep(site, rotation, declination, captureCount, sweep);
+                if (anchored.Success)
+                {
+                    return anchored;
+                }
+            }
+
+            TargetPlan sameDeclination = TryPlan(
+                observer, site, startUtc, captureCount, sweep, declination, west: false, atmosphere);
+            if (sameDeclination.Success)
+            {
+                return Fresh(sameDeclination, east
+                    ? $"A {sweep:F0}° sweep westward from the current position would reach the meridian or drop " +
+                      $"below {MinimumAltitudeDegrees:F0}°, so the sequence starts further east at the same declination."
+                    : StartsEastReason);
+            }
+        }
+
         TargetPlan fresh = Plan(site, startUtc, captureCount, sweepDegrees, atmosphere);
-        return fresh.Success
-            ? fresh with { Reason = anchored.Reason }
-            : fresh;
+        return Fresh(fresh, east
+            ? $"No sweep of at least {MinimumUsefulSweepDegrees:F0}° at the current declination keeps every capture " +
+              $"above {MinimumAltitudeDegrees:F0}° east of the meridian."
+            : StartsEastReason);
     }
 
-    private static TargetPlan TryPlanFromCurrent(
-        GeodeticLocation site,
-        double currentRotationDegrees,
-        double currentDeclinationDegrees,
-        int captureCount,
-        double requestedSweepDegrees)
+    private const string StartsEastReason =
+        "Sequences start east of the meridian and sweep west towards it (D18), so the first point needs a move east.";
+
+    /// <summary>
+    /// A fresh plan carries the reason the current position was not used, since
+    /// that is what the user needs to hear alongside the proposed slew; a failed
+    /// one keeps its own reason, which is why nothing could be planned at all.
+    /// </summary>
+    private static TargetPlan Fresh(TargetPlan plan, string reason) =>
+        plan.Success ? plan with { Reason = reason } : plan;
+
+    private static string? UnusableDeclinationReason(double declinationDegrees)
     {
         // Distance from the pole the mount actually rotates about. Mechanical
         // declination is positive towards that pole in either hemisphere (see
@@ -273,109 +332,57 @@ public static class TargetSelection
         // before the user spends twenty minutes capturing. Beyond ninety degrees
         // the telescope is past the mount's equator, on its way to the opposite
         // pole, which is below the horizon.
-        double poleDistance = 90.0 - currentDeclinationDegrees;
+        double poleDistance = 90.0 - declinationDegrees;
         if (poleDistance < MinimumPoleDistanceDegrees)
         {
-            return new TargetPlan(
-                Array.Empty<PlannedCapture>(), currentDeclinationDegrees, currentRotationDegrees >= 0.0,
-                $"The telescope is {poleDistance:F0}° from the pole, closer than the {MinimumPoleDistanceDegrees:F0}° " +
-                "needed for the arc to curve measurably (D11).");
+            return $"The telescope is {poleDistance:F0}° from the pole, closer than the {MinimumPoleDistanceDegrees:F0}° " +
+                   "needed for the arc to curve measurably (D11).";
         }
 
         if (poleDistance > 90.0)
         {
-            return new TargetPlan(
-                Array.Empty<PlannedCapture>(), currentDeclinationDegrees, currentRotationDegrees >= 0.0,
-                $"The telescope is {poleDistance:F0}° from the pole the mount turns about, so it is pointing past " +
-                "the mount's equator towards the opposite pole, which never rises here.");
+            return $"The telescope is {poleDistance:F0}° from the pole the mount turns about, so it is pointing past " +
+                   "the mount's equator towards the opposite pole, which never rises here.";
         }
 
-        if (Math.Abs(currentRotationDegrees) < MeridianMarginDegrees)
-        {
-            return new TargetPlan(
-                Array.Empty<PlannedCapture>(), currentDeclinationDegrees, currentRotationDegrees >= 0.0,
-                $"The telescope is within {MeridianMarginDegrees:F0}° of the meridian, so a sweep from here would " +
-                "cross it and invert the sense of cone error mid-sequence (D8).");
-        }
-
-        double side = currentRotationDegrees >= 0.0 ? 1.0 : -1.0;
-        TargetPlan? best = null;
-
-        foreach (double sweep in ShrinkingSweeps(requestedSweepDegrees))
-        {
-            // Away from the meridian, or back towards it: both stay on one side,
-            // and which one keeps the target higher depends entirely on where
-            // the mount happens to be sitting.
-            foreach (double direction in new[] { 1.0, -1.0 })
-            {
-                TargetPlan candidate = BuildSweep(
-                    site, currentRotationDegrees, currentDeclinationDegrees, captureCount, sweep, side, direction);
-
-                if (!candidate.Success)
-                {
-                    continue;
-                }
-
-                if (best is null || MinimumAltitudeOf(candidate) > MinimumAltitudeOf(best))
-                {
-                    best = candidate;
-                }
-            }
-
-            // Sweep is worth more than altitude margin, so the first sweep that
-            // works at all is taken, and the direction choice happens within it.
-            if (best is not null)
-            {
-                return best;
-            }
-        }
-
-        return new TargetPlan(
-            Array.Empty<PlannedCapture>(), currentDeclinationDegrees, side > 0.0,
-            $"No sweep of at least {MinimumUsefulSweepDegrees:F0}° from the current position keeps every capture " +
-            $"above {MinimumAltitudeDegrees:F0}° on this side of the meridian.");
+        return null;
     }
 
-    private static TargetPlan BuildSweep(
+    private static TargetPlan BuildWestwardSweep(
         GeodeticLocation site,
         double anchorRotationDegrees,
         double declinationDegrees,
         int captureCount,
-        double sweepDegrees,
-        double side,
-        double direction)
+        double sweepDegrees)
     {
+        // East of the meridian throughout, margin included, so tracking during
+        // the sequence cannot carry a capture across it (D8).
+        if (anchorRotationDegrees + sweepDegrees > -MeridianMarginDegrees)
+        {
+            return new TargetPlan(Array.Empty<PlannedCapture>(), declinationDegrees, false, "reaches the meridian");
+        }
+
         var captures = new List<PlannedCapture>(captureCount);
 
         for (int i = 0; i < captureCount; i++)
         {
             double fraction = i / (double)(captureCount - 1);
-            double rotation = anchorRotationDegrees + direction * side * fraction * sweepDegrees;
-
-            // Same side of the meridian throughout, margin included, so tracking
-            // during the sequence cannot carry a capture across it (D8).
-            if (Math.Sign(rotation) != Math.Sign(side) || Math.Abs(rotation) < MeridianMarginDegrees)
-            {
-                return new TargetPlan(Array.Empty<PlannedCapture>(), declinationDegrees, side > 0.0, "crosses the meridian");
-            }
+            double rotation = anchorRotationDegrees + fraction * sweepDegrees;
 
             HorizontalCoordinates pointing = MountMechanics.Compose(
                 site.LatitudeDegrees, MountMisalignment.Aligned, rotation, declinationDegrees);
 
             if (pointing.AltitudeDegrees < MinimumAltitudeDegrees)
             {
-                return new TargetPlan(Array.Empty<PlannedCapture>(), declinationDegrees, side > 0.0, "too low");
+                return new TargetPlan(Array.Empty<PlannedCapture>(), declinationDegrees, false, "too low");
             }
 
             captures.Add(new PlannedCapture(rotation, pointing.AltitudeDegrees));
         }
 
         return new TargetPlan(
-            captures, declinationDegrees, side > 0.0, null, sweepDegrees, AnchoredAtCurrentPointing: true);
+            captures, declinationDegrees, false, null, sweepDegrees, AnchoredAtCurrentPointing: true);
     }
-
-    private static double MinimumAltitudeOf(TargetPlan plan) =>
-        plan.Captures.Min(c => c.PredictedAltitudeDegrees);
 
     /// <summary>
     /// Sweeps to try, largest first, down to the floor. Five-degree steps: finer

@@ -127,6 +127,12 @@ dotnet publish src/FreePolarAlign.App -r win-x64 -c Release --self-contained
 
 Requires the ASCOM Platform installed for the ASCOM provider to load.
 
+**The quad database** (D13) is not built; it is downloaded. The publish puts
+`scripts/Download-QuadDatabase.ps1` beside the executable, and running it there
+installs the two bundled packs (about 759 MB to download, 1.55 GB extracted)
+into `quaddb/`, where the application looks first. `-UserProfile` installs into
+`~/.free-polar-align/quaddb` instead, which every build finds.
+
 **Native camera SDKs.** The ZWO and ToupTek plugins call their vendor's native
 library.
 

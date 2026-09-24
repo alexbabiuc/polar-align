@@ -30,6 +30,14 @@
       way (see FreePolarAlign.Tests.EndToEnd.csproj).
     -->
     <None Include="..\..\docs\fixtures\tycho2_subset.csv" Link="fixtures\tycho2_subset.csv" CopyToOutputDirectory="PreserveNewest" />
+
+    <!--
+      Installs the quad database beside the executable, where the application
+      looks first (D13). Published with the application rather than kept
+      alongside the build by hand, because the one copy that was kept by hand
+      was lost.
+    -->
+    <None Include="..\..\scripts\Download-QuadDatabase.ps1" Link="Download-QuadDatabase.ps1" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!--

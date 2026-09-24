@@ -311,6 +311,30 @@ mounts have no ASCOM driver, or whose driver is misbehaving.
 **Consequences.** Declination drift cannot be detected from mount telemetry in this
 mode, so residual-based detection (D11) carries the full load.
 
+*Revised 2026-09-24 (Phase 4d, implementation pending).* "First-class" was not
+true of the code: a sequence refused to start without a connected mount even in
+manual mode, every solve took its position hint from the mount, and manual mode
+was a constructor option the UI never set. The mode is now decided by what is
+connected, not by a switch:
+
+- **No mount connected** is the unconnected mode. The user is told which
+  declination to set and where in RA to start, then to lock declination and
+  not touch it again. Positions come from blind solves. The meridian check (D8)
+  uses the hour angle computed from each solve, because there is no pier side
+  to read. Turning past the meridian by hand is not a flip, so it warns rather
+  than aborts.
+- **A mount that is connected but cannot slew** is read but not driven. Its
+  reported coordinates decide the spacing between samples and catch
+  declination movement.
+- **A connected mount moved with its clutches released** is not supported as
+  connected. Many mounts, Sky-Watcher EQ among them, lose track of where they
+  point when that happens, and their reported coordinates would then be
+  believed while wrong. The instruction is to disconnect it, which makes it
+  the unconnected case.
+
+The site is still required in every mode, because the latitude goes straight
+into the answer (D19).
+
 ---
 
 ## D11 — Detect declination drift from fit residuals
@@ -684,6 +708,37 @@ because a fixed sky coordinate does not hold a fixed mechanical declination as
 the sky turns (D16). Whether the user edited anything is decided by comparing
 against the engine's own proposal to within an arcsecond.
 
+*Revised 2026-09-24 (Phase 4d, implementation pending).* What this decision
+forbids is motion, not capture, and that is unchanged. What changes is how a
+point gets recorded once the telescope is there. There is no longer a capture
+click per point: the camera runs continuously, and a sample is solved when the
+mount has settled after moving (D26). Three consequences:
+
+- **The first sample of an anchored sequence is taken without a click**, once
+  the sequence is started and the mount is not moving. Nothing moves, so
+  nothing needs confirming.
+- **A slew made outside the engine** — the hand controller, another program —
+  is observed rather than commanded. It is sampled when it ends if it turned the
+  mount far enough in RA (D27). The engine's own proposal is then re-derived
+  from where the mount actually is, because a proposal for a position the mount
+  has already passed is not a proposal.
+- **Declination movement on a connected mount restarts the sequence
+  automatically**, and says why. This is the same rule as a typed declination
+  above, applied to a hand controller: the earlier samples lie on a different
+  circle and cannot be used, so asking the user would offer them nothing to
+  decide. The comparison is on the mount's mechanical declination, because its
+  reported J2000 declination shifts across a sweep even when the mount holds
+  still (D16). The threshold is 1′, above the mount's reporting precision. Any
+  smaller real movement is left to D11's residual check.
+
+Automatic proposals now **start east of the meridian and sweep west towards
+it**, stopping at the meridian margin (D8). A sequence started with the
+telescope west of the meridian proposes moving east first, keeping the current
+declination where that declination can carry a sweep, rather than anchoring
+where it stands. Ending near the meridian is also where freeze-and-track is best
+conditioned (D17). The west side is proposed only when no eastern plan clears
+the altitude floor.
+
 A refused command — starting with no camera, confirming when nothing is pending,
 disconnecting mid-sequence — is a `CommandRejectedEvent`, deliberately not a
 session fault. Nothing has broken and no state has been torn down, and
@@ -874,10 +929,24 @@ It shares a row with the brightness slider rather than taking one of its own. A
 second row cost the picture 38 px, which at the minimum window size with the
 install warnings showing put it under the floor the layout test holds it to.
 
-**Why it is read at sequence start rather than sent as a command.** It is not
+~~**Why it is read at sequence start rather than sent as a command.** It is not
 device state. The session passes it on every capture, so changing it mid-sequence
 would change the frames halfway through the fit they are being combined into;
-the picker is disabled while a sequence runs.
+the picker is disabled while a sequence runs.~~
+
+*Revised 2026-09-24 (Phase 4d, implementation pending): the exposure can be
+changed at any time, including during a sequence, and takes effect from the next
+frame.* The struck reasoning mistook what the fit consumes. The fit reads one
+solved position per frame, and exposure changes how noisy that position is, not
+where it is. Changing it mid-sequence therefore does not bias the answer; at
+worst it makes the fit's equal weighting slightly wrong. Refusing it cost far
+more than that. With the camera now running continuously (D26), the exposure is
+chosen *while* looking at the live frame, and a sky brightening under twilight
+or cloud has to be answerable without abandoning the sequence. The frame in
+progress is never aborted, because drivers support aborting unevenly and the
+next frame is at most two seconds away. The exposure is now engine state set by
+command, since the engine owns the capture loop, and every frame's header records
+the exposure it was actually taken at.
 
 **A remembered value that is not on the list snaps to the nearest one** rather
 than being dropped, because an exact comparison against a double round-tripped
@@ -924,6 +993,14 @@ runs later against a camera that has changed underneath it.
 Refused outright during a sequence, for the reason the readout mode is (D20's
 neighbourhood): the frames already captured were taken under different settings
 and the fit weights every observation alike.
+
+*Revised 2026-09-24 (Phase 4d, implementation pending).* The readout mode and
+gain are no longer refused during a sequence (D22, D25): they change noise, not
+position. This window stays refused during a sequence, but for a different
+reason. It can change binning and region of interest, which change the plate
+scale the sequence has measured and every scale hint built on it. Outside a
+sequence it now also pauses the continuous capture (D26). The frame in progress
+finishes, and no exposure starts until the window closes.
 
 **The refusal is in two places on purpose.** The whole window is disabled in
 XAML, and every command's own precondition begins from a single `Ready` property
@@ -1034,6 +1111,14 @@ falling back to the enumeration id only for a camera that reports none. A
 readout mode stored before settings were kept per camera is applied once, to the
 camera it was chosen on, and to no other.
 
+**Gain can be changed at any time**, including during a sequence, and takes
+effect from the next frame (*revised 2026-09-24, Phase 4d, implementation
+pending*). It was refused during a sequence on the reasoning D22 used for
+exposure, and it fails the same way: gain changes the noise in a solved
+position, not the position. A sky found to be swamping the frame part-way
+through a sequence should be answerable there and then. The readout mode follows
+the same rule.
+
 **What the plugins do not do.** Colour cameras are read out as raw Bayer data
 and written as they come; debayering is left for later. No binning, no ROI —
 the solve wants every star and the scale assumes unbinned pixels. Offset, USB
@@ -1067,6 +1152,138 @@ Every size and offset used was checked against the real headers with the C
 compiler for both the Windows x64 and the macOS/Linux ABI, using compile-time
 assertions confirmed to fail on a wrong value, and tests pin the managed
 declarations to those numbers. Neither plugin has run against a real camera.
+
+---
+
+## D26 — The camera runs continuously; samples are triggered by events, one solve at a time
+
+*Decided 2026-09-24 for Phase 4d; not yet implemented.*
+
+The camera exposes continuously for as long as it is connected, and every frame
+is displayed. Nothing is solved outside a sequence. Within one, a frame is solved
+only when an event says the telescope has stopped somewhere new, after a fixed
+delay. There is never more than one solve pending or running.
+
+**Why continuous.** Exposure, gain and focus are all judged by looking at the
+frame, and a single capture per click made each adjustment a round trip. This
+also removes the D22 and D25 refusals: the settings apply at the next frame
+boundary, which a continuous loop has every couple of seconds.
+
+**Why solving waits for the sequence.** While the user is focusing and choosing
+an exposure there is nothing to compute. A solve per frame would add seconds of
+CPU per frame and a stream of failures on a frame that is deliberately out of
+focus.
+
+**The triggers.**
+
+- **Connected mount.** When a slew ends, wait 2 s, then solve the next frame
+  whose exposure *starts* after that. "Ends" means one of two things. Either the
+  engine's own slew returned, or a status poll finds the mount still after it
+  was moving: the driver no longer reports slewing, *and* the reported position
+  has stopped changing. Stopped changing means stopped in either sky
+  coordinates or the mount's own angles, so the check holds whether or not the
+  mount is tracking. Both are required because whether a driver reports
+  hand-controller motion as slewing is unknown. **VERIFY** per driver, in
+  `docs/DEVICE-COMPATIBILITY.md`. Any motion before the solve starts cancels
+  it. If the post-slew solve fails, it is retried 5 s later for as long as the
+  mount stays where it is.
+- **Unconnected mount.** Solve 5 s after every solve result, successful or not.
+  Failures are dismissed, counted and logged, because most of them are the user
+  still turning the mount. There is no motion signal, so the solves are their
+  own: a sample is accepted when two consecutive solves agree to within 1′, in
+  either sky or horizon coordinates, and the later of the two is the sample.
+  Tracking holds the sky coordinates still and an undriven mount holds the
+  horizon ones. Between two solves an undriven mount drifts about 2′ in sky
+  coordinates (15″/s over roughly 8 s), so comparing sky coordinates alone
+  would never accept it. A smeared frame taken mid-turn can still solve, to the
+  average of the positions it passed through. That is why one solve is never
+  enough.
+- **Record sample.** The user can force one at any moment. It uses the next
+  frame that *starts* after the press, never the one already on screen, which may
+  have been exposed mid-motion. It skips the spacing (D27) and stability checks,
+  and none of D11's.
+
+**One solve at a time.** A new trigger replaces a pending one. A trigger that
+arrives while a solve runs is held until the solve finishes, and it then uses a
+frame that started after the trigger. Two solves in flight would race to add
+samples and could both land on the same position.
+
+**The delays are timers on events, not an injected clock.** They are the
+behaviour itself, measured from the event that starts them, so tests shorten
+them through the session options instead of faking time. This reverses
+`RefreshMountStatusCommand`'s claim that the engine is a deterministic function
+of its commands. Status polling itself stays driven from outside. It does
+*not* fix the end-to-end tests' dependence on the wall clock recorded under
+Phase 4, which comes from target selection, not from these delays.
+
+**No giving up after three failed solves in a row.** That rule assumed each
+failure was a deliberate capture at a position the user had chosen. Here most
+failures are frames taken while the mount was being moved, so a count of them
+measures the user's pace rather than a fault. The count is shown instead.
+
+**Frames are deleted once used.** At a 0.5 s exposure a night would otherwise
+leave thousands of files. The frame on screen is kept until the next one
+replaces it, because the preview re-reads it when the brightness changes, and
+**Save frame** copies it wherever the user chooses. Frames whose solve failed
+are the exception: the last 20 are kept under
+`~/.free-polar-align/failed-solves/`, named `solving_failed_<timestamp>.fits`.
+D20 was diagnosed from exactly such frames, and Phase 5's diagnostic bundle
+needs them.
+
+---
+
+## D27 — A sample must add sweep: the minimum useful sweep and spacing
+
+*Decided 2026-09-24 for Phase 4d; not yet implemented.*
+
+An automatically triggered sample is accepted only if it is at least **Δ = the
+planned sweep ÷ (planned samples − 1)** from every sample already taken, in
+mechanical rotation: 14° for the default 70° over six. A sweep narrower than
+**30°** is not planned. A forced sample (D26) skips the spacing check.
+
+**Measured.** 300 noise realisations per cell, 6 samples, 3″ solve noise (the
+session's pessimistic default), latitude 45°, 30° from the pole, 12′ and −9′
+injected, 10′ of cone error:
+
+| RA sweep | Reported σ, total | 95th-percentile actual error | Trusted by D11 |
+|---|---|---|---|
+| 10° | 12.1′ | 25.3′ | 0% |
+| 15° | 5.3′ | 11.1′ | 100% |
+| 20° | 3.0′ | 6.3′ | 100% |
+| 30° | 1.33′ | 2.9′ | 100% |
+| 45° | 0.59′ | 1.27′ | 100% |
+| 60° | 0.34′ | 0.72′ | 100% |
+| 70° | 0.25′ | 0.54′ | 100% |
+
+At 1″ noise every figure is a third of this: 30° gives 0.44′ and a 95th
+percentile of 0.96′. Latitudes from 20° to 65°, and 30° or 60° from the pole,
+moved every figure by less than 15%.
+
+**Why sweep and not count.** At 30°, going from 3 samples to 10 improves σ by
+1.4× (1.59′ to 1.14′). At 6 samples, going from 30° to 60° improves it by 3.9×.
+A sample that does not extend the sweep uses up one of the planned slots and
+buys almost nothing. Samples bunched in one place also share their systematic
+errors — the refraction model, optical distortion — which the covariance does
+not model, so the reported σ would be over-confident. That last effect has not
+been measured.
+
+**Why 30°.** Below 20° the 95th-percentile error exceeds 6′, which is
+comparable to the 10′ success indication it would be judged against. At 30° it
+is 2.9′ at the pessimistic noise level and 1.0′ at the realistic one, which puts
+Phase 4's 2′ target within reach. `TargetSelection.MinimumUsefulSweepDegrees`
+already stood at 30° on an argument from the scaling law; this measurement backs
+it.
+
+**Rotation without a mount.** Connected, the rotation is the mount's own.
+Unconnected, it is the hour angle of each solve about the *nominal* pole, which
+is off by up to the misalignment divided by the sine of the distance from the
+pole: about 4° for a 2° error at 30° from the pole. That is fine for a 14° gate
+and not for anything finer, which is why the fit never uses it.
+
+**Found, and not this decision's to fix.** From 15° to 20° D11 trusts the fit
+while its σ is 3′–5′. The covariance is honest there; it matched the observed
+scatter in Phase 1. But the success indication judges the total error alone,
+without its σ, so a shrunk sweep could show a success it has not earned.
 
 ---
 

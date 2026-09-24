@@ -22,7 +22,7 @@ namespace FreePolarAlign.Devices.Ascom;
 /// UNVERIFIED: this entire class has never executed against the real ASCOM
 /// Platform or a real driver -- this development machine is macOS with
 /// neither installed. It compiles under net10.0-windows (EnableWindowsTargeting).
-/// See docs/MOUNT-COMPATIBILITY.md and the implementing report for exactly
+/// See docs/DEVICE-COMPATIBILITY.md and the implementing report for exactly
 /// what is and is not exercised by the test suite.
 /// </summary>
 public sealed class AscomDeviceProvider : IDeviceProvider
@@ -33,9 +33,10 @@ public sealed class AscomDeviceProvider : IDeviceProvider
 
     public string Version => typeof(AscomDeviceProvider).Assembly.GetName().Version?.ToString() ?? "0.0.0";
 
-    public IReadOnlyList<DeviceDescriptor> DiscoverCameras() => DiscoverDevices("Camera");
-
-    public IReadOnlyList<DeviceDescriptor> DiscoverMounts() => DiscoverDevices("Telescope");
+    public IReadOnlyList<DeviceDescriptor> DiscoverDevices() =>
+        ListRegistered("Camera", DeviceRole.Camera)
+            .Concat(ListRegistered("Telescope", DeviceRole.Mount))
+            .ToArray();
 
     public ICamera OpenCamera(string deviceId) => new AscomCamera(deviceId);
 
@@ -50,7 +51,7 @@ public sealed class AscomDeviceProvider : IDeviceProvider
     /// all -- exactly the case D4 calls out: this must throw a readable
     /// <see cref="AscomPlatformNotAvailableException"/>, not return an empty list.
     /// </summary>
-    private static IReadOnlyList<DeviceDescriptor> DiscoverDevices(string ascomDeviceType)
+    private static IReadOnlyList<DeviceDescriptor> ListRegistered(string ascomDeviceType, DeviceRole role)
     {
         object profile = CreateComObject(ProfileProgId,
             "The ASCOM Platform does not appear to be installed on this machine " +
@@ -65,7 +66,14 @@ public sealed class AscomDeviceProvider : IDeviceProvider
             {
                 string progId = (string)entry.Key;
                 string friendlyName = (string)entry.Value;
-                descriptors.Add(new DeviceDescriptor(progId, friendlyName, progId));
+                // Every ASCOM driver has a settings window -- it is on the base
+                // interface, so telescopes have one as much as cameras -- and
+                // it works before connecting, which is what it is for. A
+                // camera's gain is left to that window rather than offered as
+                // a second control that could disagree with it.
+                descriptors.Add(role == DeviceRole.Camera
+                    ? new CameraDescriptor(progId, friendlyName, progId, HasSetupDialog: true)
+                    : new MountDescriptor(progId, friendlyName, progId, HasSetupDialog: true));
             }
 
             return descriptors;

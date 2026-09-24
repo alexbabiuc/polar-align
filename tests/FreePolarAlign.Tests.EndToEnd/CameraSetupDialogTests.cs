@@ -83,6 +83,7 @@ public class CameraSetupDialogTests
 
         public Task ConnectAsync(CancellationToken cancellationToken = default)
         {
+            ConnectCalls++;
             IsConnected = true;
             return Task.CompletedTask;
         }
@@ -97,9 +98,30 @@ public class CameraSetupDialogTests
             TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("These tests never expose.");
 
-        public void Dispose()
-        {
-        }
+        public int ConnectCalls { get; private set; }
+
+        public bool Disposed { get; private set; }
+
+        public void Dispose() => Disposed = true;
+    }
+
+    /// <summary>Hands out one camera, so a test can see what the engine did with it.</summary>
+    private sealed class OneCameraProvider : IDeviceProvider
+    {
+        private readonly ICamera _camera;
+
+        public OneCameraProvider(ICamera camera) => _camera = camera;
+
+        public string Name => "ASCOM";
+
+        public string Version => "0";
+
+        public IReadOnlyList<DeviceDescriptor> DiscoverDevices() =>
+            new[] { new CameraDescriptor("ASCOM.Test.Camera", "Test Camera", "ASCOM.Test.Camera", HasSetupDialog: true) };
+
+        public ICamera OpenCamera(string deviceId) => _camera;
+
+        public IMount OpenMount(string deviceId) => throw new NotSupportedException();
     }
 
     /// <summary>A camera with no settings window at all, which is every camera the simulator provides.</summary>
@@ -378,6 +400,62 @@ public class CameraSetupDialogTests
         // And the engine still works afterwards.
         await harness.Session.SendAsync(new RefreshMountStatusCommand());
         Assert.NotEmpty(harness.Recorder.Events.OfType<MountStatusEvent>());
+    }
+
+    // ---- Before connecting ----
+
+    /// <summary>
+    /// An ASCOM driver's window is where a camera is set up before anything
+    /// connects to it, so it opens with nothing connected. The engine opens the
+    /// driver just long enough to show it, and never connects: connecting would
+    /// start the camera under the settings the user is about to change.
+    /// </summary>
+    [Fact]
+    public async Task WithNothingConnected_ThePickedCamerasWindowOpens_WithoutConnectingIt()
+    {
+        var camera = new DialogCamera();
+        DeviceCatalog catalog = DeviceCatalog.Create(new IDeviceProvider[] { new OneCameraProvider(camera) });
+        using var session = new AlignmentSession(catalog, new UnusedSolver(), new AlignmentSessionOptions());
+        var recorder = new Recorder();
+        using IDisposable subscription = session.Events.Subscribe(recorder);
+
+        await session.SendAsync(new OpenCameraSetupDialogCommand("ASCOM", "ASCOM.Test.Camera"));
+
+        Assert.Equal(1, camera.DialogsShown);
+        Assert.Equal(0, camera.ConnectCalls);
+        Assert.Equal(new[] { true, false }, DialogStates(recorder));
+    }
+
+    /// <summary>
+    /// And the driver opened for the window is released afterwards. A COM
+    /// object left behind would hold the camera, and the next Connect would
+    /// find it busy.
+    /// </summary>
+    [Fact]
+    public async Task TheCameraOpenedJustForTheWindow_IsReleasedAfterwards()
+    {
+        var camera = new DialogCamera();
+        DeviceCatalog catalog = DeviceCatalog.Create(new IDeviceProvider[] { new OneCameraProvider(camera) });
+        using var session = new AlignmentSession(catalog, new UnusedSolver(), new AlignmentSessionOptions());
+
+        await session.SendAsync(new OpenCameraSetupDialogCommand("ASCOM", "ASCOM.Test.Camera"));
+
+        Assert.True(camera.Disposed);
+    }
+
+    /// <summary>A connected camera is the one configured, whatever the command names, and it stays open.</summary>
+    [Fact]
+    public async Task WithACameraConnected_ItIsTheOneConfigured_AndItStaysOpen()
+    {
+        var camera = new DialogCamera();
+        using var harness = new Harness(camera);
+        await harness.ConnectAsync();
+
+        await harness.Session.SendAsync(new OpenCameraSetupDialogCommand("ASCOM", "some.other.camera"));
+
+        Assert.Equal(1, camera.DialogsShown);
+        Assert.False(camera.Disposed);
+        Assert.True(camera.IsConnected);
     }
 
     private static async Task WaitUntil(Func<bool> condition)

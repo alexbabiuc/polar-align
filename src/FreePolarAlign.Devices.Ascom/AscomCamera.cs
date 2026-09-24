@@ -7,7 +7,7 @@ namespace FreePolarAlign.Devices.Ascom;
 /// <see cref="ICamera"/> over a late-bound ASCOM <c>ICameraV3</c> COM driver
 /// (see <see cref="AscomDeviceProvider"/> for why late-bound). UNVERIFIED
 /// against a real driver -- see that class's doc comment and
-/// docs/MOUNT-COMPATIBILITY.md.
+/// docs/DEVICE-COMPATIBILITY.md.
 ///
 /// Assumes a monochrome sensor: <c>ImageArray</c> is expected to be a 2D
 /// array (ASCOM's convention is <c>[x, y]</c>, i.e. dimension 0 is the column
@@ -229,7 +229,7 @@ public sealed class AscomCamera : ICamera
     /// way to get one that does not repaint or does not close. Everything else
     /// here talks to the driver from thread-pool threads, which COM marshals;
     /// a modal window is the one call that genuinely wants an apartment of its
-    /// own. UNVERIFIED against a real driver -- see docs/MOUNT-COMPATIBILITY.md.
+    /// own. UNVERIFIED against a real driver -- see docs/DEVICE-COMPATIBILITY.md.
     ///
     /// Cancellation is honoured only up to the point the window opens. After
     /// that the user has to close it: there is no supported way to dismiss a

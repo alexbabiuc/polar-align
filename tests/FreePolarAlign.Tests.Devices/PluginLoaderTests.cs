@@ -185,8 +185,7 @@ public sealed class PluginLoaderTests : IDisposable
             {
                 public string Name => "{{providerName}}";
                 public string Version => "1.0.0";
-                public IReadOnlyList<DeviceDescriptor> DiscoverCameras() => new List<DeviceDescriptor>();
-                public IReadOnlyList<DeviceDescriptor> DiscoverMounts() => new List<DeviceDescriptor>();
+                public IReadOnlyList<DeviceDescriptor> DiscoverDevices() => new List<DeviceDescriptor>();
                 public ICamera OpenCamera(string deviceId) => throw new System.NotSupportedException();
                 public IMount OpenMount(string deviceId) => throw new System.NotSupportedException();
             }
@@ -208,8 +207,7 @@ public sealed class PluginLoaderTests : IDisposable
 
                 public string Name => "{{providerName}}";
                 public string Version => "1.0.0";
-                public IReadOnlyList<DeviceDescriptor> DiscoverCameras() => new List<DeviceDescriptor>();
-                public IReadOnlyList<DeviceDescriptor> DiscoverMounts() => new List<DeviceDescriptor>();
+                public IReadOnlyList<DeviceDescriptor> DiscoverDevices() => new List<DeviceDescriptor>();
                 public ICamera OpenCamera(string deviceId) => throw new System.NotSupportedException();
                 public IMount OpenMount(string deviceId) => throw new System.NotSupportedException();
             }

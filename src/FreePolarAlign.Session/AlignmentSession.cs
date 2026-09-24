@@ -244,8 +244,11 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 case SetReadoutModeCommand readout:
                     await SetReadoutModeAsync(readout, cancellationToken).ConfigureAwait(false);
                     break;
-                case OpenCameraSetupDialogCommand:
-                    await OpenCameraSetupDialogAsync(cancellationToken).ConfigureAwait(false);
+                case OpenCameraSetupDialogCommand openSetup:
+                    await OpenCameraSetupDialogAsync(openSetup, cancellationToken).ConfigureAwait(false);
+                    break;
+                case SetCameraGainCommand gain:
+                    await SetCameraGainAsync(gain, cancellationToken).ConfigureAwait(false);
                     break;
                 case StartSessionCommand start:
                     await StartAsync(start, cancellationToken).ConfigureAwait(false);
@@ -354,7 +357,9 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 camera.SensorHeightPixels,
                 camera.ReadoutModes.Select(Describe).ToArray(),
                 camera.ReadoutModeIndex,
-                camera.HasSetupDialog)));
+                camera.HasSetupDialog,
+                camera.UniqueId,
+                DescribeGain(camera))));
 
         PublishEquipment();
     }
@@ -662,16 +667,15 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     /// side let the UI refuse clicks for the same reason -- an application that
     /// looked idle while another window held the device would invite exactly
     /// that overlap.
+    ///
+    /// With no camera connected, the one named in the command is opened just for
+    /// the window and released afterwards. That is how an ASCOM driver's window
+    /// is meant to be used -- it is where the camera is set up before anything
+    /// connects to it -- and requiring a connection first would mean connecting
+    /// with settings the user was about to change.
     /// </summary>
-    private async Task OpenCameraSetupDialogAsync(CancellationToken cancellationToken)
+    private async Task OpenCameraSetupDialogAsync(OpenCameraSetupDialogCommand command, CancellationToken cancellationToken)
     {
-        if (_camera is null || !_camera.IsConnected)
-        {
-            _events.Publish(new CommandRejectedEvent(
-                "Connect a camera before opening its driver settings."));
-            return;
-        }
-
         if (_sessionActive)
         {
             _events.Publish(new CommandRejectedEvent(
@@ -680,17 +684,134 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             return;
         }
 
-        if (!_camera.HasSetupDialog)
+        ICamera? target;
+        bool transient = false;
+
+        if (_camera is { IsConnected: true })
+        {
+            target = _camera;
+        }
+        else if (!string.IsNullOrEmpty(command.ProviderName) && !string.IsNullOrEmpty(command.DeviceId))
+        {
+            if (_catalog is null)
+            {
+                // A session built around one attached camera has only that one
+                // to configure.
+                target = _camera;
+            }
+            else
+            {
+                try
+                {
+                    target = _catalog.OpenCamera(command.ProviderName, command.DeviceId);
+                    transient = true;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _events.Publish(new CommandRejectedEvent(
+                        $"Could not open '{command.DeviceId}' to show its driver settings: {ex.Message}"));
+                    return;
+                }
+            }
+        }
+        else
+        {
+            target = null;
+        }
+
+        if (target is null)
         {
             _events.Publish(new CommandRejectedEvent(
-                $"'{_camera.Name}' has no driver settings window to open."));
+                "Connect a camera, or pick one, before opening its driver settings."));
             return;
         }
 
-        _events.Publish(new CameraSetupDialogChangedEvent(IsOpen: true));
         try
         {
-            await _camera.ShowSetupDialogAsync(cancellationToken).ConfigureAwait(false);
+            if (!target.HasSetupDialog)
+            {
+                _events.Publish(new CommandRejectedEvent(
+                    $"'{target.Name}' has no driver settings window to open."));
+                return;
+            }
+
+            _events.Publish(new CameraSetupDialogChangedEvent(IsOpen: true));
+            try
+            {
+                await target.ShowSetupDialogAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _events.Publish(new CommandRejectedEvent(
+                    $"The camera driver could not show its settings window: {ex.Message}"));
+            }
+            finally
+            {
+                // In a finally block because the alternative is an application
+                // permanently convinced a window is open and refusing every
+                // command for the rest of the session.
+                _events.Publish(new CameraSetupDialogChangedEvent(IsOpen: false));
+            }
+        }
+        finally
+        {
+            if (transient)
+            {
+                target.Dispose();
+            }
+        }
+
+        // The window may have changed the readout mode of a connected camera,
+        // and the depth this reports is read from whatever mode is now current.
+        if (!transient)
+        {
+            PublishReadoutMode();
+        }
+    }
+
+    /// <summary>
+    /// Sets the connected camera's gain from a percentage of its own range, and
+    /// reports what the camera actually took.
+    /// </summary>
+    private async Task SetCameraGainAsync(SetCameraGainCommand command, CancellationToken cancellationToken)
+    {
+        if (_camera is null || !_camera.IsConnected)
+        {
+            _events.Publish(new CommandRejectedEvent("Connect a camera before setting its gain."));
+            return;
+        }
+
+        if (_sessionActive)
+        {
+            _events.Publish(new CommandRejectedEvent(
+                "Cannot change the gain during a sequence. It changes the noise in every star position, and the " +
+                "fit weights every frame alike."));
+            return;
+        }
+
+        if (_camera.GainRange is not { } range)
+        {
+            _events.Publish(new CommandRejectedEvent(
+                $"'{_camera.Name}' does not have its gain set from here. For an ASCOM camera, use its driver settings."));
+            return;
+        }
+
+        if (command.Percent is < GainScale.MinimumPercent or > GainScale.MaximumPercent)
+        {
+            _events.Publish(new CommandRejectedEvent(
+                $"Gain is set as a percentage of the camera's range; {command.Percent} is outside 0 to 100."));
+            return;
+        }
+
+        int requested = GainScale.ToRaw(command.Percent, range);
+
+        try
+        {
+            await _camera.SetGainAsync(requested, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -698,20 +819,37 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         }
         catch (Exception ex)
         {
-            _events.Publish(new CommandRejectedEvent(
-                $"The camera driver could not show its settings window: {ex.Message}"));
-        }
-        finally
-        {
-            // In a finally block because the alternative is an application
-            // permanently convinced a window is open and refusing every command
-            // for the rest of the session.
-            _events.Publish(new CameraSetupDialogChangedEvent(IsOpen: false));
+            _events.Publish(new CommandRejectedEvent($"The camera refused that gain: {ex.Message}"));
+            return;
         }
 
-        // The window may have changed the readout mode, and the depth this
-        // reports is read from whatever mode is now current.
-        PublishReadoutMode();
+        if (DescribeGain(_camera, command.Percent) is { } applied)
+        {
+            _events.Publish(new CameraGainChangedEvent(applied));
+        }
+    }
+
+    /// <summary>
+    /// The camera's gain as the UI shows it, read back from the camera.
+    ///
+    /// When the camera took exactly what the requested percentage maps to, the
+    /// requested percentage is reported as-is. Converting the raw value back
+    /// would be correct too, but on a narrow range several percentages share one
+    /// raw value, and the control would jump from the number the user typed to a
+    /// neighbouring one for no reason they could see.
+    /// </summary>
+    private static CameraGainDescription? DescribeGain(ICamera camera, int? requestedPercent = null)
+    {
+        if (camera.GainRange is not { } range || camera.Gain is not { } value)
+        {
+            return null;
+        }
+
+        int percent = requestedPercent is { } asked && GainScale.ToRaw(asked, range) == value
+            ? asked
+            : GainScale.ToPercent(value, range);
+
+        return new CameraGainDescription(percent, value, range.Minimum, range.Maximum);
     }
 
     /// <summary>Re-reports the camera's current readout mode, for when something outside this class may have changed it.</summary>

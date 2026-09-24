@@ -143,8 +143,8 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             () => Ready && State.Camera.IsConnected && !State.SessionActive);
 
         OpenCameraSetupCommand = new RelayCommand(
-            () => SendAsync(new OpenCameraSetupDialogCommand()),
-            () => Ready && State.Camera.IsConnected && State.CameraHasSetupDialog && !State.SessionActive);
+            () => SendAsync(new OpenCameraSetupDialogCommand(SelectedCamera?.ProviderName, SelectedCamera?.DeviceId)),
+            () => Ready && !State.SessionActive && HasCameraSetupDialog);
 
         ConnectMountCommand = new RelayCommand(
             () => ConnectAsync(DeviceKind.Mount, SelectedMount),
@@ -270,6 +270,15 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             if (SetField(ref _selectedCamera, value))
             {
                 ConnectCameraCommand.RaiseCanExecuteChanged();
+
+                // Which camera-settings control is offered follows the pick,
+                // not the connection: an ASCOM driver's window is for setting a
+                // camera up before connecting, and a native camera's gain
+                // control should be visible as soon as one is chosen.
+                OnPropertyChanged(nameof(HasCameraSetupDialog));
+                OnPropertyChanged(nameof(ShowGainControl));
+                OnPropertyChanged(nameof(GainDetailText));
+                OpenCameraSetupCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -416,12 +425,63 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     public bool HasReadoutModes => State.ReadoutModes.Count > 0;
 
     /// <summary>
-    /// Whether to offer the driver settings button at all. Shown only once a
-    /// camera whose driver has such a window is connected: before that there is
-    /// no driver to ask, and a button that is always there and usually dead
-    /// teaches the user to ignore it.
+    /// Whether to offer the driver settings button: for the connected camera if
+    /// there is one, otherwise for the one picked. Only ASCOM drivers have such
+    /// a window, and a button that is always there and usually dead teaches the
+    /// user to ignore it.
     /// </summary>
-    public bool HasCameraSetupDialog => State.CameraHasSetupDialog;
+    public bool HasCameraSetupDialog => State.Camera.IsConnected
+        ? State.CameraHasSetupDialog
+        : SelectedCamera?.HasSetupDialog == true;
+
+    /// <summary>
+    /// Whether to show the gain control: a connected camera whose gain is set
+    /// from here, or -- before connecting -- a picked camera whose provider sets
+    /// gain. Shown but disabled in the second case, since the range is only
+    /// known once the camera is open.
+    /// </summary>
+    public bool ShowGainControl => State.Camera.IsConnected
+        ? State.CameraGain is not null
+        : SelectedCamera?.HasGainControl == true;
+
+    /// <summary>Editable only once the camera has said what its range is, and not mid-sequence.</summary>
+    public bool IsGainEditable => Ready && !State.SessionActive && State.CameraGain is not null;
+
+    /// <summary>
+    /// The gain as a percentage of the camera's own range. Setting it sends the
+    /// command; what is shown comes back from the camera through the engine, so
+    /// a refused or clamped value snaps back to what the camera actually has.
+    ///
+    /// A <see cref="decimal"/> because that is what the numeric control binds.
+    /// Setting it to the value already shown sends nothing: the control writes
+    /// its value back whenever the binding refreshes, and each of those would
+    /// otherwise be a command and a settings write.
+    /// </summary>
+    public decimal? GainPercent
+    {
+        get => State.CameraGain?.Percent;
+        set
+        {
+            if (value is not { } requested || State.CameraGain is not { } current)
+            {
+                return;
+            }
+
+            int percent = (int)Math.Round(Math.Clamp(requested, GainScale.MinimumPercent, GainScale.MaximumPercent));
+            if (percent != current.Percent)
+            {
+                _ = SendAsync(new SetCameraGainCommand(percent));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The raw value beside the percentage, for anyone matching the number
+    /// another program for the same camera shows.
+    /// </summary>
+    public string GainDetailText => State.CameraGain is { } gain
+        ? $"{gain.Value} in camera units ({gain.Minimum} to {gain.Maximum})"
+        : "Connect to read this camera's gain range.";
 
     /// <summary>
     /// True while the driver's settings window is open, which is when the rest
@@ -828,18 +888,9 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
                 OnPropertyChanged(nameof(ReadoutModes));
                 OnPropertyChanged(nameof(HasReadoutModes));
 
-                // A remembered readout mode is re-applied on connect, because
-                // otherwise it would silently revert to the driver's default and
-                // change the data without changing anything on screen. Only when
-                // the camera still offers that mode -- a different camera may
-                // have a different list, and index 1 on one is not index 1 on
-                // another.
-                if (engineEvent is DeviceConnectedEvent &&
-                    _settings.ReadoutModeIndex is { } remembered &&
-                    remembered != next.ReadoutModeIndex &&
-                    next.ReadoutModes.Any(m => m.Index == remembered))
+                if (engineEvent is DeviceConnectedEvent connected)
                 {
-                    _ = SendAsync(new SetReadoutModeCommand(remembered));
+                    ApplyRememberedCameraSettings(connected, next);
                 }
             }
 
@@ -922,6 +973,54 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     /// change rather than at shutdown, because the way an observing session
     /// usually ends is not a clean shutdown.
     /// </summary>
+    /// <summary>
+    /// Re-applies what was remembered for the camera just connected: its
+    /// readout mode and its gain. Without this both would silently revert to the
+    /// driver's defaults and change the data without changing anything on
+    /// screen.
+    ///
+    /// Each only when the camera can take it. A readout index must still be in
+    /// this camera's list, and a gain needs a camera whose gain is set from
+    /// here. Called before the connection itself is remembered, so the
+    /// previous camera's identity is still available to recognise a choice
+    /// stored before settings were kept per camera.
+    /// </summary>
+    private void ApplyRememberedCameraSettings(DeviceConnectedEvent connected, UiState next)
+    {
+        if (next.CameraSettingsKey is not { } key)
+        {
+            return;
+        }
+
+        CameraSettings? remembered = _settings.ForCamera(key) ?? LegacyReadoutFor(connected);
+
+        if (remembered?.ReadoutModeIndex is { } readout &&
+            readout != next.ReadoutModeIndex &&
+            next.ReadoutModes.Any(m => m.Index == readout))
+        {
+            _ = SendAsync(new SetReadoutModeCommand(readout));
+        }
+
+        if (remembered?.GainPercent is { } gain &&
+            next.CameraGain is { } current &&
+            gain != current.Percent)
+        {
+            _ = SendAsync(new SetCameraGainCommand(gain));
+        }
+    }
+
+    /// <summary>
+    /// A readout mode stored before settings were kept per camera, applied only
+    /// to the camera it was chosen on -- the one that was connected last time.
+    /// Index 1 on that camera is not index 1 on another.
+    /// </summary>
+    private CameraSettings? LegacyReadoutFor(DeviceConnectedEvent connected) =>
+        _settings.ReadoutModeIndex is { } legacy &&
+        string.Equals(connected.ProviderName, _settings.CameraProviderName, StringComparison.Ordinal) &&
+        string.Equals(connected.DeviceId, _settings.CameraDeviceId, StringComparison.Ordinal)
+            ? new CameraSettings(ReadoutModeIndex: legacy)
+            : null;
+
     private void Remember(EngineEvent engineEvent)
     {
         if (_settingsStore is null)
@@ -942,7 +1041,11 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
                 IsFocalLengthSolved = e.IsFocalLengthSolved,
             },
 
-            ReadoutModeChangedEvent e => _settings with { ReadoutModeIndex = e.Index },
+            ReadoutModeChangedEvent e when State.CameraSettingsKey is { } key =>
+                _settings.WithCamera(key, camera => camera with { ReadoutModeIndex = e.Index }),
+
+            CameraGainChangedEvent e when State.CameraSettingsKey is { } key =>
+                _settings.WithCamera(key, camera => camera with { GainPercent = e.Gain.Percent }),
 
             DeviceConnectedEvent { Kind: DeviceKind.Camera } e => _settings with
             {
@@ -1085,6 +1188,10 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(HasReadoutModes),
         nameof(HasCameraSetupDialog),
         nameof(IsCameraSetupDialogOpen),
+        nameof(ShowGainControl),
+        nameof(IsGainEditable),
+        nameof(GainPercent),
+        nameof(GainDetailText),
         nameof(HasRejectionReason),
         nameof(RejectionReason),
         nameof(HasManualInstruction),

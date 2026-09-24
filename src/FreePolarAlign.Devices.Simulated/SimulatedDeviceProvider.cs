@@ -36,11 +36,11 @@ public sealed class SimulatedDeviceProvider : IDeviceProvider
 
     public string Version => typeof(SimulatedDeviceProvider).Assembly.GetName().Version?.ToString() ?? "0.0.0";
 
-    public IReadOnlyList<DeviceDescriptor> DiscoverCameras() =>
-        new[] { new DeviceDescriptor("sim-camera", "Simulated Camera", "free-polar-align virtual observatory") };
-
-    public IReadOnlyList<DeviceDescriptor> DiscoverMounts() =>
-        new[] { new DeviceDescriptor("sim-mount", "Simulated Mount", "free-polar-align virtual observatory") };
+    public IReadOnlyList<DeviceDescriptor> DiscoverDevices() => new DeviceDescriptor[]
+    {
+        new CameraDescriptor("sim-camera", "Simulated Camera", "free-polar-align virtual observatory"),
+        new MountDescriptor("sim-mount", "Simulated Mount", "free-polar-align virtual observatory"),
+    };
 
     /// <summary>
     /// The camera is deliberately bound to this provider's mount instance: it

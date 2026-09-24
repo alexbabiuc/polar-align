@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      net10.0, not net10.0-windows: the ToupTek SDK is a plain C library on every
+      platform it ships for, so nothing here is Windows-specific. That also lets
+      the layout and parsing tests run on the macOS build machine.
+    -->
+    <RootNamespace>FreePolarAlign.Devices.ToupTek</RootNamespace>
+    <AssemblyName>FreePolarAlign.Devices.ToupTek</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!--
+    Compiled against, never shipped beside: see D24 and the Ascom plugin's
+    project file. Imaging is listed although nothing here names it, because it
+    arrives transitively through Devices and would otherwise be copied beside
+    the plugin all the same, which the first build of this project did.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\FreePolarAlign.Devices\FreePolarAlign.Devices.csproj"
+                      Private="false" ExcludeAssets="runtime" />
+    <ProjectReference Include="..\FreePolarAlign.Imaging\FreePolarAlign.Imaging.csproj"
+                      Private="false" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <!-- The struct layouts are the thing most worth testing, and they are internal. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="FreePolarAlign.Tests.Devices" />
+  </ItemGroup>
+
+</Project>

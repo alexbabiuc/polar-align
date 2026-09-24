@@ -110,13 +110,32 @@ public sealed record CapturePoint(
 /// settings behind that window -- gain above all -- that this project does not
 /// model and that decide whether a frame is usable.
 /// </param>
+/// <param name="UniqueId">
+/// The camera's own identity -- normally its serial number -- or null when it
+/// will not say. Keys the settings remembered per camera, so it has to be
+/// something two cameras of the same model do not share.
+/// </param>
+/// <param name="Gain">Null when gain is not controlled from here, which is every ASCOM camera (D23).</param>
 public sealed record CameraDescription(
     double PixelSizeMicrons,
     int SensorWidthPixels,
     int SensorHeightPixels,
     IReadOnlyList<CameraReadoutModeDescription>? ReadoutModes = null,
     int? ReadoutModeIndex = null,
-    bool HasSetupDialog = false);
+    bool HasSetupDialog = false,
+    string? UniqueId = null,
+    CameraGainDescription? Gain = null);
+
+/// <summary>
+/// A camera's gain: the percentage the user sees and the raw value the camera
+/// was actually given, with the range the one was mapped onto the other.
+///
+/// Both travel together because each answers a different question. The
+/// percentage is what the control shows and what is remembered; the raw value
+/// is what goes in the FITS header and what another program for the same
+/// camera would call it.
+/// </summary>
+public sealed record CameraGainDescription(int Percent, int Value, int Minimum, int Maximum);
 
 /// <param name="BitDepth">
 /// Bits per pixel where the driver reveals it, null otherwise. Null is a real
@@ -197,7 +216,24 @@ public sealed record SetReadoutModeCommand(int Index) : EngineCommand;
 /// frames already captured would have been taken under different settings, and
 /// the fit weights them all alike.
 /// </summary>
-public sealed record OpenCameraSetupDialogCommand : EngineCommand;
+/// <param name="ProviderName">
+/// With <paramref name="DeviceId"/>, the camera to configure when none is
+/// connected. An ASCOM driver's window is meant to be used before connecting --
+/// it is where the camera is chosen and set up in the first place -- so the
+/// engine opens the driver just long enough to show it. Ignored when a camera
+/// is connected: then the connected one is the one being configured.
+/// </param>
+public sealed record OpenCameraSetupDialogCommand(string? ProviderName = null, string? DeviceId = null) : EngineCommand;
+
+/// <summary>
+/// Set the connected camera's gain, as a percentage of its own range.
+///
+/// A percentage rather than a raw value so the command means the same thing
+/// whichever camera receives it; the engine maps it onto the camera's range.
+/// Refused during a sequence, for the reason the readout mode is: gain changes
+/// the noise in every star position, and the fit weights every frame alike.
+/// </summary>
+public sealed record SetCameraGainCommand(int Percent) : EngineCommand;
 
 /// <summary>
 /// Plan a sequence anchored where the mount is already pointing. Connects
@@ -276,6 +312,13 @@ public sealed record DeviceConnectedEvent(
 /// process's UI stack had the device.
 /// </summary>
 public sealed record CameraSetupDialogChangedEvent(bool IsOpen) : EngineEvent;
+
+/// <summary>
+/// The camera's gain after a change, read back from the camera rather than
+/// echoed from the request -- a camera clamps an out-of-range value, and the UI
+/// should show what the frames will actually be taken at.
+/// </summary>
+public sealed record CameraGainChangedEvent(CameraGainDescription Gain) : EngineEvent;
 
 /// <param name="Reason">Null for a deliberate disconnect; a message when the device dropped or failed to open.</param>
 public sealed record DeviceDisconnectedEvent(DeviceKind Kind, string? Reason = null) : EngineEvent;

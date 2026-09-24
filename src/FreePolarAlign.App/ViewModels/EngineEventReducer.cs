@@ -33,6 +33,13 @@ public static class EngineEventReducer
 
             DeviceDisconnectedEvent e => ApplyDisconnected(withLog, e),
 
+            CameraGainChangedEvent e => withLog with
+            {
+                CameraGain = e.Gain,
+                RejectionReason = null,
+                StatusMessage = $"Gain set to {e.Gain.Percent}% ({e.Gain.Value} in the camera's own units).",
+            },
+
             CameraSetupDialogChangedEvent e => withLog with
             {
                 CameraSetupDialogOpen = e.IsOpen,
@@ -259,6 +266,8 @@ public static class EngineEventReducer
                 ReadoutModes = e.Camera?.ReadoutModes ?? Array.Empty<CameraReadoutModeDescription>(),
                 ReadoutModeIndex = e.Camera?.ReadoutModeIndex,
                 CameraHasSetupDialog = e.Camera?.HasSetupDialog ?? false,
+                CameraSettingsKey = Session.AppSettings.CameraKey(e.ProviderName, e.Camera?.UniqueId, e.DeviceId),
+                CameraGain = e.Camera?.Gain,
                 RejectionReason = null,
                 StatusMessage = $"Camera connected: {e.DisplayName}.",
             };
@@ -293,6 +302,8 @@ public static class EngineEventReducer
                 ReadoutModes = Array.Empty<CameraReadoutModeDescription>(),
                 ReadoutModeIndex = null,
                 CameraHasSetupDialog = false,
+                CameraSettingsKey = null,
+                CameraGain = null,
                 StatusMessage = e.Reason ?? "Camera disconnected.",
             };
         }

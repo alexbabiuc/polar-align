@@ -228,4 +228,69 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.NotNull(result.Settings.Site);
         Assert.True(result.Settings.SiteNeedsConfirmation);
     }
+
+    // ---- Per-camera settings ----
+
+    /// <summary>
+    /// Settings remembered per camera survive the file, keyed exactly as
+    /// written. The key carries a serial number, and a naming policy that
+    /// camel-cased it would silently orphan every camera's settings.
+    /// </summary>
+    [Fact]
+    public void PerCameraSettings_SurviveAReload_UnderTheirExactKeys()
+    {
+        string path = PathIn("cameras.json");
+        string zwo = AppSettings.CameraKey("ZWO", "1A2B3C4D5E6F7081", "ZWO ASI290MM Mini");
+        string ascom = AppSettings.CameraKey("ASCOM", null, "ASCOM.ASICamera2.Camera");
+
+        AppSettings settings = AppSettings.Empty
+            .WithCamera(zwo, c => c with { ReadoutModeIndex = 1, GainPercent = 12 })
+            .WithCamera(ascom, c => c with { ReadoutModeIndex = 0 });
+
+        Assert.Null(new JsonFileSettingsStore(path).Save(settings));
+        AppSettings reloaded = new JsonFileSettingsStore(path).Load().Settings;
+
+        Assert.Equal(new CameraSettings(ReadoutModeIndex: 1, GainPercent: 12), reloaded.ForCamera(zwo));
+        Assert.Equal(new CameraSettings(ReadoutModeIndex: 0), reloaded.ForCamera(ascom));
+        Assert.Contains("\"ZWO/1A2B3C4D5E6F7081\"", File.ReadAllText(path), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A camera with a serial is keyed by it, so two of the same model do not
+    /// share settings; one without falls back to the id it was enumerated under.
+    /// </summary>
+    [Fact]
+    public void ACameraIsKeyedBySerial_WhenItHasOne()
+    {
+        Assert.Equal("ZWO/1A2B3C4D5E6F7081", AppSettings.CameraKey("ZWO", "1A2B3C4D5E6F7081", "ZWO ASI290MM Mini"));
+        Assert.Equal("ZWO/ZWO ASI290MM Mini", AppSettings.CameraKey("ZWO", null, "ZWO ASI290MM Mini"));
+    }
+
+    /// <summary>
+    /// Changing nothing returns the same instance, so the caller's "did anything
+    /// change" check -- which compares instances -- does not rewrite the file on
+    /// every notification just because a dictionary is always a new object.
+    /// </summary>
+    [Fact]
+    public void AnUnchangedCameraSetting_ReturnsTheSameSettings()
+    {
+        AppSettings settings = AppSettings.Empty.WithCamera("ZWO/1", c => c with { GainPercent = 30 });
+
+        Assert.Same(settings, settings.WithCamera("ZWO/1", c => c with { GainPercent = 30 }));
+        Assert.NotSame(settings, settings.WithCamera("ZWO/1", c => c with { GainPercent = 31 }));
+    }
+
+    [Fact]
+    public void AnOutOfRangeCameraSetting_IsDiscarded_AndTheRestKept()
+    {
+        string path = PathIn("bad-camera.json");
+        File.WriteAllText(path, """
+            { "cameras": { "ZWO/1": { "readoutModeIndex": 1, "gainPercent": 250 } } }
+            """);
+
+        SettingsLoadResult result = new JsonFileSettingsStore(path).Load();
+
+        Assert.Equal(new CameraSettings(ReadoutModeIndex: 1, GainPercent: null), result.Settings.ForCamera("ZWO/1"));
+        Assert.NotNull(result.Warning);
+    }
 }

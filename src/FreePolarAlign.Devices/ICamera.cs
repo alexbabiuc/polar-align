@@ -29,6 +29,20 @@ public sealed record CameraReadoutMode(int Index, string Name, int? BitDepth = n
 }
 
 /// <summary>
+/// The raw gain values a camera accepts, in the vendor's own units.
+///
+/// Deliberately not interpreted. ZWO counts in tenths of a decibel (0 to 600 on
+/// an ASI290), ToupTek in percent of unity (100 to 5000 or so), and an ASCOM
+/// driver in whatever it likes. Nothing here converts between them, because the
+/// user compares the number against the same vendor's documentation and other
+/// software for the same camera, not against another brand.
+/// </summary>
+public sealed record CameraGainRange(int Minimum, int Maximum)
+{
+    public int Clamp(int value) => Math.Clamp(value, Minimum, Maximum);
+}
+
+/// <summary>
 /// What the application knows about a frame that the camera cannot, recorded in
 /// the file so a frame found later can be understood on its own.
 ///
@@ -115,6 +129,37 @@ public interface ICamera : IDisposable
     /// </summary>
     Task ShowSetupDialogAsync(CancellationToken cancellationToken = default) =>
         throw new NotSupportedException($"Camera '{Name}' has no driver settings window.");
+
+    /// <summary>
+    /// An identifier for this physical camera that survives unplugging, a
+    /// reboot, and a second camera of the same model -- normally its serial
+    /// number. Null when the camera will not say.
+    ///
+    /// It keys the settings remembered per camera. The device id the provider
+    /// hands out at discovery is not good enough for that: for native SDKs it
+    /// is an enumeration index or a USB path, and two ASI290s would share a
+    /// model name.
+    /// </summary>
+    string? UniqueId => null;
+
+    /// <summary>
+    /// The range <see cref="SetGainAsync"/> accepts, or null when this camera's
+    /// gain is not controlled from here. Null for every ASCOM camera: there the
+    /// driver's own settings window owns gain (D23), and a second control
+    /// fighting it over the same value would leave the user unsure which won.
+    /// </summary>
+    CameraGainRange? GainRange => null;
+
+    /// <summary>The gain in use, in the same units as <see cref="GainRange"/>. Null when <see cref="GainRange"/> is.</summary>
+    int? Gain => null;
+
+    /// <summary>
+    /// Sets the gain, in the camera's own units. Implementations clamp to
+    /// <see cref="GainRange"/> rather than refuse, and report the value actually
+    /// applied through <see cref="Gain"/>, which is what callers should read back.
+    /// </summary>
+    Task SetGainAsync(int value, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException($"Camera '{Name}' does not have its gain controlled from here.");
 
     Task ConnectAsync(CancellationToken cancellationToken = default);
 

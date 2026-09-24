@@ -311,7 +311,7 @@ mounts have no ASCOM driver, or whose driver is misbehaving.
 **Consequences.** Declination drift cannot be detected from mount telemetry in this
 mode, so residual-based detection (D11) carries the full load.
 
-*Revised 2026-09-24 (Phase 4d, implementation pending).* "First-class" was not
+*Revised 2026-09-24 (Phase 4d, implemented in 0.0.8).* "First-class" was not
 true of the code: a sequence refused to start without a connected mount even in
 manual mode, every solve took its position hint from the mount, and manual mode
 was a constructor option the UI never set. The mode is now decided by what is
@@ -708,7 +708,7 @@ because a fixed sky coordinate does not hold a fixed mechanical declination as
 the sky turns (D16). Whether the user edited anything is decided by comparing
 against the engine's own proposal to within an arcsecond.
 
-*Revised 2026-09-24 (Phase 4d, implementation pending).* What this decision
+*Revised 2026-09-24 (Phase 4d, implemented in 0.0.8).* What this decision
 forbids is motion, not capture, and that is unchanged. What changes is how a
 point gets recorded once the telescope is there. There is no longer a capture
 click per point: the camera runs continuously, and a sample is solved when the
@@ -934,7 +934,7 @@ device state. The session passes it on every capture, so changing it mid-sequenc
 would change the frames halfway through the fit they are being combined into;
 the picker is disabled while a sequence runs.~~
 
-*Revised 2026-09-24 (Phase 4d, implementation pending): the exposure can be
+*Revised 2026-09-24 (Phase 4d, implemented in 0.0.8): the exposure can be
 changed at any time, including during a sequence, and takes effect from the next
 frame.* The struck reasoning mistook what the fit consumes. The fit reads one
 solved position per frame, and exposure changes how noisy that position is, not
@@ -994,7 +994,7 @@ Refused outright during a sequence, for the reason the readout mode is (D20's
 neighbourhood): the frames already captured were taken under different settings
 and the fit weights every observation alike.
 
-*Revised 2026-09-24 (Phase 4d, implementation pending).* The readout mode and
+*Revised 2026-09-24 (Phase 4d, implemented in 0.0.8).* The readout mode and
 gain are no longer refused during a sequence (D22, D25): they change noise, not
 position. This window stays refused during a sequence, but for a different
 reason. It can change binning and region of interest, which change the plate
@@ -1157,7 +1157,7 @@ declarations to those numbers. Neither plugin has run against a real camera.
 
 ## D26 — The camera runs continuously; samples are triggered by events, one solve at a time
 
-*Decided 2026-09-24 for Phase 4d; not yet implemented.*
+*Decided 2026-09-24 for Phase 4d; implemented in 0.0.8.*
 
 The camera exposes continuously for as long as it is connected, and every frame
 is displayed. Nothing is solved outside a sequence. Within one, a frame is solved
@@ -1223,8 +1223,10 @@ measures the user's pace rather than a fault. The count is shown instead.
 
 **Frames are deleted once used.** At a 0.5 s exposure a night would otherwise
 leave thousands of files. The frame on screen is kept until the next one
-replaces it, because the preview re-reads it when the brightness changes, and
-**Save frame** copies it wherever the user chooses. Frames whose solve failed
+replaces it, so the preview can still read it after it has been announced. The
+preview then holds the image and its original bytes in memory: moving the
+brightness slider re-stretches what is held, and **Save frame** writes those
+bytes wherever the user chooses. By then the file may already have gone. Frames whose solve failed
 are the exception: the last 20 are kept under
 `~/.free-polar-align/failed-solves/`, named `solving_failed_<timestamp>.fits`.
 D20 was diagnosed from exactly such frames, and Phase 5's diagnostic bundle
@@ -1234,12 +1236,26 @@ needs them.
 
 ## D27 — A sample must add sweep: the minimum useful sweep and spacing
 
-*Decided 2026-09-24 for Phase 4d; not yet implemented.*
+*Decided 2026-09-24 for Phase 4d; implemented in 0.0.8.*
 
-An automatically triggered sample is accepted only if it is at least **Δ = the
-planned sweep ÷ (planned samples − 1)** from every sample already taken, in
-mechanical rotation: 14° for the default 70° over six. A sweep narrower than
-**30°** is not planned. A forced sample (D26) skips the spacing check.
+A sample triggered by motion the engine did not command is accepted only if it
+is at least nine tenths of **Δ = the planned sweep ÷ (planned samples − 1)**
+from every sample already taken, in mechanical rotation. Δ is 14° for the
+default 70° over six. A sweep narrower than **30°** is not planned. A forced
+sample (D26) skips the spacing check, and so does the first sample after a slew
+the user confirmed.
+
+**Why nine tenths, not all of it.** Found in implementation. The engine's own
+next proposal is exactly Δ on, and a mount's report of having arrived there can
+read a hair short after the coordinate round trip. The strict rule refused the
+engine's own planned points. The allowance also absorbs the unconnected
+rotation's error about the nominal pole (below).
+
+**Why a confirmed slew is exempt.** The rule exists to stop hand-controller
+nudges and a mount standing still from using up samples. A slew the user saw
+proposed and confirmed to a position they chose is the opposite case, often
+chosen to avoid something the engine cannot see (D18). Refusing it was the
+first thing the tests found.
 
 **Measured.** 300 noise realisations per cell, 6 samples, 3″ solve noise (the
 session's pessimistic default), latitude 45°, 30° from the pole, 12′ and −9′
@@ -1279,6 +1295,17 @@ Unconnected, it is the hour angle of each solve about the *nominal* pole, which
 is off by up to the misalignment divided by the sine of the distance from the
 pole: about 4° for a 2° error at 30° from the pole. That is fine for a 14° gate
 and not for anything finer, which is why the fit never uses it.
+
+It is not fine for deciding where the next point goes, and that was found the
+hard way. Unconnected, the next instruction was first stepped on from the last
+sample's measured rotation. With 40′ and 30′ injected and the telescope 20°
+from the pole, every measured rotation sat about 2° west of the truth. The step
+after the fourth sample therefore fell inside the meridian margin, and the
+sequence stopped one sample short, with the plan's last point still reachable.
+Unconnected instructions now come from the plan's own points; the turn between
+them is what a person at the mount can act on. A connected mount's rotation has
+no such bias. Its next point is the westernmost sample plus Δ, clamped to the
+meridian margin when the step would cross it.
 
 **Found, and not this decision's to fix.** From 15° to 20° D11 trusts the fit
 while its σ is 3′–5′. The covariance is honest there; it matched the observed

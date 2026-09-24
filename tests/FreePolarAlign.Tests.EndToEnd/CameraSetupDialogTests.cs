@@ -96,7 +96,7 @@ public class CameraSetupDialogTests
 
         public Task<CapturedImage> ExposeAsync(
             TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException("These tests never expose.");
+            StubFrames.ExposeAsync(duration, cancellationToken);
 
         public int ConnectCalls { get; private set; }
 
@@ -158,7 +158,7 @@ public class CameraSetupDialogTests
 
         public Task<CapturedImage> ExposeAsync(
             TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException("These tests never expose.");
+            StubFrames.ExposeAsync(duration, cancellationToken);
 
         public void Dispose()
         {
@@ -174,21 +174,6 @@ public class CameraSetupDialogTests
             throw new NotSupportedException("These tests never solve.");
     }
 
-    private sealed class Recorder : IObserver<EngineEvent>
-    {
-        public List<EngineEvent> Events { get; } = new();
-
-        public void OnCompleted()
-        {
-        }
-
-        public void OnError(Exception error)
-        {
-        }
-
-        public void OnNext(EngineEvent value) => Events.Add(value);
-    }
-
     private sealed class Harness : IDisposable
     {
         private readonly IDisposable _subscription;
@@ -198,7 +183,7 @@ public class CameraSetupDialogTests
             Camera = camera;
             Mount = new SimulatedMount(new SimulatedMountOptions(Site, new MountMisalignment(30.0, -25.0)));
             Session = new AlignmentSession(
-                camera, Mount, new UnusedSolver(), new AlignmentSessionOptions(CaptureCount: 5, SweepDegrees: 60.0));
+                camera, Mount, new UnusedSolver(), new AlignmentSessionOptions(CaptureCount: 5, SweepDegrees: 60.0, ExposureDuration: StubFrames.Exposure));
 
             Recorder = new Recorder();
             _subscription = Session.Events.Subscribe(Recorder);
@@ -225,7 +210,7 @@ public class CameraSetupDialogTests
             await Session.SendAsync(new ConfigureSiteCommand(
                 Site.LatitudeDegrees, Site.LongitudeDegrees, Site.HeightMeters));
             await Session.SendAsync(new StartSessionCommand(
-                new SessionConfiguration(5, 60.0, TimeSpan.FromSeconds(1))));
+                new SessionConfiguration(5, 60.0)));
         }
 
         public void Dispose()

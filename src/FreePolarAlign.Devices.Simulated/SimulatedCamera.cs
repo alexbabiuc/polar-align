@@ -39,6 +39,7 @@ public sealed class SimulatedCamera : ICamera
     private readonly string _workingDirectory;
     private int _exposureCount;
     private int _readoutModeIndex;
+    private int _gain;
 
     public SimulatedCamera(SimulatedMount mount, StarCatalog catalog, SimulatedCameraOptions options, string? workingDirectory = null)
     {
@@ -93,6 +94,33 @@ public sealed class SimulatedCamera : ICamera
         }
 
         _readoutModeIndex = index;
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A gain control shaped like a native SDK camera's (D25), so that what the
+    /// engine does with gain -- the percentage mapping, a change mid-sequence
+    /// reaching the next frame's header -- can be exercised without one. It
+    /// does not change the rendered noise: nothing measured here depends on it,
+    /// and a renderer that faked a gain curve would be a claim about sensors
+    /// this project has not measured. Offered only while connected, as the
+    /// native cameras offer it, because their range is read from the device.
+    /// </summary>
+    public CameraGainRange? GainRange => IsConnected ? SimulatedGainRange : null;
+
+    public int? Gain => IsConnected ? Volatile.Read(ref _gain) : null;
+
+    private static CameraGainRange SimulatedGainRange { get; } = new(0, 100);
+
+    public Task SetGainAsync(int value, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsConnected)
+        {
+            throw new InvalidOperationException("The simulated camera is not connected.");
+        }
+
+        Volatile.Write(ref _gain, SimulatedGainRange.Clamp(value));
         return Task.CompletedTask;
     }
 

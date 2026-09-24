@@ -407,7 +407,8 @@ the window's own rendering is still only verified by having been looked at.
 
 ### Phase 4d — Live capture, and a mount that is optional
 
-*Planned 2026-09-24; not started.* A capture per click made every exposure or
+*Planned and implemented 2026-09-24, in 0.0.8; the simulated half of the exit
+criterion is met.* A capture per click made every exposure or
 gain adjustment a round trip, and "manual mode" still demanded a connected
 mount. See D10, D18, D22, D23 and D25 as revised, and D26 and D27.
 
@@ -445,6 +446,45 @@ a user at the mount would do:
 In both 1 and 2 the injected misalignment must come back within 1′, Phase 2's
 end-to-end standard. The hardware half (real hand-controller slews, and whether the
 driver reports them as slewing) is recorded as VERIFY until a night allows it.
+
+### Measured results
+
+**Simulated half: met.** Through the real Watney solver on rendered frames:
+
+- **Unconnected (2).** A five-point sweep turned by hand as instructed came back
+  as +40.06′ ± 0.37′ altitude and −29.89′ ± 0.59′ azimuth, against 40′ and −30′
+  injected, with residual RMS 0.14″. The engine was never told the mount
+  existed. Each sample took two blind solves agreeing, as D26 requires.
+- **Connected, driven through the engine.** The Phase 3 convergence tests pass
+  unchanged in substance. They now confirm proposals and wait for the engine to
+  sample, instead of commanding each capture.
+
+Criteria 1, 3 and 4 are pinned by fast tests against the real mount mechanics
+with a noiseless solver. A sweep slewed entirely from outside the engine
+samples itself. A 3′ declination nudge restarts the sequence with the reason,
+and 0.5′ does not. Exposure, gain and readout changes during a sequence land
+on the next frame. There are also tests for the single-solve rule and for a
+forced sample never using a frame exposed before the press.
+
+**Three defects found by the tests, none visible by inspection:**
+
+1. **Confirmed slews were refused.** D27's spacing rule refused a slew the user
+   had confirmed, when it landed closer than the spacing. The rule is for motion
+   the engine did not command; D27 now says so.
+2. **The engine refused its own planned points.** The next proposal is exactly
+   one spacing on, and the mount's report of arriving there read a hair short.
+   Hence D27's nine-tenths allowance.
+3. **An unconnected sequence ended a sample short.** It stepped each
+   instruction on from rotations measured about the nominal pole, which the
+   misalignment itself biases. It stopped at four samples when the plan's fifth
+   was reachable. Found only through the real solver; the fast test that now
+   pins it follows the instructions to the letter. See D27.
+
+**Not verified:** the window. The app launches and stays running with the
+simulator; its reducer, commands, preview queue and save path are tested (147
+tests). The hardware half stays VERIFY, in particular whether a driver reports
+hand-controller motion as `Slewing` (`docs/DEVICE-COMPATIBILITY.md`). The engine
+does not depend on it, because it also treats a changing position as motion.
 
 ---
 

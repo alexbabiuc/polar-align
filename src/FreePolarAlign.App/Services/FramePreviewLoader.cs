@@ -22,6 +22,29 @@ namespace FreePolarAlign.App.Services;
 public sealed record FramePreview(Bitmap? Bitmap, string? Problem);
 
 /// <summary>
+/// The frame on screen, held in memory whole.
+///
+/// Held because the file it came from does not outlive it: the engine deletes a
+/// frame once a newer one supersedes it (D26), which at a short exposure is a
+/// fraction of a second later. So the brightness control re-stretches
+/// <see cref="Image"/> rather than re-reading the file, and Save frame writes
+/// <see cref="FitsBytes"/> rather than copying it.
+/// </summary>
+/// <param name="FitsBytes">
+/// The file exactly as the camera path wrote it, header and all. Saved as-is
+/// rather than re-encoded from <see cref="Image"/>: a saved frame is evidence,
+/// and a re-encoding would be this application's opinion of the frame.
+/// </param>
+/// <param name="Image">Null when the bytes could not be parsed; they are still worth saving.</param>
+/// <param name="Problem">Why <see cref="Image"/> is null.</param>
+public sealed record DisplayedFrame(
+    string SourcePath,
+    DateTime ExposureMidpointUtc,
+    byte[] FitsBytes,
+    FitsImage? Image,
+    string? Problem = null);
+
+/// <summary>
 /// Reads a captured FITS frame from disk and turns it into something the window
 /// can show.
 ///
@@ -46,28 +69,70 @@ public static class FramePreviewLoader
 
     private const int MaximumPreviewHeight = 1400;
 
+    /// <summary>
+    /// Reads the frame into memory, or returns null when the file is already
+    /// gone.
+    ///
+    /// Gone is not an error. The engine deletes a frame once a newer one has
+    /// been published (D26), so a file missing by the time its turn comes means
+    /// only that a newer frame has overtaken it -- and that one is already on
+    /// its way.
+    /// </summary>
+    public static DisplayedFrame? Read(string path, DateTime exposureMidpointUtc)
+    {
+        byte[] bytes;
+        try
+        {
+            // Shared for delete as well as write, so that on Windows the engine
+            // can delete a superseded frame while it is still being read here
+            // rather than failing and retrying later.
+            using var stream = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var buffer = new MemoryStream();
+            stream.CopyTo(buffer);
+            bytes = buffer.ToArray();
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return new DisplayedFrame(
+                path, exposureMidpointUtc, Array.Empty<byte>(), null,
+                $"Could not read '{Path.GetFileName(path)}': {ex.Message}");
+        }
+
+        try
+        {
+            using var parse = new MemoryStream(bytes, writable: false);
+            return new DisplayedFrame(path, exposureMidpointUtc, bytes, FitsFile.Read(parse));
+        }
+        catch (Exception ex) when (ex is IOException or FormatException or InvalidDataException
+                                   or ArgumentException)
+        {
+            return new DisplayedFrame(
+                path, exposureMidpointUtc, bytes, null,
+                $"Could not read '{Path.GetFileName(path)}': {ex.Message}");
+        }
+    }
+
     /// <param name="targetBackground">
     /// Where the sky lands in the output range: the brightness control, and the
     /// only display choice there is. The stretch itself is not optional -- an
     /// unstretched astronomical exposure is a black rectangle, so the toggle
     /// that used to offer one was offering a broken picture as a feature.
     /// </param>
-    public static Task<FramePreview> LoadAsync(string path, double targetBackground) =>
-        Task.Run(() => Load(path, targetBackground));
-
-    private static FramePreview Load(string path, double targetBackground)
+    public static FramePreview Render(FitsImage image, double targetBackground)
     {
         try
         {
-            FitsImage image = FitsFile.Read(path);
             ImagePreview preview = ImageStretch.Create(image, targetBackground, MaximumPreviewWidth, MaximumPreviewHeight);
-
             return new FramePreview(ToBitmap(preview), Problem: null);
         }
-        catch (Exception ex) when (ex is IOException or FormatException or UnauthorizedAccessException
-                                   or InvalidDataException or ArgumentException)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
-            return new FramePreview(null, $"Could not read '{Path.GetFileName(path)}': {ex.Message}");
+            return new FramePreview(null, $"Could not build a preview: {ex.Message}");
         }
     }
 

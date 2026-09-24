@@ -31,6 +31,7 @@
     <ProjectReference Include="..\..\src\FreePolarAlign.Devices.Ascom\FreePolarAlign.Devices.Ascom.csproj" />
     <ProjectReference Include="..\..\src\FreePolarAlign.Devices.Zwo\FreePolarAlign.Devices.Zwo.csproj" />
     <ProjectReference Include="..\..\src\FreePolarAlign.Devices.ToupTek\FreePolarAlign.Devices.ToupTek.csproj" />
+    <ProjectReference Include="..\..\src\FreePolarAlign.Devices.Simulated\FreePolarAlign.Devices.Simulated.csproj" />
   </ItemGroup>
 
 </Project>

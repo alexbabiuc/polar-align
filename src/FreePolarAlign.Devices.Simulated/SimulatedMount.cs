@@ -66,6 +66,20 @@ public sealed record SimulatedMountOptions(
 /// Tracking follows from the same construction rather than being modelled
 /// separately: recomputing the mechanical angles at a later time advances them
 /// at the sidereal rate on their own.
+///
+/// A slew takes <see cref="SimulatedMountOptions.SlewDuration"/>, and during it
+/// the mount is genuinely somewhere in between: its mechanical angles move
+/// linearly from where it was to where it is going, and both what it reports
+/// and what the camera sees follow them. A frame exposed mid-slew therefore
+/// lands between the two fields, as on real hardware, which is what the engine
+/// must learn not to use (D26). The angles are interpolated rather than the sky
+/// coordinates because that is what the motors do, and because interpolating
+/// J2000 coordinates would move the mechanical declination on the way (D16).
+///
+/// There is no separate entry point for motion the engine did not ask for. A
+/// test calling <see cref="SlewToCoordinatesAsync"/> itself is, as far as the
+/// engine can tell, exactly a hand-controller slew or another program's, and
+/// <see cref="NudgeDeclination"/> is a press of a declination button.
 /// </summary>
 public sealed class SimulatedMount : IMount
 {
@@ -77,6 +91,8 @@ public sealed class SimulatedMount : IMount
     private double _commandedDecDegrees;
     private DateTime _mechanicalEpochUtc;
     private bool _hasSlewed;
+    private Slew? _slew;
+    private int _slewGeneration;
 
     public SimulatedMount(SimulatedMountOptions options)
     {
@@ -151,6 +167,43 @@ public sealed class SimulatedMount : IMount
         }
     }
 
+    /// <summary>
+    /// Moves the mechanical declination by the given amount, as holding a
+    /// declination button on a hand controller would. The mount knows it moved,
+    /// so the coordinates it reports follow -- which is what lets the engine
+    /// notice that a sequence's fixed declination (D11) has been broken.
+    /// </summary>
+    public void NudgeDeclination(double arcminutes)
+    {
+        double degrees = arcminutes / 60.0;
+
+        lock (_gate)
+        {
+            DateTime now = DateTime.UtcNow;
+
+            if (_slew is { } slew && now < slew.EndUtc)
+            {
+                // The whole path moves, so the slew still ends where the press
+                // has put it rather than quietly undoing the press on arrival.
+                (double ra, double dec) = BeliefFromMechanics(
+                    slew.EndRotationDegrees, slew.EndDeclinationDegrees + degrees, slew.EndUtc);
+                _slew = slew with
+                {
+                    StartDeclinationDegrees = slew.StartDeclinationDegrees + degrees,
+                    EndDeclinationDegrees = slew.EndDeclinationDegrees + degrees,
+                    TargetRaDegrees = ra,
+                    TargetDecDegrees = dec,
+                };
+                return;
+            }
+
+            SettleIfArrived(now);
+            (double rotation, double declination) = MechanicsAt(now);
+            (_commandedRaDegrees, _commandedDecDegrees) = BeliefFromMechanics(rotation, declination + degrees, now);
+            _mechanicalEpochUtc = now;
+        }
+    }
+
     /// <summary>Simulates the mount dropping off the bus mid-sequence.</summary>
     public void SimulateDisconnection() => IsConnected = false;
 
@@ -172,6 +225,10 @@ public sealed class SimulatedMount : IMount
     /// not where it is actually pointing. A misaligned mount has no way to know
     /// the difference, and software that trusted this instead of plate solving
     /// would inherit the very error it is trying to measure.
+    ///
+    /// Mid-slew it is wherever the encoders say the mount has got to, read
+    /// through the same ideal model, so the reported position changes during a
+    /// slew as a real mount's does.
     /// </summary>
     public Task<MountPosition> GetPositionAsync(CancellationToken cancellationToken = default)
     {
@@ -180,15 +237,37 @@ public sealed class SimulatedMount : IMount
 
         lock (_gate)
         {
+            DateTime now = DateTime.UtcNow;
+            SettleIfArrived(now);
+
+            double ra = _commandedRaDegrees;
+            double dec = _commandedDecDegrees;
+            bool slewing = _slew is not null;
+            if (slewing)
+            {
+                (double rotation, double declination) = MechanicsAt(now);
+                (ra, dec) = BeliefFromMechanics(rotation, declination, now);
+            }
+
             return Task.FromResult(new MountPosition(
-                _commandedRaDegrees,
-                _commandedDecDegrees,
-                ComputeSideOfPier(DateTime.UtcNow),
-                DateTime.UtcNow,
-                Options.Tracking ? TrackingState.Tracking : TrackingState.Stopped));
+                ra,
+                dec,
+                ComputeSideOfPier(now),
+                now,
+                Options.Tracking ? TrackingState.Tracking : TrackingState.Stopped,
+                slewing));
         }
     }
 
+    /// <summary>
+    /// Slews over <see cref="SimulatedMountOptions.SlewDuration"/>. A slew
+    /// started while another is running replaces it from wherever the mount
+    /// has got to, as a hand controller's does, and the replaced call then
+    /// waits for the mount to stop -- what polling <c>Slewing</c> on a real
+    /// driver would do. Cancelling stops the mount where it is, but only while
+    /// the slew is still this call's own: one that has been replaced is someone
+    /// else's motion.
+    /// </summary>
     public async Task SlewToCoordinatesAsync(double raDegrees, double decDegrees, CancellationToken cancellationToken = default)
     {
         RequireConnected();
@@ -197,21 +276,79 @@ public sealed class SimulatedMount : IMount
             throw new NotSupportedException("This simulated mount is configured without slew support (D9); use manual mode.");
         }
 
-        if (Options.SlewDuration > TimeSpan.Zero)
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (Options.SlewDuration <= TimeSpan.Zero)
         {
-            await Task.Delay(Options.SlewDuration, cancellationToken).ConfigureAwait(false);
+            lock (_gate)
+            {
+                _slew = null;
+                _commandedRaDegrees = raDegrees;
+                _commandedDecDegrees = decDegrees;
+                _mechanicalEpochUtc = DateTime.UtcNow;
+                _hasSlewed = true;
+            }
+
+            return;
+        }
+
+        int generation;
+        lock (_gate)
+        {
+            DateTime now = DateTime.UtcNow;
+            DateTime end = now + Options.SlewDuration;
+            (double startRotation, double startDeclination) = MechanicsAt(now);
+
+            // The target is resolved exactly as a settled mount resolves its
+            // commanded coordinates (D16), at the instant the slew arrives, so
+            // the interpolation ends precisely where the settled model takes
+            // over and nothing jumps at the boundary.
+            (double endRotation, double endDeclination) = Decompose(raDegrees, decDegrees, end);
+
+            generation = ++_slewGeneration;
+            _slew = new Slew(
+                generation, now, end,
+                startRotation, startDeclination,
+                endRotation, endDeclination,
+                raDegrees, decDegrees);
+            _hasSlewed = true;
+        }
+
+        try
+        {
+            while (true)
+            {
+                TimeSpan remaining;
+                lock (_gate)
+                {
+                    DateTime now = DateTime.UtcNow;
+                    SettleIfArrived(now);
+                    if (_slew is null)
+                    {
+                        break;
+                    }
+
+                    remaining = _slew.EndUtc - now;
+                }
+
+                await Task.Delay(remaining, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            lock (_gate)
+            {
+                if (_slew?.Generation == generation)
+                {
+                    StopWhereItIs(DateTime.UtcNow);
+                }
+            }
+
+            throw;
         }
 
         cancellationToken.ThrowIfCancellationRequested();
         RequireConnected();
-
-        lock (_gate)
-        {
-            _commandedRaDegrees = raDegrees;
-            _commandedDecDegrees = decDegrees;
-            _mechanicalEpochUtc = DateTime.UtcNow;
-            _hasSlewed = true;
-        }
     }
 
     public Task<PierSide> GetSideOfPierAsync(CancellationToken cancellationToken = default)
@@ -233,41 +370,25 @@ public sealed class SimulatedMount : IMount
     /// horizon frame. This is the physical truth the camera sees and the
     /// software never learns directly.
     /// </summary>
+    /// <remarks>
+    /// A time during a slew gives the interpolated position, which is how a
+    /// camera exposing mid-slew comes to render a field in between.
+    /// </remarks>
     public HorizontalCoordinates PhysicalPointingAt(DateTime utc)
     {
-        double commandedRa, commandedDec;
         MountMisalignment misalignment;
-        DateTime mechanicalEpoch;
-        bool hasSlewed;
+        double rotationDegrees, declinationDegrees;
 
         lock (_gate)
         {
-            commandedRa = _commandedRaDegrees;
-            commandedDec = _commandedDecDegrees;
+            if (!_hasSlewed)
+            {
+                throw new InvalidOperationException("The simulated mount has not been slewed anywhere yet.");
+            }
+
             misalignment = _misalignment;
-            mechanicalEpoch = _mechanicalEpochUtc;
-            hasSlewed = _hasSlewed;
+            (rotationDegrees, declinationDegrees) = MechanicsAt(utc);
         }
-
-        if (!hasSlewed)
-        {
-            throw new InvalidOperationException("The simulated mount has not been slewed anywhere yet.");
-        }
-
-        // With the drive stopped the mechanical angles stay where the slew left
-        // them, so they are evaluated at the slew's epoch; while tracking they
-        // are evaluated now, which advances them at the sidereal rate.
-        DateTime mechanicalTime = Options.Tracking ? utc : mechanicalEpoch;
-
-        // What an ideally aligned mount would have to do to obey the command.
-        // Refraction is deliberately excluded: a mount's pointing model works in
-        // geometric coordinates, and pretending otherwise would hand the
-        // simulator knowledge real hardware does not have.
-        HorizontalCoordinates ideal = TopocentricConverter.ToAltAz(
-            commandedRa, commandedDec, mechanicalTime, _observerSite, AtmosphericConditions.Vacuum);
-
-        var (rotationDegrees, declinationDegrees) = MountMechanics.Decompose(
-            Options.Site.LatitudeDegrees, ideal);
 
         // The same mechanical angles, driven about the axis the mount actually
         // has. This is where the injected misalignment enters, and it is the
@@ -279,6 +400,101 @@ public sealed class SimulatedMount : IMount
             declinationDegrees,
             Options.ConeErrorArcminutes,
             Options.ConePhaseDegrees);
+    }
+
+    /// <summary>
+    /// The mount's mechanical angles at an instant: interpolated while a slew
+    /// is under way, otherwise derived from the commanded coordinates as a
+    /// settled mount derives them. Caller holds the gate.
+    /// </summary>
+    private (double RotationDegrees, double DeclinationDegrees) MechanicsAt(DateTime utc)
+    {
+        if (_slew is { } slew)
+        {
+            if (utc >= slew.EndUtc)
+            {
+                return Decompose(slew.TargetRaDegrees, slew.TargetDecDegrees, Options.Tracking ? utc : slew.EndUtc);
+            }
+
+            double fraction = Math.Clamp((utc - slew.StartUtc) / (slew.EndUtc - slew.StartUtc), 0.0, 1.0);
+
+            // The short way round, so a slew across rotation ±180 does not
+            // swing the long way through the other side of the pier.
+            double rotationChange = slew.EndRotationDegrees - slew.StartRotationDegrees;
+            rotationChange -= 360.0 * Math.Round(rotationChange / 360.0);
+
+            return (
+                slew.StartRotationDegrees + fraction * rotationChange,
+                slew.StartDeclinationDegrees + fraction * (slew.EndDeclinationDegrees - slew.StartDeclinationDegrees));
+        }
+
+        // With the drive stopped the mechanical angles stay where the slew left
+        // them, so they are evaluated at the slew's epoch; while tracking they
+        // are evaluated now, which advances them at the sidereal rate.
+        return Decompose(_commandedRaDegrees, _commandedDecDegrees, Options.Tracking ? utc : _mechanicalEpochUtc);
+    }
+
+    /// <summary>
+    /// What an ideally aligned mount would have to do to obey a command.
+    /// Refraction is deliberately excluded: a mount's pointing model works in
+    /// geometric coordinates, and pretending otherwise would hand the
+    /// simulator knowledge real hardware does not have.
+    /// </summary>
+    private (double RotationDegrees, double DeclinationDegrees) Decompose(double raDegrees, double decDegrees, DateTime utc)
+    {
+        HorizontalCoordinates ideal = TopocentricConverter.ToAltAz(
+            raDegrees, decDegrees, utc, _observerSite, AtmosphericConditions.Vacuum);
+
+        return MountMechanics.Decompose(Options.Site.LatitudeDegrees, ideal);
+    }
+
+    /// <summary>
+    /// The coordinates a mount at these mechanical angles believes it points
+    /// at: the exact inverse of <see cref="Decompose"/>, so that a mount which
+    /// stops somewhere of its own choosing agrees with itself afterwards.
+    /// </summary>
+    private (double RaDegrees, double DecDegrees) BeliefFromMechanics(double rotationDegrees, double declinationDegrees, DateTime utc)
+    {
+        HorizontalCoordinates ideal = MountMechanics.Compose(
+            Options.Site.LatitudeDegrees, MountMisalignment.Aligned, rotationDegrees, declinationDegrees);
+
+        return TopocentricConverter.FromAltAz(ideal, utc, _observerSite, AtmosphericConditions.Vacuum);
+    }
+
+    /// <summary>
+    /// Folds a slew that has arrived into the settled state, with the arrival
+    /// as the mechanical epoch -- not whenever the waiting call happened to
+    /// wake, which would leave an untracked mount's angles off by the delay.
+    /// Caller holds the gate.
+    /// </summary>
+    private void SettleIfArrived(DateTime utc)
+    {
+        if (_slew is { } slew && utc >= slew.EndUtc)
+        {
+            _commandedRaDegrees = slew.TargetRaDegrees;
+            _commandedDecDegrees = slew.TargetDecDegrees;
+            _mechanicalEpochUtc = slew.EndUtc;
+            _slew = null;
+        }
+    }
+
+    /// <summary>
+    /// Ends the slew wherever it has got to, as an aborted slew does: the mount
+    /// then believes it is where its encoders say, and tracks from there.
+    /// Caller holds the gate.
+    /// </summary>
+    private void StopWhereItIs(DateTime utc)
+    {
+        SettleIfArrived(utc);
+        if (_slew is null)
+        {
+            return;
+        }
+
+        (double rotation, double declination) = MechanicsAt(utc);
+        (_commandedRaDegrees, _commandedDecDegrees) = BeliefFromMechanics(rotation, declination, utc);
+        _mechanicalEpochUtc = utc;
+        _slew = null;
     }
 
     /// <summary>
@@ -296,10 +512,15 @@ public sealed class SimulatedMount : IMount
                 return PierSide.Unknown;
             }
 
-            HorizontalCoordinates ideal = TopocentricConverter.ToAltAz(
-                _commandedRaDegrees, _commandedDecDegrees, utc, _observerSite, AtmosphericConditions.Vacuum);
+            // Settled, the hour angle is taken at the given time even with the
+            // drive stopped, as it always was; mid-slew it is wherever the
+            // motors have got to.
+            double rotationDegrees = _slew is { } slew
+                ? utc < slew.EndUtc
+                    ? MechanicsAt(utc).RotationDegrees
+                    : Decompose(slew.TargetRaDegrees, slew.TargetDecDegrees, utc).RotationDegrees
+                : Decompose(_commandedRaDegrees, _commandedDecDegrees, utc).RotationDegrees;
 
-            var (rotationDegrees, _) = MountMechanics.Decompose(Options.Site.LatitudeDegrees, ideal);
             return rotationDegrees >= 0.0 ? PierSide.West : PierSide.East;
         }
     }
@@ -313,4 +534,21 @@ public sealed class SimulatedMount : IMount
     }
 
     public void Dispose() => IsConnected = false;
+
+    /// <summary>
+    /// A slew under way. The start angles are held rather than tracked: a slew
+    /// outruns the sidereal drive by orders of magnitude, and holding them
+    /// keeps the motion exactly linear, which is what makes a mid-slew position
+    /// checkable.
+    /// </summary>
+    private sealed record Slew(
+        int Generation,
+        DateTime StartUtc,
+        DateTime EndUtc,
+        double StartRotationDegrees,
+        double StartDeclinationDegrees,
+        double EndRotationDegrees,
+        double EndDeclinationDegrees,
+        double TargetRaDegrees,
+        double TargetDecDegrees);
 }

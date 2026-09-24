@@ -16,17 +16,6 @@ namespace FreePolarAlign.Session;
 public sealed record ManualActionRequiredEvent(string Instruction, double RotationDegrees) : EngineEvent;
 
 /// <summary>
-/// A single capture failed. Distinct from a session fault because the usual
-/// cause -- a cloud, a satellite, a momentarily poor solve -- is worth retrying
-/// rather than abandoning the sequence over.
-/// </summary>
-/// <param name="WillRetry">
-/// Whether the engine is still prepared to try this capture again. False means
-/// a session fault follows immediately, so a caller need not guess.
-/// </param>
-public sealed record CaptureFailedEvent(int CaptureIndex, string Reason, bool WillRetry) : EngineEvent;
-
-/// <summary>
 /// A command arrived that the engine will not act on in its current state --
 /// starting a session with no camera connected, confirming a slew when nothing
 /// has been proposed, disconnecting mid-sequence.
@@ -38,11 +27,7 @@ public sealed record CaptureFailedEvent(int CaptureIndex, string Reason, bool Wi
 /// </summary>
 public sealed record CommandRejectedEvent(string Reason) : EngineEvent;
 
-/// <param name="ManualMode">
-/// D10: prompt the operator to turn the mount by hand instead of slewing. Costs
-/// almost nothing given the geometry, and covers mounts with no driver or a
-/// misbehaving one.
-/// </param>
+/// <param name="ExposureDuration">The exposure the capture loop starts at; <see cref="SetExposureCommand"/> changes it.</param>
 /// <param name="ExpectedSolveNoiseArcseconds">
 /// Per-observation plate-solve accuracy, which sets the scale of the reported
 /// covariance and the yardstick residuals are judged against. Phase 2 measured
@@ -50,18 +35,33 @@ public sealed record CommandRejectedEvent(string Reason) : EngineEvent;
 /// more pessimistic, since a real sky adds differential refraction, optical
 /// distortion and seeing-driven centroid wander.
 /// </param>
+/// <param name="SettleDelay">
+/// How long after a slew ends before a sample is solved (D26). Null is the two
+/// seconds decided there; tests shorten it rather than fake the clock.
+/// </param>
+/// <param name="SolveInterval">
+/// How long after a solve's result before the next unconnected solve, and before
+/// retrying a failed post-slew one (D26). Null is five seconds.
+/// </param>
+/// <param name="FailedSolvesDirectory">Where frames whose solve failed are kept (D26). Null is the per-user default.</param>
 public sealed record AlignmentSessionOptions(
     int CaptureCount = 6,
     double SweepDegrees = 70.0,
     TimeSpan ExposureDuration = default,
-    bool ManualMode = false,
     double ExpectedSolveNoiseArcseconds = 3.0,
     AtmosphericConditions? Atmosphere = null,
     EquipmentProfile? EquipmentProfile = null,
     string? ApplicationName = null,
-    string? ApplicationVersion = null)
+    string? ApplicationVersion = null,
+    TimeSpan? SettleDelay = null,
+    TimeSpan? SolveInterval = null,
+    string? FailedSolvesDirectory = null)
 {
     public TimeSpan EffectiveExposure => ExposureDuration == default ? TimeSpan.FromSeconds(2) : ExposureDuration;
+
+    public TimeSpan EffectiveSettleDelay => SettleDelay ?? TimeSpan.FromSeconds(2);
+
+    public TimeSpan EffectiveSolveInterval => SolveInterval ?? TimeSpan.FromSeconds(5);
 
     /// <summary>
     /// Conditions to use, defaulting to a standard atmosphere rather than a
@@ -74,9 +74,9 @@ public sealed record AlignmentSessionOptions(
 }
 
 /// <summary>
-/// The alignment sequence: connect, confirm where you are, capture, solve, fit,
-/// and report -- with a way out at every step, and with the mount standing still
-/// until told otherwise.
+/// The alignment sequence: connect, confirm where you are, watch the live frame,
+/// sample, fit, and report -- with a way out at every step, and with the mount
+/// standing still until told otherwise.
 ///
 /// The engine is driven by commands and answers only with events (D6), so the
 /// same object serves a local UI now and a remote one later without change. It
@@ -84,10 +84,16 @@ public sealed record AlignmentSessionOptions(
 /// whatever they need from the event stream, which is what keeps the boundary
 /// message-shaped rather than merely message-flavoured.
 ///
+/// Three things run at once -- the capture loop, at most one solve, and at
+/// most one slew -- but none of them touches the session's state directly.
+/// Each hands its result back through the same gate commands use, so every
+/// state change and every published event happens one at a time, in an order a
+/// test can reason about. Long work (an exposure, a solve, a slew) always runs
+/// outside the gate; only the dialog deliberately holds it (D23).
+///
 /// Nothing here ever commands motion on its own initiative (D18). Every slew is
 /// the direct consequence of a <see cref="CaptureNextPointCommand"/> or
-/// <see cref="ConfirmSlewCommand"/> that arrived from outside, and after each
-/// capture the engine proposes and then waits.
+/// <see cref="ConfirmSlewCommand"/> that arrived from outside.
 /// </summary>
 public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 {
@@ -98,20 +104,20 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     private readonly SemaphoreSlim _commandGate = new(1, 1);
 
     /// <summary>
-    /// How many failed solves in a row before the session gives up. Retrying is
-    /// right for transient trouble; past a handful the cause is structural --
-    /// the wrong index pack, a badly wrong focal length, thick cloud -- and
-    /// silently retrying forever would leave the user watching nothing happen.
+    /// Held by the capture loop for the length of each exposure, and by any
+    /// command that talks to the camera directly. That is what makes a gain or
+    /// readout change land *between* frames rather than halfway through one
+    /// (D22, D25), and what lets the driver's window wait for the frame in
+    /// progress instead of opening underneath it (D23).
+    ///
+    /// Lock order is always the command gate, then this. The capture loop takes
+    /// this alone and releases it before it asks for the gate, so the two can
+    /// never be held against each other.
     /// </summary>
-    private const int MaximumConsecutiveSolveFailures = 3;
+    private readonly SemaphoreSlim _cameraAccess = new(1, 1);
 
-    /// <summary>
-    /// How far the mount's own site may differ from the confirmed one before it
-    /// is worth mentioning. A latitude error appears one-for-one in the reported
-    /// altitude misalignment (D19), so a hundredth of a degree is already six
-    /// tenths of an arcminute of pure bias -- large against the arcminute the UI
-    /// reports to.
-    /// </summary>
+    private readonly FrameStore _frameStore;
+
     private const double SiteLatitudeDisagreementDegrees = 0.01;
 
     private const double SiteLongitudeDisagreementDegrees = 0.05;
@@ -130,35 +136,103 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     /// </summary>
     private const double SameTargetDeclinationToleranceArcminutes = 5.0;
 
+    /// <summary>
+    /// Declination movement seen in the mount's own report that restarts the
+    /// sequence (D18 as revised). Above the reporting precision of a mount
+    /// standing still; anything smaller that is real is left to D11's residual
+    /// check, which sees far less than this.
+    /// </summary>
+    private const double DeclinationRestartArcminutes = 1.0;
+
+    /// <summary>
+    /// Two positions closer than this are the same position: for two solves in a
+    /// row on an unconnected mount (D26), and for two polls of a connected one.
+    /// Far above solve noise and a mount's reporting jitter, far below any
+    /// deliberate move -- the spacing between samples is degrees (D27).
+    /// </summary>
+    private const double StillToleranceArcminutes = 1.0;
+
+    /// <summary>
+    /// The fraction of the planned spacing a move has to cover to count (D27).
+    /// Not the whole of it: the engine's own next proposal is exactly one
+    /// spacing on, and a mount's report of having arrived there can read a hair
+    /// short -- as can the rotation of an unconnected solve, measured about the
+    /// nominal pole rather than the real axis. Refusing those would make the
+    /// planned sweep unreachable by following the plan.
+    /// </summary>
+    private const double SpacingAllowance = 0.9;
+
     private readonly List<HorizontalCoordinates> _observations = new();
+    private readonly List<Sample> _samples = new();
 
     private ICamera? _camera;
     private IMount? _mount;
     private bool _ownsCamera;
     private bool _ownsMount;
+    private bool _disposed;
+
+    private CancellationTokenSource? _loopCts;
+    private Task? _loopTask;
+
+    /// <summary>Read by the capture loop at every frame boundary, so it is volatile rather than gated.</summary>
+    private long _exposureTicks;
+
+    private MountPosition? _latestMountPosition;
+    private bool _mountMoving;
+    private bool _engineSlewInFlight;
 
     /// <summary>
-    /// Capture count and sweep for the sequence now running, taken from the
-    /// start command and falling back to the constructor options. Held as
-    /// session state rather than read from either source at each use, so that a
-    /// re-anchor mid-sequence re-plans with the same parameters the sequence
-    /// began with.
+    /// The mount is standing where a slew the user confirmed put it. That
+    /// position is sampled whatever the spacing (D27): the user saw the proposal
+    /// and chose, often because of an obstruction the engine cannot see (D18).
+    /// Cleared by any motion the engine did not command, and by the sample.
     /// </summary>
+    private bool _atConfirmedPosition;
+
     private int _captureCount;
-
     private double _sweepDegrees;
-
-    private TimeSpan _exposure;
+    private double _spacingDegrees;
+    private SequenceMode _mode;
 
     private GeodeticLocation? _site;
     private TargetPlan? _plan;
     private PendingProposal? _proposal;
     private PierSide _initialPierSide = PierSide.Unknown;
     private double _initialRotationSign;
-    private int _completedCaptures;
-    private int _consecutiveSolveFailures;
+    private bool _meridianWarned;
     private bool _sessionActive;
+    private CancellationTokenSource _sessionCts = new();
     private EquipmentProfile? _profile;
+
+    /// <summary>
+    /// Bumped whenever the samples are discarded. A solve or slew that finishes
+    /// afterwards belongs to a sequence that no longer exists, and is dropped
+    /// rather than added to its successor.
+    /// </summary>
+    private int _generation;
+
+    // ---- Solve scheduling (D26) ----
+
+    /// <summary>A delay counting down towards arming a solve; replaced by any newer trigger.</summary>
+    private CancellationTokenSource? _pendingDelay;
+
+    /// <summary>
+    /// A solve that is due: the next frame to *start* at or after
+    /// <see cref="Armed.NotBeforeUtc"/> is solved, once no other solve is running.
+    /// </summary>
+    private Armed? _armed;
+
+    private bool _solveInFlight;
+    private int _consecutiveSolveFailures;
+
+    /// <summary>The previous unconnected solve, which the next must agree with before either is a sample (D26).</summary>
+    private SolvedPosition? _lastUnconnectedSolve;
+
+    private sealed record Armed(SampleTrigger Trigger, DateTime NotBeforeUtc);
+
+    private sealed record Sample(double RotationDegrees, double RaDegrees, double DecDegrees, DateTime MidpointUtc);
+
+    private sealed record SolvedPosition(double RaDegrees, double DecDegrees, HorizontalCoordinates Direction);
 
     /// <summary>
     /// What the engine has suggested and is waiting on. Held as one object so
@@ -183,6 +257,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         _solver = solver ?? throw new ArgumentNullException(nameof(solver));
         _options = options ?? new AlignmentSessionOptions();
         _profile = _options.EquipmentProfile;
+        _exposureTicks = _options.EffectiveExposure.Ticks;
+        _frameStore = new FrameStore(_options.FailedSolvesDirectory ?? FrameStore.DefaultFailedSolvesDirectory);
     }
 
     /// <summary>
@@ -191,14 +267,16 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     /// connect-then-start sequence still applies -- and the caller keeps
     /// ownership, so the session will not dispose them.
     /// </summary>
-    public AlignmentSession(ICamera camera, IMount mount, ISolver solver, AlignmentSessionOptions? options = null)
+    /// <param name="mount">Null for a session that will only ever run unconnected (D10).</param>
+    public AlignmentSession(ICamera camera, IMount? mount, ISolver solver, AlignmentSessionOptions? options = null)
     {
         _camera = camera ?? throw new ArgumentNullException(nameof(camera));
-        _mount = mount ?? throw new ArgumentNullException(nameof(mount));
+        _mount = mount;
         _solver = solver ?? throw new ArgumentNullException(nameof(solver));
         _options = options ?? new AlignmentSessionOptions();
         _profile = _options.EquipmentProfile;
-
+        _exposureTicks = _options.EffectiveExposure.Ticks;
+        _frameStore = new FrameStore(_options.FailedSolvesDirectory ?? FrameStore.DefaultFailedSolvesDirectory);
     }
 
     /// <summary>
@@ -216,6 +294,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     /// expensive one, and after it the scale is known well enough to hint.
     /// </summary>
     public EquipmentProfile? Profile => _profile;
+
+    private TimeSpan Exposure => TimeSpan.FromTicks(Interlocked.Read(ref _exposureTicks));
 
     public async ValueTask SendAsync(EngineCommand command, CancellationToken cancellationToken = default)
     {
@@ -250,17 +330,20 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 case SetCameraGainCommand gain:
                     await SetCameraGainAsync(gain, cancellationToken).ConfigureAwait(false);
                     break;
+                case SetExposureCommand exposure:
+                    SetExposure(exposure);
+                    break;
                 case StartSessionCommand start:
                     await StartAsync(start, cancellationToken).ConfigureAwait(false);
                     break;
-                case CaptureHereCommand:
-                    await CaptureHereAsync(cancellationToken).ConfigureAwait(false);
+                case RecordSampleCommand:
+                    RecordSample();
                     break;
                 case CaptureNextPointCommand:
-                    await CaptureProposedAsync(cancellationToken).ConfigureAwait(false);
+                    CaptureProposed();
                     break;
                 case ConfirmSlewCommand confirm:
-                    await ConfirmSlewAsync(confirm, cancellationToken).ConfigureAwait(false);
+                    ConfirmSlew(confirm);
                     break;
                 case CancelSessionCommand:
                     ResetSession();
@@ -277,6 +360,45 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         finally
         {
             _commandGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Runs work handed back from the capture loop, a solve or a slew, under the
+    /// same gate as a command. False when it never ran -- cancelled while waiting,
+    /// or the session has been disposed -- so the caller can clean up after
+    /// itself.
+    /// </summary>
+    private async Task<bool> RunSerialAsync(Func<Task> work, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _commandGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
+        {
+            return false;
+        }
+
+        try
+        {
+            if (_disposed)
+            {
+                return false;
+            }
+
+            await work().ConfigureAwait(false);
+            return true;
+        }
+        finally
+        {
+            try
+            {
+                _commandGate.Release();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
     }
 
@@ -328,6 +450,10 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             _camera = camera;
             _ownsCamera = _catalog is not null;
         }
+        else
+        {
+            await StopCaptureLoopAsync().ConfigureAwait(false);
+        }
 
         if (!camera.IsConnected)
         {
@@ -362,6 +488,9 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 DescribeGain(camera))));
 
         PublishEquipment();
+        _events.Publish(new ExposureChangedEvent(Exposure));
+
+        StartCaptureLoop(camera);
     }
 
     private async Task ReplaceMountAsync(ConnectDeviceCommand command, CancellationToken cancellationToken)
@@ -411,7 +540,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         }
 
         return _mount ?? throw new InvalidOperationException(
-            "This session was constructed without a device catalogue, so it can only connect the mount it was given.");
+            "This session was constructed without a device catalogue or a mount, so it has no mount to connect.");
     }
 
     private async Task DisconnectAsync(DeviceKind kind, CancellationToken cancellationToken)
@@ -437,6 +566,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
     private async Task ReleaseCameraAsync(CancellationToken cancellationToken)
     {
+        await StopCaptureLoopAsync().ConfigureAwait(false);
+
         if (_camera is null)
         {
             return;
@@ -444,8 +575,18 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         ICamera camera = _camera;
         bool owned = _ownsCamera;
-        _camera = null;
         _ownsCamera = false;
+
+        // As for the mount: a session handed its camera keeps it, so that it can
+        // be connected again after it drops out.
+        if (_catalog is not null)
+        {
+            _camera = null;
+        }
+
+        // A solve still running on one of this camera's frames keeps its own
+        // hold; everything else from it can go now.
+        _frameStore.ReleaseAll();
 
         try
         {
@@ -467,6 +608,9 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
     private async Task ReleaseMountAsync(CancellationToken cancellationToken)
     {
+        _latestMountPosition = null;
+        _mountMoving = false;
+
         if (_mount is null)
         {
             return;
@@ -474,8 +618,15 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         IMount mount = _mount;
         bool owned = _ownsMount;
-        _mount = null;
         _ownsMount = false;
+
+        // A session built around devices it was handed keeps the mount it was
+        // given, so that it can be connected again; one built from a catalogue
+        // opens a fresh one next time.
+        if (_catalog is not null)
+        {
+            _mount = null;
+        }
 
         try
         {
@@ -494,21 +645,19 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         }
     }
 
+    private bool MountConnected => _mount is { IsConnected: true };
+
     private async Task RefreshMountStatusAsync(CancellationToken cancellationToken)
     {
-        if (_mount is null || !_mount.IsConnected)
+        if (!MountConnected)
         {
             return;
         }
 
         try
         {
-            MountPosition position = await _mount.GetPositionAsync(cancellationToken).ConfigureAwait(false);
-            _events.Publish(new MountStatusEvent(
-                position.RaDegrees,
-                position.DecDegrees,
-                MapTracking(position.Tracking),
-                MapPierSide(position.PierSide)));
+            MountPosition position = await _mount!.GetPositionAsync(cancellationToken).ConfigureAwait(false);
+            await ObservePositionAsync(position, slewJustEnded: false, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -519,7 +668,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             // Status polling runs continuously, so a mount that has dropped off
             // the bus must report that once rather than fault the application
             // several times a second.
-            if (_sessionActive)
+            if (_sessionActive && _mode != SequenceMode.Unconnected)
             {
                 ResetSession();
                 _events.Publish(new SessionFaultedEvent($"Lost contact with the mount: {ex.Message}"));
@@ -572,7 +721,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     /// </summary>
     private async Task<string?> DescribeSiteDisagreementAsync(GeodeticLocation confirmed, CancellationToken cancellationToken)
     {
-        if (_mount is null || !_mount.IsConnected)
+        if (!MountConnected)
         {
             return null;
         }
@@ -580,7 +729,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         GeodeticLocation reported;
         try
         {
-            reported = await _mount.GetSiteLocationAsync(cancellationToken).ConfigureAwait(false);
+            reported = await _mount!.GetSiteLocationAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -615,19 +764,36 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         return message;
     }
 
+    // ---- Camera settings ----
+
+    /// <summary>
+    /// Changes the exposure every frame from the next one on is taken at. The
+    /// frame in progress is left to finish: drivers abort unevenly, and the next
+    /// frame is at most a couple of seconds away (D22 as revised).
+    /// </summary>
+    private void SetExposure(SetExposureCommand command)
+    {
+        if (command.Duration <= TimeSpan.Zero || command.Duration > TimeSpan.FromMinutes(1))
+        {
+            _events.Publish(new CommandRejectedEvent(
+                $"An exposure has to be longer than zero and no more than a minute; {command.Duration.TotalSeconds:G3} s is not."));
+            return;
+        }
+
+        Interlocked.Exchange(ref _exposureTicks, command.Duration.Ticks);
+        _events.Publish(new ExposureChangedEvent(command.Duration));
+    }
+
+    /// <summary>
+    /// Selects a readout mode between frames. Allowed during a sequence: the bit
+    /// depth changes how noisy a solved position is, not where it is (D22, D25
+    /// as revised).
+    /// </summary>
     private async Task SetReadoutModeAsync(SetReadoutModeCommand command, CancellationToken cancellationToken)
     {
         if (_camera is null || !_camera.IsConnected)
         {
             _events.Publish(new CommandRejectedEvent("Connect a camera before choosing a readout mode."));
-            return;
-        }
-
-        if (_sessionActive)
-        {
-            _events.Publish(new CommandRejectedEvent(
-                "Cannot change the readout mode during a sequence. The frames already captured would have been " +
-                "read out differently, and the fit weights them all alike."));
             return;
         }
 
@@ -638,6 +804,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             return;
         }
 
+        await _cameraAccess.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await _camera.SetReadoutModeAsync(command.Index, cancellationToken).ConfigureAwait(false);
@@ -651,6 +818,10 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             _events.Publish(new CommandRejectedEvent($"The camera refused that readout mode: {ex.Message}"));
             return;
         }
+        finally
+        {
+            _cameraAccess.Release();
+        }
 
         CameraReadoutMode mode = _camera.ReadoutModes[command.Index];
         _events.Publish(new ReadoutModeChangedEvent(mode.Index, mode.Name, mode.BitDepth));
@@ -661,12 +832,16 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     /// it to close.
     ///
     /// The wait happens inside the command gate, so no other command runs while
-    /// the window is open. That is deliberate: the window changes the device the
-    /// next exposure comes from, and a capture straddling it would be taken
-    /// half under the old settings and half under the new. The events either
-    /// side let the UI refuse clicks for the same reason -- an application that
-    /// looked idle while another window held the device would invite exactly
-    /// that overlap.
+    /// the window is open, and inside the camera's own lock, so the capture loop
+    /// finishes the frame in progress and then waits. That is deliberate: the
+    /// window changes the device the next exposure comes from, and a capture
+    /// straddling it would be taken half under the old settings and half under
+    /// the new (D23).
+    ///
+    /// Still refused during a sequence, though no longer for the reason the
+    /// readout mode once was: the window can change binning and region of
+    /// interest, which change the plate scale the sequence has already measured
+    /// (D23 as revised).
     ///
     /// With no camera connected, the one named in the command is opened just for
     /// the window and released afterwards. That is how an ASCOM driver's window
@@ -679,8 +854,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         if (_sessionActive)
         {
             _events.Publish(new CommandRejectedEvent(
-                "Cannot change driver settings during a sequence. The frames already captured would have been " +
-                "taken under different settings, and the fit weights them all alike."));
+                "Cannot change driver settings during a sequence. The window can change binning or the region of " +
+                "interest, and with them the plate scale the sequence has already measured."));
             return;
         }
 
@@ -726,6 +901,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             return;
         }
 
+        bool holdsCamera = false;
         try
         {
             if (!target.HasSetupDialog)
@@ -733,6 +909,12 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 _events.Publish(new CommandRejectedEvent(
                     $"'{target.Name}' has no driver settings window to open."));
                 return;
+            }
+
+            if (!transient)
+            {
+                await _cameraAccess.WaitAsync(cancellationToken).ConfigureAwait(false);
+                holdsCamera = true;
             }
 
             _events.Publish(new CameraSetupDialogChangedEvent(IsOpen: true));
@@ -759,6 +941,11 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         }
         finally
         {
+            if (holdsCamera)
+            {
+                _cameraAccess.Release();
+            }
+
             if (transient)
             {
                 target.Dispose();
@@ -774,22 +961,15 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     }
 
     /// <summary>
-    /// Sets the connected camera's gain from a percentage of its own range, and
-    /// reports what the camera actually took.
+    /// Sets the connected camera's gain from a percentage of its own range,
+    /// between frames, and reports what the camera actually took. Allowed during
+    /// a sequence (D25 as revised).
     /// </summary>
     private async Task SetCameraGainAsync(SetCameraGainCommand command, CancellationToken cancellationToken)
     {
         if (_camera is null || !_camera.IsConnected)
         {
             _events.Publish(new CommandRejectedEvent("Connect a camera before setting its gain."));
-            return;
-        }
-
-        if (_sessionActive)
-        {
-            _events.Publish(new CommandRejectedEvent(
-                "Cannot change the gain during a sequence. It changes the noise in every star position, and the " +
-                "fit weights every frame alike."));
             return;
         }
 
@@ -809,6 +989,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         int requested = GainScale.ToRaw(command.Percent, range);
 
+        await _cameraAccess.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await _camera.SetGainAsync(requested, cancellationToken).ConfigureAwait(false);
@@ -821,6 +1002,10 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         {
             _events.Publish(new CommandRejectedEvent($"The camera refused that gain: {ex.Message}"));
             return;
+        }
+        finally
+        {
+            _cameraAccess.Release();
         }
 
         if (DescribeGain(_camera, command.Percent) is { } applied)
@@ -903,6 +1088,188 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         _profile?.ExpectedScaleArcsecondsPerPixel,
         _profile?.ExpectedFieldRadiusDegrees));
 
+    // ---- The capture loop (D26) ----
+
+    private void StartCaptureLoop(ICamera camera)
+    {
+        var cts = new CancellationTokenSource();
+        _loopCts = cts;
+        _loopTask = Task.Run(() => CaptureLoopAsync(camera, cts.Token));
+    }
+
+    /// <summary>
+    /// Stops the loop and waits for it. Safe to call under the gate: the loop
+    /// only ever waits for the gate with its own token, so cancelling it lets
+    /// it go rather than leaving the two waiting on each other.
+    /// </summary>
+    private async Task StopCaptureLoopAsync()
+    {
+        CancellationTokenSource? cts = _loopCts;
+        Task? task = _loopTask;
+        _loopCts = null;
+        _loopTask = null;
+
+        if (cts is null)
+        {
+            return;
+        }
+
+        cts.Cancel();
+        if (task is not null)
+        {
+            try
+            {
+                await task.ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // The loop reports its own failures; nothing is left to do here.
+            }
+        }
+
+        cts.Dispose();
+    }
+
+    /// <summary>
+    /// Exposes, publishes, repeats -- for as long as the camera is connected,
+    /// sequence or not. Settings are read at every frame boundary, which is the
+    /// whole reason exposure and gain can now change at any time.
+    /// </summary>
+    private async Task CaptureLoopAsync(ICamera camera, CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            CapturedImage frame;
+            TimeSpan exposure;
+            DateTime startedUtc;
+            int? gain;
+
+            try
+            {
+                await _cameraAccess.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    exposure = Exposure;
+                    startedUtc = DateTime.UtcNow;
+                    frame = await camera.ExposeAsync(exposure, BuildCaptureContext(), cancellationToken)
+                        .ConfigureAwait(false);
+
+                    // Read before the camera is let go, so a gain change waiting
+                    // on this lock cannot be credited to the frame before it.
+                    gain = camera.GainRange is not null ? camera.Gain : null;
+                }
+                finally
+                {
+                    _cameraAccess.Release();
+                }
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException &&
+                                       cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                await RunSerialAsync(() => OnCameraFailedAsync(camera, ex), CancellationToken.None).ConfigureAwait(false);
+                return;
+            }
+
+            try
+            {
+                // A camera that hands a frame back faster than the exposure it
+                // was asked for -- a stub, or a driver returning a cached frame --
+                // would otherwise spin the loop flat out.
+                TimeSpan elapsed = DateTime.UtcNow - startedUtc;
+                if (elapsed < exposure)
+                {
+                    await Task.Delay(exposure - elapsed, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                TryDelete(frame.FitsPath);
+                return;
+            }
+
+            if (!await RunSerialAsync(() => OnFrameAsync(camera, frame, startedUtc, gain), cancellationToken).ConfigureAwait(false))
+            {
+                TryDelete(frame.FitsPath);
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// What the session knows and the camera does not, for the frame's header
+    /// (D20). Read from the capture loop's thread, so it takes one snapshot of
+    /// each field rather than reading them twice.
+    /// </summary>
+    private CaptureContext BuildCaptureContext()
+    {
+        MountPosition? position = _latestMountPosition;
+        EquipmentProfile? profile = _profile;
+        return new CaptureContext(
+            _options.ApplicationName,
+            _options.ApplicationVersion,
+            position?.RaDegrees,
+            position?.DecDegrees,
+            profile?.FocalLengthMillimetres);
+    }
+
+    private Task OnFrameAsync(ICamera camera, CapturedImage frame, DateTime startedUtc, int? gain)
+    {
+        if (!ReferenceEquals(camera, _camera))
+        {
+            TryDelete(frame.FitsPath);
+            return Task.CompletedTask;
+        }
+
+        _events.Publish(new FrameCapturedEvent(frame.FitsPath, frame.ExposureMidpointUtc, frame.Duration, gain));
+        _frameStore.Displayed(frame.FitsPath);
+
+        if (_sessionActive && !_solveInFlight && _armed is { } armed && startedUtc >= armed.NotBeforeUtc)
+        {
+            StartSolve(armed.Trigger, frame);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task OnCameraFailedAsync(ICamera camera, Exception error)
+    {
+        if (!ReferenceEquals(camera, _camera))
+        {
+            return;
+        }
+
+        // This runs on the loop itself, so the loop must not be waited for.
+        _loopCts?.Dispose();
+        _loopCts = null;
+        _loopTask = null;
+
+        if (_sessionActive)
+        {
+            ResetSession();
+            _events.Publish(new SessionFaultedEvent($"The camera stopped responding: {error.Message}"));
+        }
+
+        _events.Publish(new DeviceDisconnectedEvent(DeviceKind.Camera, $"The camera stopped responding: {error.Message}"));
+        await ReleaseCameraAsync(CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception)
+        {
+            // A frame that cannot be deleted is litter in a temp directory, not
+            // a reason to stop capturing.
+        }
+    }
+
     // ---- Starting a sequence ----
 
     private async Task StartAsync(StartSessionCommand start, CancellationToken cancellationToken)
@@ -915,24 +1282,11 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             return;
         }
 
-        if (_mount is null || !_mount.IsConnected)
-        {
-            _events.Publish(new CommandRejectedEvent("Connect a mount before starting a sequence."));
-            return;
-        }
-
         if (_site is null)
         {
             _events.Publish(new CommandRejectedEvent(
                 "Confirm the observing site before starting a sequence. The latitude in particular goes straight " +
                 "into the answer (D19), so it is not something to be inherited silently."));
-            return;
-        }
-
-        if (!_options.ManualMode && !_mount.CanSlewAsync)
-        {
-            _events.Publish(new CommandRejectedEvent(
-                "This mount cannot perform absolute slews (D9), so automatic mode is unavailable. Use manual mode."));
             return;
         }
 
@@ -945,9 +1299,6 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         _sweepDegrees = start.Configuration.RequestedSweepDegrees > 0.0
             ? start.Configuration.RequestedSweepDegrees
             : _options.SweepDegrees;
-        _exposure = start.Configuration.ExposureDuration > TimeSpan.Zero
-            ? start.Configuration.ExposureDuration
-            : _options.EffectiveExposure;
 
         if (_captureCount < SmallCircleFitter.MinimumObservations)
         {
@@ -957,19 +1308,36 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             return;
         }
 
+        // D10 as revised: the mode follows what is connected.
+        _mode = !MountConnected
+            ? SequenceMode.Unconnected
+            : _mount!.CanSlewAsync ? SequenceMode.Driven : SequenceMode.Observed;
+
         try
         {
-            // Where the mount believes it is. Its belief, not a solved position,
-            // is the right anchor: the mechanical declination the sequence must
-            // hold constant is defined in the frame the mount drives in.
-            MountPosition position = await _mount.GetPositionAsync(cancellationToken).ConfigureAwait(false);
-            double rotation = TargetSelection.MechanicalRotationOf(
-                _site, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
-            double declination = MechanicalDeclinationOf(_site, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+            TargetPlan plan;
+            MountPosition? position = null;
 
-            TargetPlan plan = TargetSelection.PlanFrom(
-                _site, rotation, declination, DateTime.UtcNow,
-                _captureCount, _sweepDegrees, _options.EffectiveAtmosphere);
+            if (_mode == SequenceMode.Unconnected)
+            {
+                plan = TargetSelection.Plan(
+                    _site, DateTime.UtcNow, _captureCount, _sweepDegrees, _options.EffectiveAtmosphere);
+            }
+            else
+            {
+                // Where the mount believes it is. Its belief, not a solved
+                // position, is the right anchor: the mechanical declination the
+                // sequence must hold constant is defined in the frame the mount
+                // drives in.
+                position = await _mount!.GetPositionAsync(cancellationToken).ConfigureAwait(false);
+                double rotation = TargetSelection.MechanicalRotationOf(
+                    _site, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+                double declination = MechanicalDeclinationOf(_site, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+
+                plan = TargetSelection.PlanFrom(
+                    _site, rotation, declination, DateTime.UtcNow,
+                    _captureCount, _sweepDegrees, _options.EffectiveAtmosphere);
+            }
 
             if (!plan.Success)
             {
@@ -978,13 +1346,33 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             }
 
             _plan = plan;
+            _spacingDegrees = SpacingOf(plan);
             _sessionActive = true;
 
-            _events.Publish(new SessionStartedEvent(start.Configuration));
+            _events.Publish(new SessionStartedEvent(start.Configuration, _mode));
             _events.Publish(new TargetSelectedEvent(
                 plan.MechanicalDeclinationDegrees, plan.IsWest, plan.Captures.Count, plan.SweepDegrees));
 
             ProposeNext();
+
+            if (_mode == SequenceMode.Unconnected)
+            {
+                // Solving starts straight away. The user is probably still
+                // setting the telescope up, which is exactly what the
+                // two-solves-agree rule is for (D26).
+                ScheduleSolve(SampleTrigger.Periodic, TimeSpan.Zero);
+            }
+            else
+            {
+                await ObservePositionAsync(position!, slewJustEnded: false, cancellationToken).ConfigureAwait(false);
+                if (_sessionActive && !_mountMoving && _plan.AnchoredAtCurrentPointing)
+                {
+                    // Nothing needs to move and nothing is moving: the first
+                    // sample is taken where the telescope stands, with no click
+                    // (D18 as revised).
+                    ScheduleSolve(SampleTrigger.SlewEnded, _options.EffectiveSettleDelay);
+                }
+            }
         }
         catch (OperationCanceledException)
         {
@@ -999,9 +1387,24 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     }
 
     /// <summary>
+    /// The least distance, in mechanical rotation, between two automatically
+    /// triggered samples (D27). A plan of one capture has no spacing, and then
+    /// the whole sweep is the only distance that means anything.
+    /// </summary>
+    private static double SpacingOf(TargetPlan plan) =>
+        plan.SampleSpacingDegrees > 0.0 ? plan.SampleSpacingDegrees : plan.SweepDegrees;
+
+    // ---- Proposals ----
+
+    /// <summary>
     /// Works out and announces the next point, then stops. This is the whole of
-    /// D18: the engine's response to a completed capture is a suggestion, never a
-    /// movement.
+    /// D18: the engine's response to a sample is a suggestion, never a movement.
+    ///
+    /// The first point is the plan's. Every later one is the westernmost sample
+    /// so far plus the spacing, rather than the plan's next entry, because a
+    /// mount moved from a hand controller or by hand is sampled wherever it
+    /// stopped, and a proposal for a position already passed is not a proposal.
+    /// Sequences sweep west (D18 as revised), so "further" is always west.
     /// </summary>
     private void ProposeNext()
     {
@@ -1010,107 +1413,226 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             return;
         }
 
-        if (_completedCaptures >= _plan.Captures.Count)
+        if (_samples.Count >= _captureCount)
         {
-            _sessionActive = false;
-            _proposal = null;
+            ResetSession();
             _events.Publish(new SessionCompletedEvent());
             return;
         }
 
-        PlannedCapture planned = _plan.Captures[_completedCaptures];
-        int pointIndex = _completedCaptures + 1;
+        double rotation;
+        double predictedAltitude;
 
-        // The first capture of a plan anchored at the current pointing needs no
-        // motion at all, and neither does any capture on a mount being turned by
-        // hand.
-        bool requiresMotion = !(_completedCaptures == 0 && _plan.AnchoredAtCurrentPointing) && !_options.ManualMode;
+        if (_samples.Count == 0 || _mode == SequenceMode.Unconnected)
+        {
+            // Unconnected, the plan's own points are the instructions all the
+            // way through. The rotation of an unconnected sample is measured
+            // about the nominal pole, so it is off by the very misalignment
+            // being measured (D27), and stepping on from it walks the last
+            // point across the meridian margin the plan was built to respect.
+            // Only the turn between points is meaningful to someone doing it
+            // by hand, and that the plan already gets right.
+            PlannedCapture planned = _plan.Captures[Math.Min(_samples.Count, _plan.Captures.Count - 1)];
+            rotation = planned.MechanicalRotationDegrees;
+            predictedAltitude = planned.PredictedAltitudeDegrees;
+        }
+        else
+        {
+            double westmost = _samples.Max(s => s.RotationDegrees);
+            rotation = westmost + _spacingDegrees;
+
+            // An eastern sweep ends at the meridian margin (D8), and its last
+            // planned point sits exactly on it -- so a step that would cross
+            // stops there instead, if that still widens the sweep enough.
+            if (_samples[0].RotationDegrees < 0.0 && rotation > -TargetSelection.MeridianMarginDegrees)
+            {
+                rotation = -TargetSelection.MeridianMarginDegrees;
+            }
+
+            predictedAltitude = PredictedAltitude(rotation);
+
+            if (rotation - westmost < _spacingDegrees * SpacingAllowance || !IsReachable(rotation, predictedAltitude))
+            {
+                string why =
+                    $"The sweep cannot go further west from here without coming within " +
+                    $"{TargetSelection.MeridianMarginDegrees:F0}° of the meridian or dropping below " +
+                    $"{TargetSelection.MinimumAltitudeDegrees:F0}° (D8).";
+
+                if (_samples.Count >= SmallCircleFitter.MinimumObservations)
+                {
+                    _events.Publish(new ManualActionRequiredEvent(
+                        $"{why} The sequence ends with the {_samples.Count} samples it has.", rotation));
+                    ResetSession();
+                    _events.Publish(new SessionCompletedEvent());
+                }
+                else
+                {
+                    _proposal = null;
+                    _events.Publish(new ManualActionRequiredEvent(
+                        $"{why} Record samples between the ones already taken, or stop and start again further east.",
+                        rotation));
+                }
+
+                return;
+            }
+        }
+
+        int pointIndex = _samples.Count + 1;
+        bool requiresMotion = _mode == SequenceMode.Driven &&
+                              !(_samples.Count == 0 && _plan.AnchoredAtCurrentPointing);
 
         (double ra, double dec) = TargetSelection.ResolveCommand(
-            _site, planned.MechanicalRotationDegrees, _plan.MechanicalDeclinationDegrees, DateTime.UtcNow);
+            _site, rotation, _plan.MechanicalDeclinationDegrees, DateTime.UtcNow);
 
-        _proposal = new PendingProposal(pointIndex, planned.MechanicalRotationDegrees, ra, dec, requiresMotion);
+        _proposal = new PendingProposal(pointIndex, rotation, ra, dec, requiresMotion);
 
+        string instruction = BuildInstruction(rotation, predictedAltitude, pointIndex, requiresMotion);
         _events.Publish(new SlewProposedEvent(
-            pointIndex,
-            _plan.Captures.Count,
-            ra,
-            dec,
-            planned.MechanicalRotationDegrees,
-            planned.PredictedAltitudeDegrees,
-            requiresMotion,
-            BuildInstruction(planned, pointIndex, _plan.Captures.Count, requiresMotion)));
+            pointIndex, _captureCount, ra, dec, rotation, predictedAltitude, requiresMotion, instruction));
 
-        if (_options.ManualMode)
+        if (_mode != SequenceMode.Driven)
         {
             // D10's own event as well, so a UI built around manual mounts can
             // present the instruction without having to interpret a proposal
             // that it knows will never involve a slew.
-            _events.Publish(new ManualActionRequiredEvent(
-                BuildInstruction(planned, pointIndex, _plan.Captures.Count, requiresMotion),
-                planned.MechanicalRotationDegrees));
+            _events.Publish(new ManualActionRequiredEvent(instruction, rotation));
         }
     }
 
-    private string BuildInstruction(PlannedCapture planned, int pointIndex, int total, bool requiresMotion)
-    {
-        string direction = planned.MechanicalRotationDegrees >= 0 ? "west" : "east";
-        string where = $"{Math.Abs(planned.MechanicalRotationDegrees):F0}° {direction} of the meridian, " +
-                       $"predicted altitude {planned.PredictedAltitudeDegrees:F0}°";
+    private double PredictedAltitude(double rotation) =>
+        MountMechanics.Compose(
+            _site!.LatitudeDegrees, MountMisalignment.Aligned, rotation, _plan!.MechanicalDeclinationDegrees)
+            .AltitudeDegrees;
 
-        if (_options.ManualMode)
+    /// <summary>On the side the sequence started on, clear of the meridian margin, and above the altitude floor (D8).</summary>
+    private bool IsReachable(double rotation, double predictedAltitude)
+    {
+        double side = _samples.Count > 0 ? Math.Sign(_samples[0].RotationDegrees) : Math.Sign(rotation);
+        return Math.Sign(rotation) == side &&
+               Math.Abs(rotation) >= TargetSelection.MeridianMarginDegrees &&
+               predictedAltitude >= TargetSelection.MinimumAltitudeDegrees;
+    }
+
+    private string BuildInstruction(double rotation, double predictedAltitude, int pointIndex, bool requiresMotion)
+    {
+        string side = rotation >= 0 ? "west" : "east";
+        string where = $"{Math.Abs(rotation):F0}° {side} of the meridian, predicted altitude {predictedAltitude:F0}°";
+        string prefix = $"Point {pointIndex} of {_captureCount}:";
+
+        switch (_mode)
         {
-            return $"Point {pointIndex} of {total}: rotate the mount in RA by hand to about {where}. " +
-                   "Do not touch declination -- the sequence depends on it staying where it is (D11). " +
-                   "Then capture.";
+            case SequenceMode.Unconnected when pointIndex == 1:
+                // Sky declination for the user to set: mechanical declination is
+                // measured towards the visible pole, which is the south pole
+                // below the equator (see TargetSelection.Plan).
+                double skyDeclination = _site!.LatitudeDegrees >= 0
+                    ? _plan!.MechanicalDeclinationDegrees
+                    : -_plan!.MechanicalDeclinationDegrees;
+                return $"{prefix} set the declination axis to about {skyDeclination:F0}° and lock it -- from " +
+                       "here on, do not touch declination, because the whole measurement depends on it staying " +
+                       $"where it is (D11). Then turn the mount in RA to about {where}, keeping the counterweight " +
+                       "down. Each sample is taken once two solves in a row agree the telescope is still.";
+
+            case SequenceMode.Unconnected:
+                return $"{prefix} turn the mount about {_spacingDegrees:F0}° west in RA, to about {where}. " +
+                       "Leave declination alone. The sample is taken once the telescope is still.";
+
+            case SequenceMode.Observed:
+                return $"{prefix} turn the mount in RA with its hand controller to about {where}, without " +
+                       "touching declination. The sample is taken when it stops.";
         }
 
         if (!requiresMotion)
         {
-            return $"Point {pointIndex} of {total}: the telescope is already somewhere usable " +
-                   $"({where}). Capture here first -- nothing needs to move, and this frame is what " +
-                   "measures the focal length for every solve after it.";
+            return $"{prefix} the telescope is already somewhere usable ({where}). It is sampled where it " +
+                   "stands once it is still -- nothing needs to move, and this frame is what measures the focal " +
+                   "length for every solve after it.";
         }
 
-        return $"Point {pointIndex} of {total}: slew to {where}. Check the way is clear, then confirm. " +
-               "Edit the coordinates if that part of the sky is blocked.";
+        return $"{prefix} slew to {where}. Check the way is clear, then confirm. Edit the coordinates if that " +
+               "part of the sky is blocked. Moving it from the hand controller instead works too.";
     }
 
-    // ---- Capturing ----
+    // ---- Commands that move the mount, or ask for a sample ----
 
-    private async Task CaptureHereAsync(CancellationToken cancellationToken)
+    private bool EnsureSequence()
     {
-        if (!EnsureCapturable(out PendingProposal? proposal))
+        if (!_sessionActive || _plan is null || _site is null)
+        {
+            _events.Publish(new CommandRejectedEvent("No sequence is running. Start one first."));
+            return false;
+        }
+
+        if (_camera is null || !_camera.IsConnected ||
+            (_mode != SequenceMode.Unconnected && !MountConnected))
+        {
+            ResetSession();
+            _events.Publish(new SessionFaultedEvent("A device disconnected, so the sequence has been stopped."));
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool EnsureSlewable(out PendingProposal? proposal)
+    {
+        proposal = _proposal;
+
+        if (!EnsureSequence())
+        {
+            return false;
+        }
+
+        if (_mode != SequenceMode.Driven)
+        {
+            _events.Publish(new CommandRejectedEvent(_mode == SequenceMode.Unconnected
+                ? "No mount is connected, so the engine cannot slew. Turn the telescope by hand as instructed."
+                : "This mount cannot slew on command (D9). Turn it with its hand controller as instructed."));
+            return false;
+        }
+
+        if (_engineSlewInFlight)
+        {
+            _events.Publish(new CommandRejectedEvent("The mount is already slewing. Wait for it to arrive."));
+            return false;
+        }
+
+        if (proposal is null)
+        {
+            _events.Publish(new CommandRejectedEvent("There is nothing proposed to slew to."));
+            return false;
+        }
+
+        return true;
+    }
+
+    private void RecordSample()
+    {
+        if (!EnsureSequence())
         {
             return;
         }
 
-        if (proposal!.RequiresMotion && !_options.ManualMode)
-        {
-            // Capturing without moving when the plan calls for a slew is not
-            // refused -- the user can see the sky and may have moved the mount
-            // themselves -- but the point will land off the planned arc, so the
-            // sequence is re-anchored on it rather than pretending it was the
-            // planned position.
-            await ReanchorHereAsync(
-                "Captured without slewing, so the sequence was re-anchored on the current position.",
-                cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        await CaptureAndSolveAsync(commandedMotion: false, 0.0, 0.0, cancellationToken).ConfigureAwait(false);
+        // The forced sample replaces whatever was counting down, and waits for a
+        // frame that starts from now: the one on screen may have been exposed
+        // while the telescope was still moving (D26).
+        CancelPendingSolve();
+        _armed = new Armed(SampleTrigger.Forced, DateTime.UtcNow);
+        _events.Publish(new SolveScheduledEvent(SampleTrigger.Forced, TimeSpan.Zero));
     }
 
-    private async Task CaptureProposedAsync(CancellationToken cancellationToken)
+    private void CaptureProposed()
     {
-        if (!EnsureCapturable(out PendingProposal? proposal))
+        if (!EnsureSlewable(out PendingProposal? proposal))
         {
             return;
         }
 
         if (!proposal!.RequiresMotion)
         {
-            await CaptureAndSolveAsync(commandedMotion: false, 0.0, 0.0, cancellationToken).ConfigureAwait(false);
+            _events.Publish(new CommandRejectedEvent(
+                "Nothing needs to move: the sample is taken where the telescope stands once it is still. " +
+                "Record a sample to take it now."));
             return;
         }
 
@@ -1123,12 +1645,12 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             _site!, proposal.MechanicalRotationDegrees, _plan!.MechanicalDeclinationDegrees, DateTime.UtcNow);
 
         _events.Publish(new SlewConfirmedEvent(ra, dec, WasOverridden: false));
-        await CaptureAndSolveAsync(commandedMotion: true, ra, dec, cancellationToken).ConfigureAwait(false);
+        BeginSlew(ra, dec);
     }
 
-    private async Task ConfirmSlewAsync(ConfirmSlewCommand command, CancellationToken cancellationToken)
+    private void ConfirmSlew(ConfirmSlewCommand command)
     {
-        if (!EnsureCapturable(out PendingProposal? proposal))
+        if (!EnsureSlewable(out PendingProposal? proposal))
         {
             return;
         }
@@ -1147,7 +1669,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         // the slew rather than the moment of the suggestion.
         if (IsEffectivelyUnchanged(command, proposal!))
         {
-            await CaptureProposedAsync(cancellationToken).ConfigureAwait(false);
+            CaptureProposed();
             return;
         }
 
@@ -1161,13 +1683,20 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         if (declinationDifferenceArcminutes > SameTargetDeclinationToleranceArcminutes)
         {
-            await ReanchorAtAsync(
-                command.RaDegrees, command.DecDegrees, rotation, declination,
+            string reason =
                 $"Those coordinates sit {declinationDifferenceArcminutes:F0}' away in declination, which is a " +
                 "different target rather than a different hour angle on the same one. Points at different " +
                 "declinations do not lie on one circle about the polar axis, so the earlier captures have been " +
-                "discarded and the sequence restarted here.",
-                cancellationToken).ConfigureAwait(false);
+                "discarded and the sequence restarted here.";
+
+            if (!Reanchor(rotation, declination, reason, moved: true))
+            {
+                return;
+            }
+
+            _events.Publish(new SlewConfirmedEvent(
+                command.RaDegrees, command.DecDegrees, WasOverridden: true, ReanchoredReason: reason));
+            BeginSlew(command.RaDegrees, command.DecDegrees);
             return;
         }
 
@@ -1179,47 +1708,13 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             _site!, rotation, _plan.MechanicalDeclinationDegrees, DateTime.UtcNow);
 
         _proposal = proposal! with { MechanicalRotationDegrees = rotation, RaDegrees = ra, DecDegrees = dec };
-        _plan = _plan with { Captures = ReplaceCapture(_plan.Captures, _completedCaptures, rotation) };
 
         _events.Publish(new SlewConfirmedEvent(ra, dec, WasOverridden: true));
-        await CaptureAndSolveAsync(commandedMotion: true, ra, dec, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task ReanchorHereAsync(string reason, CancellationToken cancellationToken)
-    {
-        MountPosition position = await _mount!.GetPositionAsync(cancellationToken).ConfigureAwait(false);
-        double rotation = TargetSelection.MechanicalRotationOf(
-            _site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
-        double declination = MechanicalDeclinationOf(
-            _site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
-
-        if (!Reanchor(rotation, declination, reason, moved: false))
-        {
-            return;
-        }
-
-        await CaptureAndSolveAsync(commandedMotion: false, 0.0, 0.0, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task ReanchorAtAsync(
-        double raDegrees,
-        double decDegrees,
-        double rotation,
-        double declination,
-        string reason,
-        CancellationToken cancellationToken)
-    {
-        if (!Reanchor(rotation, declination, reason, moved: true))
-        {
-            return;
-        }
-
-        _events.Publish(new SlewConfirmedEvent(raDegrees, decDegrees, WasOverridden: true, ReanchoredReason: reason));
-        await CaptureAndSolveAsync(commandedMotion: true, raDegrees, decDegrees, cancellationToken).ConfigureAwait(false);
+        BeginSlew(ra, dec);
     }
 
     /// <summary>
-    /// Throws away the captures taken so far and re-plans from a new position.
+    /// Throws away the samples taken so far and re-plans from a new position.
     ///
     /// Discarding is the point. A small-circle fit assumes every observation lies
     /// on one circle about the polar axis; mixing declinations breaks that
@@ -1242,104 +1737,428 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             return false;
         }
 
-        _observations.Clear();
-        _completedCaptures = 0;
-        _consecutiveSolveFailures = 0;
-        _initialPierSide = PierSide.Unknown;
-        _initialRotationSign = 0.0;
-        _plan = plan;
+        ClearSamples();
+
+        // The new plan is anchored where the telescope is going, or already is,
+        // whatever the planner would have preferred: the user chose it (D18).
+        _plan = plan with
+        {
+            Captures = new[] { new PlannedCapture(rotation, PredictedAltitudeAt(rotation, declination)) }
+                .Concat(plan.Captures.Skip(1)).ToArray(),
+            MechanicalDeclinationDegrees = declination,
+            AnchoredAtCurrentPointing = !moved,
+        };
+        _spacingDegrees = SpacingOf(plan);
 
         _events.Publish(new AlignmentWithheldEvent(reason));
         _events.Publish(new TargetSelectedEvent(
-            plan.MechanicalDeclinationDegrees, plan.IsWest, plan.Captures.Count, plan.SweepDegrees));
+            declination, plan.IsWest, plan.Captures.Count, plan.SweepDegrees));
 
         _proposal = new PendingProposal(1, rotation, 0.0, 0.0, RequiresMotion: moved);
         return true;
     }
 
-    private async Task CaptureAndSolveAsync(
-        bool commandedMotion,
-        double commandRa,
-        double commandDec,
-        CancellationToken cancellationToken)
+    private double PredictedAltitudeAt(double rotation, double declination) =>
+        MountMechanics.Compose(_site!.LatitudeDegrees, MountMisalignment.Aligned, rotation, declination).AltitudeDegrees;
+
+    private void BeginSlew(double ra, double dec)
     {
-        try
+        IMount mount = _mount!;
+        int generation = _generation;
+        CancellationToken token = _sessionCts.Token;
+
+        _engineSlewInFlight = true;
+        _mountMoving = true;
+        CancelPendingSolve();
+
+        _ = Task.Run(async () =>
         {
-            if (commandedMotion)
+            Exception? error = null;
+            try
             {
-                await _mount!.SlewToCoordinatesAsync(commandRa, commandDec, cancellationToken).ConfigureAwait(false);
+                await mount.SlewToCoordinatesAsync(ra, dec, token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                error = ex;
             }
 
-            // Where the mount ended up, which is what the safety checks and the
-            // solver hint must both be based on -- not where it was asked to go,
-            // since a capture taken without motion was never asked anything.
-            MountPosition position = await _mount!.GetPositionAsync(cancellationToken).ConfigureAwait(false);
+            await RunSerialAsync(() => OnEngineSlewFinishedAsync(mount, generation, error), CancellationToken.None)
+                .ConfigureAwait(false);
+        });
+    }
 
-            // Reported onwards because it has already been paid for. A UI
-            // polling on its own timer would otherwise show the pre-slew
-            // position for another second or two after every move, which reads
-            // as a mount that has not gone anywhere.
-            _events.Publish(new MountStatusEvent(
-                position.RaDegrees,
-                position.DecDegrees,
-                MapTracking(position.Tracking),
-                MapPierSide(position.PierSide)));
+    private async Task OnEngineSlewFinishedAsync(IMount mount, int generation, Exception? error)
+    {
+        if (!ReferenceEquals(mount, _mount))
+        {
+            return;
+        }
 
-            if (!await PassesSafetyChecksAsync(position, cancellationToken).ConfigureAwait(false))
+        _engineSlewInFlight = false;
+
+        if (error is OperationCanceledException || !_sessionActive)
+        {
+            return;
+        }
+
+        if (error is not null)
+        {
+            // Anything the hardware throws mid-sequence -- a pulled cable, a
+            // driver dying -- has to leave a recoverable session rather than an
+            // unhandled exception, so the state is torn down and reported.
+            ResetSession();
+            _events.Publish(new SessionFaultedEvent($"The slew to point {_samples.Count + 1} failed: {error.Message}"));
+            return;
+        }
+
+        try
+        {
+            MountPosition position = await mount.GetPositionAsync(_sessionCts.Token).ConfigureAwait(false);
+            _atConfirmedPosition = generation == _generation;
+            await ObservePositionAsync(position, slewJustEnded: _atConfirmedPosition, _sessionCts.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            ResetSession();
+            _events.Publish(new SessionFaultedEvent($"Lost contact with the mount after a slew: {ex.Message}"));
+        }
+    }
+
+    // ---- Watching the mount (D26) ----
+
+    /// <summary>
+    /// Takes in a fresh report of where the mount is, and reacts to what changed:
+    /// motion cancels a solve that was counting down, the end of motion starts
+    /// one, and declination movement restarts the sequence.
+    /// </summary>
+    /// <param name="slewJustEnded">
+    /// The engine's own slew has just returned, so the mount has arrived even
+    /// though its position differs from the last poll -- which would otherwise
+    /// read as still moving.
+    /// </param>
+    private async Task ObservePositionAsync(MountPosition position, bool slewJustEnded, CancellationToken cancellationToken)
+    {
+        bool moved = !slewJustEnded && _latestMountPosition is { } previous && HasMoved(previous, position);
+        bool moving = position.IsSlewing || moved || _engineSlewInFlight;
+        bool wasMoving = _mountMoving || slewJustEnded;
+
+        _latestMountPosition = position;
+        _mountMoving = moving;
+
+        _events.Publish(new MountStatusEvent(
+            position.RaDegrees,
+            position.DecDegrees,
+            MapTracking(position.Tracking),
+            MapPierSide(position.PierSide),
+            moving));
+
+        if (!_sessionActive || _mode == SequenceMode.Unconnected)
+        {
+            return;
+        }
+
+        if (moving)
+        {
+            if (!_engineSlewInFlight)
+            {
+                _atConfirmedPosition = false;
+            }
+
+            if (!wasMoving)
+            {
+                CancelPendingSolve();
+            }
+
+            return;
+        }
+
+        if (await RestartedOnDeclinationAsync(position, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        if (wasMoving)
+        {
+            OnSlewEnded(position);
+        }
+    }
+
+    /// <summary>
+    /// Still in either frame is still. A tracking mount holds its sky
+    /// coordinates while its mechanical rotation turns; a mount with the drive
+    /// off holds its mechanical angles while its sky coordinates drift at the
+    /// sidereal rate. Moving means neither held.
+    /// </summary>
+    private bool HasMoved(MountPosition previous, MountPosition current)
+    {
+        double sky = SeparationDegrees(previous.RaDegrees, previous.DecDegrees, current.RaDegrees, current.DecDegrees);
+        if (sky * 60.0 <= StillToleranceArcminutes || _site is null)
+        {
+            return sky * 60.0 > StillToleranceArcminutes;
+        }
+
+        double rotationBefore = TargetSelection.MechanicalRotationOf(
+            _site, previous.RaDegrees, previous.DecDegrees, previous.TimestampUtc);
+        double rotationAfter = TargetSelection.MechanicalRotationOf(
+            _site, current.RaDegrees, current.DecDegrees, current.TimestampUtc);
+        double declinationBefore = MechanicalDeclinationOf(
+            _site, previous.RaDegrees, previous.DecDegrees, previous.TimestampUtc);
+        double declinationAfter = MechanicalDeclinationOf(
+            _site, current.RaDegrees, current.DecDegrees, current.TimestampUtc);
+
+        double rotationChange = WrapDegrees(rotationAfter - rotationBefore) *
+                                Math.Cos(declinationAfter * Math.PI / 180.0);
+        double mechanical = Math.Sqrt(rotationChange * rotationChange +
+                                      Math.Pow(declinationAfter - declinationBefore, 2));
+        return mechanical * 60.0 > StillToleranceArcminutes;
+    }
+
+    private void OnSlewEnded(MountPosition position)
+    {
+        double rotation = TargetSelection.MechanicalRotationOf(
+            _site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+
+        if (!_atConfirmedPosition && IsTooClose(rotation, out double nearest))
+        {
+            _events.Publish(new SampleSkippedEvent(
+                $"The mount has turned {nearest:F1}° from the nearest sample; samples need to be at least " +
+                $"{_spacingDegrees:F0}° apart to widen the sweep (D27). Turn further, or record a sample to use " +
+                "this position anyway."));
+            return;
+        }
+
+        ScheduleSolve(SampleTrigger.SlewEnded, _options.EffectiveSettleDelay);
+    }
+
+    /// <summary>Whether a position is too near an existing sample to widen the sweep (D27).</summary>
+    private bool IsTooClose(double rotation, out double nearestDegrees)
+    {
+        nearestDegrees = _samples.Count == 0
+            ? double.PositiveInfinity
+            : _samples.Min(s => Math.Abs(WrapDegrees(s.RotationDegrees - rotation)));
+        return nearestDegrees < _spacingDegrees * SpacingAllowance;
+    }
+
+    /// <summary>
+    /// D18 as revised: declination movement on a connected mount restarts the
+    /// sequence, because the samples already taken lie on a different circle and
+    /// no decision about them is left for the user to make. Before the first
+    /// sample there is nothing to discard, so the plan simply follows the mount.
+    /// </summary>
+    private async Task<bool> RestartedOnDeclinationAsync(MountPosition position, CancellationToken cancellationToken)
+    {
+        if (_plan is null)
+        {
+            return false;
+        }
+
+        double declination = MechanicalDeclinationOf(_site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+        double changeArcminutes = Math.Abs(declination - _plan.MechanicalDeclinationDegrees) * 60.0;
+
+        if (_samples.Count == 0)
+        {
+            // An unanchored plan is waiting for the mount to go somewhere else;
+            // where it is now says nothing about the declination it will hold.
+            if (_plan.AnchoredAtCurrentPointing && changeArcminutes > DeclinationRestartArcminutes)
+            {
+                _plan = _plan with { MechanicalDeclinationDegrees = declination };
+                _events.Publish(new TargetSelectedEvent(
+                    declination, _plan.IsWest, _plan.Captures.Count, _plan.SweepDegrees));
+            }
+
+            return false;
+        }
+
+        if (changeArcminutes <= DeclinationRestartArcminutes)
+        {
+            return false;
+        }
+
+        double rotation = TargetSelection.MechanicalRotationOf(
+            _site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+
+        string reason =
+            $"The mount moved {changeArcminutes:F1}' in declination. The {_samples.Count} sample(s) taken so far " +
+            "lie on a different circle about the polar axis and cannot be combined with new ones, so they have " +
+            "been discarded and the sequence restarted here (D18). Leave declination alone from now on.";
+
+        TargetPlan plan = TargetSelection.PlanFrom(
+            _site!, rotation, declination, DateTime.UtcNow, _captureCount, _sweepDegrees, _options.EffectiveAtmosphere);
+
+        if (!plan.Success)
+        {
+            ResetSession();
+            _events.Publish(new SessionFaultedEvent($"{reason} No usable sequence can be planned from there: {plan.Reason}"));
+            return true;
+        }
+
+        ClearSamples();
+        _plan = plan;
+        _spacingDegrees = SpacingOf(plan);
+
+        _events.Publish(new SequenceRestartedEvent(reason));
+        _events.Publish(new TargetSelectedEvent(
+            plan.MechanicalDeclinationDegrees, plan.IsWest, plan.Captures.Count, plan.SweepDegrees));
+        ProposeNext();
+
+        if (plan.AnchoredAtCurrentPointing)
+        {
+            ScheduleSolve(SampleTrigger.SlewEnded, _options.EffectiveSettleDelay);
+        }
+
+        await Task.CompletedTask.ConfigureAwait(false);
+        return true;
+    }
+
+    // ---- Scheduling and running solves (D26) ----
+
+    /// <summary>
+    /// Arms a solve after <paramref name="delay"/>, replacing anything already
+    /// counting down. A forced sample already waiting is left alone: the user
+    /// asked for it, and a later automatic trigger is not a reason to drop it.
+    /// </summary>
+    private void ScheduleSolve(SampleTrigger trigger, TimeSpan delay)
+    {
+        if (_armed is { Trigger: SampleTrigger.Forced })
+        {
+            return;
+        }
+
+        CancelPendingSolve();
+
+        var delayCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
+        _pendingDelay = delayCts;
+        int generation = _generation;
+
+        _events.Publish(new SolveScheduledEvent(trigger, delay));
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(delay, delayCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
             {
                 return;
             }
 
-            // Handed to the camera rather than looked up by it: where the mount
-            // believes it is pointing and what focal length is in use are the
-            // session's knowledge, and they are the two things that make a frame
-            // found afterwards interpretable.
-            var captureContext = new CaptureContext(
-                _options.ApplicationName,
-                _options.ApplicationVersion,
-                position.RaDegrees,
-                position.DecDegrees,
-                _profile?.FocalLengthMillimetres);
-
-            CapturedImage captured = await _camera!
-                .ExposeAsync(_exposure, captureContext, cancellationToken).ConfigureAwait(false);
-
-            // Announced before the solve is attempted, so that a frame the
-            // solver cannot make sense of is still on screen while the user
-            // reads why.
-            _events.Publish(new FrameCapturedEvent(
-                _completedCaptures + 1, captured.FitsPath, captured.ExposureMidpointUtc, captured.Duration));
-
-            PlateSolveResult solve = await SolveAsync(
-                captured, position.RaDegrees, position.DecDegrees, cancellationToken).ConfigureAwait(false);
-
-            if (!solve.Success)
+            await RunSerialAsync(() =>
             {
-                // A failed solve is a failed *capture*, not a failed session:
-                // clouds pass, and the sensible response is usually to try the
-                // same position again. But it cannot be silent either, so it is
-                // its own event and it is bounded -- repeated failures mean
-                // something is wrong that retrying will not fix.
-                _consecutiveSolveFailures++;
-                _events.Publish(new CaptureFailedEvent(
-                    _completedCaptures + 1,
-                    $"Could not solve ({solve.FailureReason}): {solve.Message}",
-                    _consecutiveSolveFailures < MaximumConsecutiveSolveFailures));
-
-                if (_consecutiveSolveFailures >= MaximumConsecutiveSolveFailures)
+                if (ReferenceEquals(_pendingDelay, delayCts) && generation == _generation && _sessionActive)
                 {
-                    ResetSession();
-                    _events.Publish(new SessionFaultedEvent(
-                        $"Gave up after {MaximumConsecutiveSolveFailures} consecutive failed solves. " +
-                        $"Last failure: {solve.Message}"));
+                    _pendingDelay = null;
+                    delayCts.Dispose();
+                    _armed = new Armed(trigger, DateTime.UtcNow);
                 }
 
+                return Task.CompletedTask;
+            }, CancellationToken.None).ConfigureAwait(false);
+        });
+    }
+
+    /// <summary>Drops a solve counting down or armed, except one the user forced.</summary>
+    private void CancelPendingSolve()
+    {
+        if (_pendingDelay is { } pending)
+        {
+            _pendingDelay = null;
+            pending.Cancel();
+        }
+
+        if (_armed is { Trigger: not SampleTrigger.Forced })
+        {
+            _armed = null;
+        }
+    }
+
+    private void StartSolve(SampleTrigger trigger, CapturedImage frame)
+    {
+        _armed = null;
+        _solveInFlight = true;
+
+        IDisposable hold = _frameStore.Hold(frame.FitsPath);
+        int generation = _generation;
+        CancellationToken token = _sessionCts.Token;
+
+        // An unconnected solve is blind by nature; a connected one is hinted
+        // with where the mount believes it points, which costs nothing and turns
+        // a blind search into a bounded one.
+        MountPosition? hint = _mode == SequenceMode.Unconnected ? null : _latestMountPosition;
+        PlateSolveRequest request = BuildSolveRequest(frame, hint);
+
+        _events.Publish(new SolveStartedEvent(trigger, frame.FitsPath));
+
+        _ = Task.Run(async () =>
+        {
+            PlateSolveResult result;
+            try
+            {
+                result = await _solver.SolveAsync(request, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                result = PlateSolveResult.Failed(PlateSolveFailureReason.Cancelled, "The sequence was stopped.");
+            }
+            catch (Exception ex)
+            {
+                result = PlateSolveResult.Failed(PlateSolveFailureReason.SolverError, ex.Message);
+            }
+
+            bool ran = await RunSerialAsync(
+                () => OnSolveResultAsync(generation, trigger, frame, result, hold), CancellationToken.None)
+                .ConfigureAwait(false);
+
+            if (!ran)
+            {
+                hold.Dispose();
+            }
+        });
+    }
+
+    private PlateSolveRequest BuildSolveRequest(CapturedImage frame, MountPosition? hint)
+    {
+        // The scale hint is only offered once the focal length has actually
+        // been measured, since a claimed one is routinely several percent out.
+        double? scaleHint = _profile is { IsFocalLengthSolved: true } profile
+            ? profile.ExpectedScaleArcsecondsPerPixel
+            : null;
+
+        return new PlateSolveRequest(
+            frame.FitsPath,
+            ApproximateScaleArcsecPerPixel: scaleHint,
+            ScaleToleranceFraction: scaleHint is null ? null : _profile!.ScaleToleranceFraction,
+            ApproximateRaDegrees: hint?.RaDegrees,
+            ApproximateDecDegrees: hint?.DecDegrees,
+            SearchRadiusDegrees: hint is null ? null : 10.0,
+            Timeout: TimeSpan.FromMinutes(2));
+    }
+
+    private async Task OnSolveResultAsync(
+        int generation, SampleTrigger trigger, CapturedImage frame, PlateSolveResult result, IDisposable hold)
+    {
+        _solveInFlight = false;
+
+        try
+        {
+            if (generation != _generation || !_sessionActive)
+            {
+                return;
+            }
+
+            if (!result.Success)
+            {
+                OnSolveFailed(trigger, frame, result);
                 return;
             }
 
             _consecutiveSolveFailures = 0;
-
-            PlateSolveSolution solution = solve.Solution!;
+            PlateSolveSolution solution = result.Solution!;
             LearnFocalLength(solution);
 
             // The fit needs the physical pointing direction, so the catalogue
@@ -1347,81 +2166,176 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             // refraction included (D15).
             var observer = new ObserverSite(_site!.LatitudeDegrees, _site.LongitudeDegrees, _site.HeightMeters);
             HorizontalCoordinates direction = TopocentricConverter.ToAltAz(
-                solution.CenterRaDegrees, solution.CenterDecDegrees, captured.ExposureMidpointUtc,
+                solution.CenterRaDegrees, solution.CenterDecDegrees, frame.ExposureMidpointUtc,
                 observer, _options.EffectiveAtmosphere);
+            var solved = new SolvedPosition(solution.CenterRaDegrees, solution.CenterDecDegrees, direction);
 
-            _observations.Add(direction);
-            _completedCaptures++;
-
-            _events.Publish(new PointCapturedEvent(new CapturePoint(
-                _completedCaptures, solution.CenterRaDegrees, solution.CenterDecDegrees, captured.ExposureMidpointUtc)));
-
-            if (_observations.Count >= SmallCircleFitter.MinimumObservations)
+            if (_mode == SequenceMode.Unconnected)
             {
-                PublishEstimate();
+                OnUnconnectedSolve(trigger, frame, solved);
             }
-
-            ProposeNext();
+            else
+            {
+                await OnConnectedSolveAsync(trigger, frame, solved).ConfigureAwait(false);
+            }
         }
-        catch (OperationCanceledException)
+        finally
         {
-            ResetSession();
-            throw;
-        }
-        catch (Exception ex)
-        {
-            // Anything the hardware throws mid-sequence -- a pulled cable, a
-            // driver dying -- has to leave a recoverable session rather than an
-            // unhandled exception, so the state is torn down and reported.
-            ResetSession();
-            _events.Publish(new SessionFaultedEvent($"Capture {_completedCaptures + 1} failed: {ex.Message}"));
+            // Released after any failure has been kept, never before: a released
+            // frame that is no longer on screen is deleted at once.
+            hold.Dispose();
         }
     }
 
-    private bool EnsureCapturable(out PendingProposal? proposal)
+    private void OnSolveFailed(SampleTrigger trigger, CapturedImage frame, PlateSolveResult result)
     {
-        proposal = _proposal;
+        _consecutiveSolveFailures++;
+        string? kept = _frameStore.KeepFailed(frame.FitsPath, DateTime.UtcNow);
 
-        if (!_sessionActive || _plan is null || _site is null)
+        _events.Publish(new SolveFailedEvent(
+            trigger,
+            $"Could not solve ({result.FailureReason}): {result.Message}",
+            _consecutiveSolveFailures,
+            kept));
+
+        if (_mode == SequenceMode.Unconnected)
         {
-            _events.Publish(new CommandRejectedEvent("No sequence is running. Start one first."));
-            return false;
+            // A failure breaks the chain of agreeing solves: the mount may be
+            // mid-turn, which is the commonest reason a frame fails at all.
+            _lastUnconnectedSolve = null;
+            ScheduleSolve(SampleTrigger.Periodic, _options.EffectiveSolveInterval);
+            return;
         }
 
-        if (_camera is null || !_camera.IsConnected || _mount is null || !_mount.IsConnected)
+        // A forced sample is the user's one attempt; they can press again.
+        // Otherwise a failed post-slew solve is tried again for as long as the
+        // mount stays where it is -- a passing cloud is the usual reason.
+        if (trigger != SampleTrigger.Forced && !_mountMoving)
         {
-            ResetSession();
-            _events.Publish(new SessionFaultedEvent("A device disconnected, so the sequence has been stopped."));
-            return false;
+            ScheduleSolve(SampleTrigger.Retry, _options.EffectiveSolveInterval);
+        }
+    }
+
+    private void OnUnconnectedSolve(SampleTrigger trigger, CapturedImage frame, SolvedPosition solved)
+    {
+        SolvedPosition? previous = _lastUnconnectedSolve;
+        _lastUnconnectedSolve = solved;
+
+        try
+        {
+            bool settled = trigger == SampleTrigger.Forced || (previous is not null && Agrees(previous, solved));
+            if (!settled)
+            {
+                _events.Publish(new SampleSkippedEvent(
+                    "Solved. Waiting for a second solve in the same place, to be sure the telescope has stopped " +
+                    "moving (D26)."));
+                return;
+            }
+
+            double rotation = TargetSelection.MechanicalRotationOf(
+                _site!, solved.RaDegrees, solved.DecDegrees, frame.ExposureMidpointUtc);
+
+            if (trigger != SampleTrigger.Forced && IsTooClose(rotation, out double nearest))
+            {
+                // Said only once the user has had time to move on; a mount
+                // standing still after a sample would otherwise repeat this every
+                // five seconds while they are simply reading the instruction.
+                if (nearest >= 0.5)
+                {
+                    _events.Publish(new SampleSkippedEvent(
+                        $"The telescope has turned {nearest:F1}° from the nearest sample; samples need to be at " +
+                        $"least {_spacingDegrees:F0}° apart to widen the sweep (D27). Turn further, or record a " +
+                        "sample to use this position anyway."));
+                }
+
+                return;
+            }
+
+            // D8 without a pier side to read. Turning past the meridian by hand
+            // is not a flip, so it is worth a warning rather than an abort.
+            if (_samples.Count > 0 && !_meridianWarned &&
+                Math.Sign(rotation) != Math.Sign(_samples[0].RotationDegrees))
+            {
+                _meridianWarned = true;
+                _events.Publish(new ManualActionRequiredEvent(
+                    "The telescope is now on the other side of the meridian from the first sample. That is not a " +
+                    "flip, so the measurement still holds, but the sequence was planned to stay on one side (D8).",
+                    rotation));
+            }
+
+            AcceptSample(trigger, frame, solved, rotation);
+        }
+        finally
+        {
+            if (_sessionActive)
+            {
+                ScheduleSolve(SampleTrigger.Periodic, _options.EffectiveSolveInterval);
+            }
+        }
+    }
+
+    private async Task OnConnectedSolveAsync(SampleTrigger trigger, CapturedImage frame, SolvedPosition solved)
+    {
+        MountPosition position = await _mount!.GetPositionAsync(_sessionCts.Token).ConfigureAwait(false);
+
+        if (!await PassesSafetyChecksAsync(position, _sessionCts.Token).ConfigureAwait(false))
+        {
+            return;
         }
 
-        if (proposal is null)
+        double rotation = TargetSelection.MechanicalRotationOf(
+            _site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+
+        if (trigger != SampleTrigger.Forced && !_atConfirmedPosition && IsTooClose(rotation, out double nearest))
         {
-            _events.Publish(new CommandRejectedEvent("There is nothing proposed to capture."));
-            return false;
+            _events.Publish(new SampleSkippedEvent(
+                $"The mount is {nearest:F1}° from the nearest sample; samples need to be at least " +
+                $"{_spacingDegrees:F0}° apart (D27). Record a sample to use this position anyway."));
+            return;
         }
 
-        return true;
+        if (_samples.Count == 0)
+        {
+            // What the mount actually holds becomes the sequence's declination.
+            // Every later slew is resolved to it (D16), and every later poll is
+            // compared against it (D18).
+            double declination = MechanicalDeclinationOf(_site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+            _plan = _plan! with { MechanicalDeclinationDegrees = declination };
+        }
+
+        AcceptSample(trigger, frame, solved, rotation);
     }
 
     /// <summary>
-    /// Whether confirmed coordinates are the proposed ones. One arcsecond, which
-    /// is far below anything a user would type deliberately and far above the
-    /// rounding introduced by showing six decimal places.
+    /// Two solves in a row that agree mean the telescope has stopped (D26). Either
+    /// frame will do: tracking holds the sky coordinates, and an undriven mount
+    /// holds the horizon ones while the sky drifts past.
     /// </summary>
-    private static bool IsEffectivelyUnchanged(ConfirmSlewCommand command, PendingProposal proposal)
+    private static bool Agrees(SolvedPosition previous, SolvedPosition current)
     {
-        const double toleranceDegrees = 1.0 / 3600.0;
-        return Math.Abs(command.RaDegrees - proposal.RaDegrees) < toleranceDegrees &&
-               Math.Abs(command.DecDegrees - proposal.DecDegrees) < toleranceDegrees;
+        double sky = SeparationDegrees(previous.RaDegrees, previous.DecDegrees, current.RaDegrees, current.DecDegrees);
+        double horizon = SeparationDegrees(
+            previous.Direction.AzimuthDegrees, previous.Direction.AltitudeDegrees,
+            current.Direction.AzimuthDegrees, current.Direction.AltitudeDegrees);
+        return Math.Min(sky, horizon) * 60.0 <= StillToleranceArcminutes;
     }
 
-    private static IReadOnlyList<PlannedCapture> ReplaceCapture(
-        IReadOnlyList<PlannedCapture> captures, int index, double rotationDegrees)
+    private void AcceptSample(SampleTrigger trigger, CapturedImage frame, SolvedPosition solved, double rotation)
     {
-        var replaced = new List<PlannedCapture>(captures);
-        replaced[index] = replaced[index] with { MechanicalRotationDegrees = rotationDegrees };
-        return replaced;
+        _atConfirmedPosition = false;
+        _observations.Add(solved.Direction);
+        _samples.Add(new Sample(rotation, solved.RaDegrees, solved.DecDegrees, frame.ExposureMidpointUtc));
+
+        _events.Publish(new PointCapturedEvent(
+            new CapturePoint(_samples.Count, solved.RaDegrees, solved.DecDegrees, frame.ExposureMidpointUtc),
+            trigger));
+
+        if (_observations.Count >= SmallCircleFitter.MinimumObservations)
+        {
+            PublishEstimate();
+        }
+
+        ProposeNext();
     }
 
     /// <summary>
@@ -1451,7 +2365,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             }
         }
 
-        if (_completedCaptures == 0)
+        if (_samples.Count == 0)
         {
             _initialPierSide = pierSide;
             _initialRotationSign = sign;
@@ -1479,27 +2393,16 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         return true;
     }
 
-    private async Task<PlateSolveResult> SolveAsync(
-        CapturedImage captured, double hintRa, double hintDec, CancellationToken cancellationToken)
+    /// <summary>
+    /// Whether confirmed coordinates are the proposed ones. One arcsecond, which
+    /// is far below anything a user would type deliberately and far above the
+    /// rounding introduced by showing six decimal places.
+    /// </summary>
+    private static bool IsEffectivelyUnchanged(ConfirmSlewCommand command, PendingProposal proposal)
     {
-        // A position hint costs nothing here -- the mount has just reported where
-        // it thinks it is -- and turns a blind search into a bounded one. The
-        // scale hint is only offered once the focal length has actually been
-        // measured, since a claimed one is routinely several percent out.
-        double? scaleHint = _profile is { IsFocalLengthSolved: true } profile
-            ? profile.ExpectedScaleArcsecondsPerPixel
-            : null;
-
-        var request = new PlateSolveRequest(
-            captured.FitsPath,
-            ApproximateScaleArcsecPerPixel: scaleHint,
-            ScaleToleranceFraction: scaleHint is null ? null : _profile!.ScaleToleranceFraction,
-            ApproximateRaDegrees: hintRa,
-            ApproximateDecDegrees: hintDec,
-            SearchRadiusDegrees: 10.0,
-            Timeout: TimeSpan.FromMinutes(2));
-
-        return await _solver.SolveAsync(request, cancellationToken).ConfigureAwait(false);
+        const double toleranceDegrees = 1.0 / 3600.0;
+        return Math.Abs(command.RaDegrees - proposal.RaDegrees) < toleranceDegrees &&
+               Math.Abs(command.DecDegrees - proposal.DecDegrees) < toleranceDegrees;
     }
 
     /// <summary>
@@ -1550,6 +2453,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             solution.Fit.ResidualRmsArcseconds)));
     }
 
+    // ---- Geometry ----
+
     /// <summary>
     /// Mechanical declination of a sky position, in the mount's own frame. The
     /// companion to <see cref="TargetSelection.MechanicalRotationOf"/>, and
@@ -1566,6 +2471,32 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         var (_, declination) = MountMechanics.Decompose(site.LatitudeDegrees, pointing);
         return declination;
+    }
+
+    /// <summary>Great-circle angle between two points given as longitude and latitude, in degrees.</summary>
+    private static double SeparationDegrees(double longitude1, double latitude1, double longitude2, double latitude2)
+    {
+        const double toRadians = Math.PI / 180.0;
+        double dLat = (latitude2 - latitude1) * toRadians;
+        double dLon = (longitude2 - longitude1) * toRadians;
+        double a = Math.Pow(Math.Sin(dLat / 2), 2) +
+                   Math.Cos(latitude1 * toRadians) * Math.Cos(latitude2 * toRadians) * Math.Pow(Math.Sin(dLon / 2), 2);
+        return 2.0 * Math.Asin(Math.Min(1.0, Math.Sqrt(a))) / toRadians;
+    }
+
+    private static double WrapDegrees(double degrees)
+    {
+        double wrapped = degrees % 360.0;
+        if (wrapped > 180.0)
+        {
+            wrapped -= 360.0;
+        }
+        else if (wrapped < -180.0)
+        {
+            wrapped += 360.0;
+        }
+
+        return wrapped;
     }
 
     private static MountTrackingState MapTracking(TrackingState state) => state switch
@@ -1587,20 +2518,71 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     private static string DescribeDriver(ConnectDeviceCommand command) =>
         $"{command.ProviderName} / {command.DeviceId}";
 
-    private void ResetSession()
+    // ---- Resetting ----
+
+    /// <summary>
+    /// Discards the samples but keeps the sequence running, for a restart from a
+    /// new position. A solve or slew still in flight belongs to the old
+    /// generation and is dropped when it returns.
+    /// </summary>
+    private void ClearSamples()
     {
-        _sessionActive = false;
-        _completedCaptures = 0;
+        _generation++;
+        _atConfirmedPosition = false;
+        CancelPendingSolve();
+        _armed = null;
+        _samples.Clear();
+        _observations.Clear();
+        _lastUnconnectedSolve = null;
         _consecutiveSolveFailures = 0;
         _initialPierSide = PierSide.Unknown;
         _initialRotationSign = 0;
-        _observations.Clear();
-        _plan = null;
+        _meridianWarned = false;
         _proposal = null;
+    }
+
+    private void ResetSession()
+    {
+        ClearSamples();
+        _sessionActive = false;
+        _plan = null;
+
+        // Cancels a slew or solve still running for the sequence being ended.
+        // The capture loop is not the sequence's, and carries on.
+        _sessionCts.Cancel();
+        _sessionCts.Dispose();
+        _sessionCts = new CancellationTokenSource();
     }
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
+        CancellationTokenSource? loop = _loopCts;
+        Task? loopTask = _loopTask;
+        _loopCts = null;
+        _loopTask = null;
+        loop?.Cancel();
+        _sessionCts.Cancel();
+        _pendingDelay?.Cancel();
+
+        try
+        {
+            // Bounded, because a driver stuck in an exposure is not a reason for
+            // the application to hang on the way out.
+            loopTask?.Wait(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception)
+        {
+        }
+
+        _frameStore.Dispose();
+
         if (_ownsCamera)
         {
             _camera?.Dispose();
@@ -1611,7 +2593,6 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             _mount?.Dispose();
         }
 
-        _commandGate.Dispose();
         _events.Dispose();
     }
 }

@@ -38,7 +38,7 @@ public sealed class SimulatedDeviceProvider : IDeviceProvider
 
     public IReadOnlyList<DeviceDescriptor> DiscoverDevices() => new DeviceDescriptor[]
     {
-        new CameraDescriptor("sim-camera", "Simulated Camera", "free-polar-align virtual observatory"),
+        new CameraDescriptor("sim-camera", "Simulated Camera", "free-polar-align virtual observatory", HasGainControl: true),
         new MountDescriptor("sim-mount", "Simulated Mount", "free-polar-align virtual observatory"),
     };
 

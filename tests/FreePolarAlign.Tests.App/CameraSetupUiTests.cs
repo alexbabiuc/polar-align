@@ -80,7 +80,7 @@ public class CameraSetupUiTests
             settings: null,
             log: null,
             warnings: null,
-            new SessionConfiguration(6, 70.0, TimeSpan.FromSeconds(2)));
+            new SessionConfiguration(6, 70.0));
 
         return (viewModel, engine);
     }
@@ -103,6 +103,8 @@ public class CameraSetupUiTests
         (nameof(vm.ConfirmSiteCommand), vm.ConfirmSiteCommand),
         (nameof(vm.ApplyFocalLengthCommand), vm.ApplyFocalLengthCommand),
         (nameof(vm.StartCommand), vm.StartCommand),
+        (nameof(vm.RecordSampleCommand), vm.RecordSampleCommand),
+        (nameof(vm.SaveFrameCommand), vm.SaveFrameCommand),
         (nameof(vm.ConfirmProposalCommand), vm.ConfirmProposalCommand),
         (nameof(vm.RestoreProposalCoordinatesCommand), vm.RestoreProposalCoordinatesCommand),
         (nameof(vm.CancelCommand), vm.CancelCommand),

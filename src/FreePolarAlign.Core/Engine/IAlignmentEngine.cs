@@ -44,8 +44,12 @@ public enum MeridianSide
 /// than being restated with every start, so there is exactly one authoritative
 /// copy of the most safety-critical number in the system (D19: a latitude error
 /// transfers one-for-one into the reported altitude error).
+///
+/// Neither is the exposure, any more. It is camera state the capture loop reads
+/// at every frame boundary (<see cref="SetExposureCommand"/>), because it can be
+/// changed at any time, sequence or not (D22 as revised).
 /// </summary>
-/// <param name="CapturePoints">How many captures to take. D7: never less than 3.</param>
+/// <param name="CapturePoints">How many samples to take. D7: never less than 3.</param>
 /// <param name="RequestedSweepDegrees">
 /// Sweep to aim for. Phase 1 measured axis uncertainty falling as the *square*
 /// of this against only the square root of the capture count, so it is the
@@ -55,8 +59,43 @@ public enum MeridianSide
 /// </param>
 public sealed record SessionConfiguration(
     int CapturePoints,
-    double RequestedSweepDegrees,
-    TimeSpan ExposureDuration);
+    double RequestedSweepDegrees);
+
+/// <summary>
+/// How a sequence reaches its samples, decided by what is connected rather than
+/// by a switch (D10 as revised).
+/// </summary>
+public enum SequenceMode
+{
+    /// <summary>A connected mount that can slew: the engine proposes, the user confirms, the engine slews.</summary>
+    Driven,
+
+    /// <summary>
+    /// A connected mount that cannot slew. It is read but not driven: its
+    /// reported position decides the spacing between samples and catches
+    /// declination movement.
+    /// </summary>
+    Observed,
+
+    /// <summary>No mount at all. Positions come from blind solves, and settling is judged by two agreeing solves (D26).</summary>
+    Unconnected,
+}
+
+/// <summary>What caused a solve to be attempted (D26).</summary>
+public enum SampleTrigger
+{
+    /// <summary>A slew ended -- the engine's own or one made from outside -- and the mount has settled.</summary>
+    SlewEnded,
+
+    /// <summary>The unconnected cadence: a fixed interval after the previous solve's result.</summary>
+    Periodic,
+
+    /// <summary>A post-slew solve failed and is being tried again on a mount that has not moved.</summary>
+    Retry,
+
+    /// <summary>The user asked for a sample now, whatever the spacing or stability.</summary>
+    Forced,
+}
 
 /// <summary>
 /// The engine's estimate of polar misalignment at a point in time. Arcminutes,
@@ -187,18 +226,17 @@ public sealed record ConfigureSiteCommand(
 public sealed record ConfigureFocalLengthCommand(double? FocalLengthMillimetres) : EngineCommand;
 
 /// <summary>
-/// Ask the engine to poll the mount and report where it is pointing and whether
-/// it is tracking. Polling is driven from outside rather than by a timer inside
-/// the engine so that the engine stays a deterministic function of the commands
-/// it is given -- which is what makes the sequence reproducible in a test.
+/// Ask the engine to poll the mount and report where it is pointing, whether
+/// it is tracking and whether it is moving. Polling is still driven from
+/// outside, but the engine is no longer a pure function of its commands: a poll
+/// that finds a slew has ended starts a settle timer inside the engine (D26).
 /// </summary>
 public sealed record RefreshMountStatusCommand : EngineCommand;
 
 /// <summary>
-/// Select one of the camera's readout modes. Refused while a sequence is
-/// running: changing the bit depth part-way through would leave the sequence
-/// mixing frames whose centroids can be trusted to different precisions, and
-/// the fit weights them all alike.
+/// Select one of the camera's readout modes. Accepted at any time, sequence or
+/// not, and applied between frames: the bit depth changes how noisy a solved
+/// position is, not where it is (D22, D25 as revised).
 /// </summary>
 public sealed record SetReadoutModeCommand(int Index) : EngineCommand;
 
@@ -212,9 +250,10 @@ public sealed record SetReadoutModeCommand(int Index) : EngineCommand;
 /// next exposure will come from, so a capture overlapping it would be taken
 /// half under the old settings and half under the new.
 ///
-/// Refused during a sequence for the same reason the readout mode is: the
-/// frames already captured would have been taken under different settings, and
-/// the fit weights them all alike.
+/// Refused during a sequence, though no longer for the reason the readout mode
+/// once was: the window can change binning and region of interest, which change
+/// the plate scale the sequence has already measured (D23 as revised). Outside a
+/// sequence the capture loop finishes its frame and waits for the window.
 /// </summary>
 /// <param name="ProviderName">
 /// With <paramref name="DeviceId"/>, the camera to configure when none is
@@ -230,36 +269,48 @@ public sealed record OpenCameraSetupDialogCommand(string? ProviderName = null, s
 ///
 /// A percentage rather than a raw value so the command means the same thing
 /// whichever camera receives it; the engine maps it onto the camera's range.
-/// Refused during a sequence, for the reason the readout mode is: gain changes
-/// the noise in every star position, and the fit weights every frame alike.
+/// Accepted at any time and applied between frames, for the reason the readout
+/// mode is (D25 as revised).
 /// </summary>
 public sealed record SetCameraGainCommand(int Percent) : EngineCommand;
 
 /// <summary>
-/// Plan a sequence anchored where the mount is already pointing. Connects
-/// nothing and moves nothing (D18).
+/// Set the exposure used for every frame from the next one on. Not device state
+/// -- it is an argument to each exposure -- so it is held by the engine, which
+/// owns the capture loop. Accepted at any time (D22 as revised); the frame in
+/// progress is never aborted, because drivers support that unevenly and the
+/// next frame is at most a couple of seconds away.
+/// </summary>
+public sealed record SetExposureCommand(TimeSpan Duration) : EngineCommand;
+
+/// <summary>
+/// Plan a sequence and begin sampling. With a mount connected it is anchored
+/// where the mount already points; without one it is planned from the site
+/// and the clock, and the user is told where to set the telescope (D10). Moves
+/// nothing (D18).
 /// </summary>
 public sealed record StartSessionCommand(SessionConfiguration Configuration) : EngineCommand;
 
 /// <summary>
-/// Capture and solve at whatever the mount is pointing at right now, without
-/// commanding any motion. This is how the first point of every sequence is
-/// taken (D18), and how every point is taken on a mount being turned by hand
-/// (D10).
+/// Solve the next frame that *starts* after this command and use it as a
+/// sample, whatever the spacing (D27) or stability (D26). The frame already on
+/// screen is never used, because it may have been exposed while the telescope
+/// was still moving. D11's checks still apply to the fit.
 /// </summary>
-public sealed record CaptureHereCommand : EngineCommand;
+public sealed record RecordSampleCommand : EngineCommand;
 
 /// <summary>
-/// Accept the engine's own proposal for the next point unedited: slew there and
-/// capture. Equivalent to <see cref="ConfirmSlewCommand"/> with the proposed
-/// coordinates, and kept separate only so a caller that is not overriding
-/// anything need not echo numbers back.
+/// Accept the engine's own proposal for the next point unedited: slew there,
+/// and sample once the mount has settled (D26). Equivalent to
+/// <see cref="ConfirmSlewCommand"/> with the proposed coordinates, and kept
+/// separate only so a caller that is not overriding anything need not echo
+/// numbers back.
 /// </summary>
 public sealed record CaptureNextPointCommand : EngineCommand;
 
 /// <summary>
 /// Slew to coordinates the user supplied -- possibly the proposed ones, possibly
-/// not -- and capture there.
+/// not -- and sample there once settled.
 ///
 /// The override exists because the engine cannot see the sky: trees, a
 /// neighbour's roof and cloud in one quadrant are all invisible to it, and a
@@ -354,13 +405,22 @@ public sealed record EquipmentConfiguredEvent(
 /// different things, and the difference is exactly what this software measures,
 /// so the UI labels this as reported rather than as truth.
 /// </summary>
+/// <param name="IsMoving">
+/// The engine's judgement, not only the driver's: the driver reports slewing,
+/// or the reported position changed since the last poll. Both, because whether
+/// a driver reports hand-controller motion as slewing is unknown (D26).
+/// </param>
 public sealed record MountStatusEvent(
     double RaDegrees,
     double DecDegrees,
     MountTrackingState Tracking,
-    MeridianSide PierSide) : EngineEvent;
+    MeridianSide PierSide,
+    bool IsMoving = false) : EngineEvent;
 
-public sealed record SessionStartedEvent(SessionConfiguration Configuration) : EngineEvent;
+public sealed record SessionStartedEvent(SessionConfiguration Configuration, SequenceMode Mode = SequenceMode.Driven) : EngineEvent;
+
+/// <summary>The exposure every frame from the next one on will be taken at.</summary>
+public sealed record ExposureChangedEvent(TimeSpan Duration) : EngineEvent;
 
 /// <param name="SweepDegrees">
 /// The sweep actually planned, which may be less than requested: the planner
@@ -418,30 +478,68 @@ public sealed record SlewConfirmedEvent(
     string? ReanchoredReason = null) : EngineEvent;
 
 /// <summary>
-/// A frame has been exposed and written to disk, before any attempt to solve
-/// it.
+/// A frame has been exposed and written to disk. The camera runs continuously
+/// while connected (D26), so this arrives every frame, sequence or not; whether
+/// a frame is then solved is announced separately by
+/// <see cref="SolveStartedEvent"/>.
 ///
-/// Published early on purpose. The moment a user most needs to see the frame is
-/// when the solve has just failed — "no stars detected" is answered by looking
-/// at the image, where a lens cap, cloud, a wildly wrong focus or a tracking
-/// runaway are all obvious and none of them are distinguishable from the message
-/// alone.
+/// Published before any solve, on purpose. The moment a user most needs to see
+/// the frame is when the solve has just failed -- "no stars detected" is
+/// answered by looking at the image, where a lens cap, cloud, a wildly wrong
+/// focus or a tracking runaway are all obvious and none of them are
+/// distinguishable from the message alone.
 /// </summary>
 /// <param name="FitsPath">
 /// A local filesystem path, which is the one thing on this boundary that does
-/// not survive a transport (D6). A remote client would need the frame streamed
-/// instead; until there is one, a path costs nothing and copying every frame
-/// through the event stream would.
+/// not survive a transport (D6). The file lives until the next frame replaces
+/// it on screen, and longer only while it is being solved (D26); a reader that
+/// finds it gone has simply been overtaken by a newer frame.
 /// </param>
+/// <param name="GainValue">The camera's raw gain for this frame, where the engine controls it; null otherwise (D25).</param>
 public sealed record FrameCapturedEvent(
-    int PointIndex,
     string FitsPath,
     DateTime ExposureMidpointUtc,
-    TimeSpan Duration) : EngineEvent;
+    TimeSpan Duration,
+    int? GainValue = null) : EngineEvent;
+
+/// <summary>A solve will be attempted after <paramref name="Delay"/>, unless the mount moves first (D26).</summary>
+public sealed record SolveScheduledEvent(SampleTrigger Trigger, TimeSpan Delay) : EngineEvent;
+
+/// <summary>This frame is being solved. At most one solve runs at a time (D26).</summary>
+public sealed record SolveStartedEvent(SampleTrigger Trigger, string FitsPath) : EngineEvent;
+
+/// <summary>
+/// A solve failed. Not a session fault, and in the live loop not a reason to
+/// give up either: most failures are frames taken while the mount was still
+/// being moved, so a count of them measures the user's pace rather than a
+/// fault (D26).
+/// </summary>
+/// <param name="KeptFramePath">Where the frame was kept for diagnosis (D26: the last 20), or null if it could not be.</param>
+public sealed record SolveFailedEvent(
+    SampleTrigger Trigger,
+    string Reason,
+    int ConsecutiveFailures,
+    string? KeptFramePath = null) : EngineEvent;
+
+/// <summary>
+/// A solve succeeded but did not become a sample: the mount has not turned far
+/// enough since the last one (D27), or has not yet been seen to settle (D26).
+/// Said rather than silent, so a user turning the mount by hand can see how
+/// much further to go.
+/// </summary>
+public sealed record SampleSkippedEvent(string Reason) : EngineEvent;
+
+/// <summary>
+/// The samples taken so far were discarded and the sequence restarted from the
+/// current position, because the mount moved in declination. Samples at two
+/// declinations lie on two circles, and fitting them together gives a
+/// confident wrong answer (D11, D18).
+/// </summary>
+public sealed record SequenceRestartedEvent(string Reason) : EngineEvent;
 
 public sealed record ReadoutModeChangedEvent(int Index, string Name, int? BitDepth) : EngineEvent;
 
-public sealed record PointCapturedEvent(CapturePoint Point) : EngineEvent;
+public sealed record PointCapturedEvent(CapturePoint Point, SampleTrigger Trigger = SampleTrigger.SlewEnded) : EngineEvent;
 
 /// <summary>
 /// Emitted after every capture point once >= 3 points are available (D7). The

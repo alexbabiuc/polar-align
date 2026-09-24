@@ -1,11 +1,9 @@
 using FreePolarAlign.Core.Alignment;
-using FreePolarAlign.Core.Astrometry;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Devices;
 using FreePolarAlign.Devices.Simulated;
 using FreePolarAlign.Devices.Simulated.SyntheticSky;
 using FreePolarAlign.Session;
-using FreePolarAlign.Solving;
 using Xunit;
 
 namespace FreePolarAlign.Tests.EndToEnd;
@@ -14,261 +12,18 @@ namespace FreePolarAlign.Tests.EndToEnd;
 /// D18: the mount stands still until it is told to move, and an override that
 /// changes declination restarts the sequence rather than corrupting it.
 ///
-/// These tests run against the real mount mechanics -- the same
-/// <see cref="SimulatedMount"/> the convergence tests use, with its injected
-/// misalignment and cone error -- but with a noiseless solver that simply
-/// reports where the telescope is actually pointing. That substitution buys two
-/// things worth having: the tests need no quad database, so they run everywhere
-/// and in milliseconds, and any discrepancy in the commanded coordinates is
-/// unambiguous rather than lost in solve noise.
-///
-/// What they do *not* test is accuracy. That is the convergence tests' job, with
-/// a real solver on rendered frames.
+/// These run against the real mount mechanics with a noiseless solver (see
+/// <see cref="SessionHarness"/>), so they need no quad database and any
+/// discrepancy in a commanded coordinate is unambiguous rather than lost in
+/// solve noise. What they do *not* test is accuracy; the exit-criterion tests
+/// do that, with a real solver on rendered frames.
 /// </summary>
 public class ConfirmBeforeSlewTests
 {
-    private const double Latitude = 45.0;
-    private static readonly GeodeticLocation Site = new(Latitude, 15.0, 200.0);
-    private static readonly ObserverSite Observer = new(Latitude, 15.0, 200.0);
-
     /// <summary>A tenth of an arcminute -- far below anything that matters here, and far above float noise.</summary>
     private const double ToleranceDegrees = 0.1 / 60.0;
 
-    // ---- Fakes ----
-
-    /// <summary>
-    /// Wraps the real simulated mount and records every slew it is asked to
-    /// perform. The recording is the point: "nothing moved" is only a
-    /// meaningful assertion if movement is observable.
-    /// </summary>
-    private sealed class RecordingMount : IMount
-    {
-        private readonly SimulatedMount _inner;
-
-        public RecordingMount(SimulatedMount inner) => _inner = inner;
-
-        public List<(double Ra, double Dec)> Slews { get; } = new();
-
-        public SimulatedMount Inner => _inner;
-
-        public string Name => _inner.Name;
-
-        public bool IsConnected => _inner.IsConnected;
-
-        public bool CanSlewAsync => _inner.CanSlewAsync;
-
-        public Task ConnectAsync(CancellationToken cancellationToken = default) => _inner.ConnectAsync(cancellationToken);
-
-        public Task DisconnectAsync(CancellationToken cancellationToken = default) => _inner.DisconnectAsync(cancellationToken);
-
-        public Task<MountPosition> GetPositionAsync(CancellationToken cancellationToken = default) =>
-            _inner.GetPositionAsync(cancellationToken);
-
-        public async Task SlewToCoordinatesAsync(double raDegrees, double decDegrees, CancellationToken cancellationToken = default)
-        {
-            Slews.Add((raDegrees, decDegrees));
-            await _inner.SlewToCoordinatesAsync(raDegrees, decDegrees, cancellationToken).ConfigureAwait(false);
-        }
-
-        public Task<PierSide> GetSideOfPierAsync(CancellationToken cancellationToken = default) =>
-            _inner.GetSideOfPierAsync(cancellationToken);
-
-        public Task<GeodeticLocation> GetSiteLocationAsync(CancellationToken cancellationToken = default) =>
-            _inner.GetSiteLocationAsync(cancellationToken);
-
-        public void Dispose() => _inner.Dispose();
-    }
-
-    /// <summary>A camera that produces nothing. The solver here never reads the file.</summary>
-    private sealed class StubCamera : ICamera
-    {
-        public string Name => "Stub Camera";
-
-        public int SensorWidthPixels => 4000;
-
-        public int SensorHeightPixels => 3000;
-
-        public double PixelSizeMicrons => 3.76;
-
-        public bool IsConnected { get; private set; }
-
-        public int Exposures { get; private set; }
-
-        /// <summary>No modes, which is the common case for a real camera and the one worth exercising by default.</summary>
-        public IReadOnlyList<CameraReadoutMode> ReadoutModes => Array.Empty<CameraReadoutMode>();
-
-        public int? ReadoutModeIndex => null;
-
-        public Task SetReadoutModeAsync(int index, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException("This stub camera has no selectable readout modes.");
-
-        public Task ConnectAsync(CancellationToken cancellationToken = default)
-        {
-            IsConnected = true;
-            return Task.CompletedTask;
-        }
-
-        public Task DisconnectAsync(CancellationToken cancellationToken = default)
-        {
-            IsConnected = false;
-            return Task.CompletedTask;
-        }
-
-        /// <summary>What the session handed down with the most recent exposure.</summary>
-        public CaptureContext? LastContext { get; private set; }
-
-        public Task<CapturedImage> ExposeAsync(
-            TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default)
-        {
-            if (!IsConnected)
-            {
-                throw new InvalidOperationException("The stub camera is not connected.");
-            }
-
-            Exposures++;
-            LastContext = context;
-            return Task.FromResult(new CapturedImage("stub.fits", DateTime.UtcNow, duration));
-        }
-
-        public void Dispose() => IsConnected = false;
-    }
-
-    /// <summary>
-    /// Reports exactly where the telescope is pointing, converted back to sky
-    /// coordinates through the same atmosphere the session will use to convert
-    /// them forward again. The round trip is therefore exact, which makes any
-    /// difference in a commanded coordinate attributable to the engine.
-    /// </summary>
-    private sealed class PerfectSolver : ISolver
-    {
-        private readonly SimulatedMount _mount;
-
-        public PerfectSolver(SimulatedMount mount) => _mount = mount;
-
-        public string Name => "Perfect (test)";
-
-        public Task<PlateSolveResult> SolveAsync(PlateSolveRequest request, CancellationToken cancellationToken = default)
-        {
-            DateTime now = DateTime.UtcNow;
-            HorizontalCoordinates pointing = _mount.PhysicalPointingAt(now);
-
-            (double ra, double dec) = TopocentricConverter.FromAltAz(
-                pointing, now, Observer, AtmosphericConditions.Standard);
-
-            return Task.FromResult(PlateSolveResult.Succeeded(new PlateSolveSolution(
-                ra, dec,
-                PixelScaleArcsecPerPixel: 2.0,
-                RotationDegrees: 0.0,
-                Cd1_1: -2.0 / 3600.0, Cd1_2: 0.0, Cd2_1: 0.0, Cd2_2: 2.0 / 3600.0,
-                MatchedStarCount: 40,
-                SolveDuration: TimeSpan.Zero)));
-        }
-    }
-
-    private sealed class Recorder : IObserver<EngineEvent>
-    {
-        public List<EngineEvent> Events { get; } = new();
-
-        public void OnNext(EngineEvent value) => Events.Add(value);
-
-        public void OnError(Exception error) { }
-
-        public void OnCompleted() { }
-
-        public T? Last<T>() where T : EngineEvent => Events.OfType<T>().LastOrDefault();
-
-        public IEnumerable<T> All<T>() where T : EngineEvent => Events.OfType<T>();
-
-        public string Trail() => Environment.NewLine + string.Join(
-            Environment.NewLine,
-            Events.Select(e => EngineEventNarrator.Describe(e))
-                .Where(n => !string.IsNullOrEmpty(n.Message))
-                .Select(n => $"  {n.Severity}: {n.Message}"));
-    }
-
-    // ---- Harness ----
-
-    private sealed class Harness : IDisposable
-    {
-        public Harness(bool manualMode = false, double coneErrorArcminutes = 20.0)
-        {
-            var options = new SimulatedMountOptions(
-                Site,
-                new MountMisalignment(30.0, -25.0),
-                ConeErrorArcminutes: coneErrorArcminutes,
-                ConePhaseDegrees: 35.0,
-                Tracking: true);
-
-            Simulated = new SimulatedMount(options);
-            Mount = new RecordingMount(Simulated);
-            Camera = new StubCamera();
-            Solver = new PerfectSolver(Simulated);
-
-            Session = new AlignmentSession(Camera, Mount, Solver, new AlignmentSessionOptions(
-                CaptureCount: 5, SweepDegrees: 60.0, ManualMode: manualMode, ExpectedSolveNoiseArcseconds: 3.0));
-
-            Recorder = new Recorder();
-            _subscription = Session.Events.Subscribe(Recorder);
-        }
-
-        private readonly IDisposable _subscription;
-
-        public SimulatedMount Simulated { get; }
-
-        public RecordingMount Mount { get; }
-
-        public StubCamera Camera { get; }
-
-        public PerfectSolver Solver { get; }
-
-        public AlignmentSession Session { get; }
-
-        public Recorder Recorder { get; }
-
-        public async Task ConnectAsync()
-        {
-            await Session.SendAsync(new ConnectDeviceCommand(
-                DeviceKind.Camera, AlignmentSession.AttachedProviderName, "camera"));
-            await Session.SendAsync(new ConnectDeviceCommand(
-                DeviceKind.Mount, AlignmentSession.AttachedProviderName, "mount"));
-        }
-
-        public Task ConfirmSiteAsync() => Session
-            .SendAsync(new ConfigureSiteCommand(Site.LatitudeDegrees, Site.LongitudeDegrees, Site.HeightMeters))
-            .AsTask();
-
-        public Task StartAsync(int points = 5, double sweep = 60.0) => Session
-            .SendAsync(new StartSessionCommand(new SessionConfiguration(points, sweep, TimeSpan.FromSeconds(1))))
-            .AsTask();
-
-        public async Task ReadyAsync()
-        {
-            await ConnectAsync();
-            await ConfirmSiteAsync();
-            await StartAsync();
-        }
-
-        public void Dispose()
-        {
-            _subscription.Dispose();
-            Session.Dispose();
-        }
-    }
-
-    /// <summary>
-    /// The mechanical declination a commanded sky position corresponds to --
-    /// computed the same geometric way the engine does, since it has to invert
-    /// what the mount will do rather than model the atmosphere better than the
-    /// mount does.
-    /// </summary>
-    private static double MechanicalDeclinationOf(double raDegrees, double decDegrees)
-    {
-        HorizontalCoordinates pointing = TopocentricConverter.ToAltAz(
-            raDegrees, decDegrees, DateTime.UtcNow, Observer, AtmosphericConditions.Vacuum);
-
-        var (_, declination) = MountMechanics.Decompose(Latitude, pointing);
-        return declination;
-    }
+    private static readonly GeodeticLocation Site = SessionHarness.Site;
 
     // ---- Nothing moves unbidden ----
 
@@ -281,14 +36,12 @@ public class ConfirmBeforeSlewTests
     [Fact]
     public async Task StartingASequence_MovesNothing()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness(initialRotationDegrees: 12.0);
 
-        await harness.ConnectAsync();
-        await harness.ConfirmSiteAsync();
-        await harness.StartAsync();
+        await harness.ReadyAsync();
+        await Task.Delay(200);
 
         Assert.Empty(harness.Mount.Slews);
-        Assert.Equal(0, harness.Camera.Exposures);
 
         SlewProposedEvent? proposed = harness.Recorder.Last<SlewProposedEvent>();
         Assert.True(proposed is not null, harness.Recorder.Trail());
@@ -296,49 +49,65 @@ public class ConfirmBeforeSlewTests
     }
 
     /// <summary>
-    /// And the first point is taken where the telescope already points, so the
-    /// scale is measured before anything is asked to move -- which is the one
-    /// frame most worth having before a slew, since it is what makes every later
-    /// solve a bounded search instead of a blind one.
+    /// Where the telescope already points somewhere usable east of the meridian,
+    /// the first sample is taken there, without a click and without motion (D18
+    /// as revised) -- which also measures the scale before anything moves, the
+    /// one frame most worth having before a slew.
     /// </summary>
     [Fact]
-    public async Task TheFirstPoint_NeedsNoMovementAtAll()
+    public async Task AnAnchoredFirstPoint_IsSampledWhereItStandsWithoutAClick()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
         await harness.ReadyAsync();
 
         Assert.False(harness.Recorder.Last<SlewProposedEvent>()!.RequiresMotion);
 
-        await harness.Session.SendAsync(new CaptureNextPointCommand());
+        await harness.WaitForSampleAsync(1);
 
         Assert.Empty(harness.Mount.Slews);
-        Assert.Equal(1, harness.Camera.Exposures);
-        Assert.Equal(1, harness.Recorder.Last<PointCapturedEvent>()!.Point.Index);
+    }
+
+    /// <summary>
+    /// Sequences start east and sweep west (D18 as revised). A telescope west of
+    /// the meridian is proposed a move east first rather than anchored where it
+    /// is -- and the move is only proposed.
+    /// </summary>
+    [Fact]
+    public async Task WestOfTheMeridian_TheFirstPointIsAProposedMoveEast()
+    {
+        using var harness = new SessionHarness(initialRotationDegrees: 12.0);
+        await harness.ReadyAsync();
+        await Task.Delay(200);
+
+        SlewProposedEvent proposed = harness.Recorder.Last<SlewProposedEvent>()!;
+        Assert.True(proposed.RequiresMotion, harness.Recorder.Trail());
+        Assert.True(proposed.MechanicalRotationDegrees < 0.0, $"proposed {proposed.MechanicalRotationDegrees:F1}°, which is not east");
+        Assert.Empty(harness.Mount.Slews);
+        Assert.Null(harness.Recorder.Last<PointCapturedEvent>());
     }
 
     /// <summary>
     /// Every later point is proposed and then waited on. The engine does not
-    /// chain one capture into the next slew, however obvious the next step is.
+    /// chain one sample into the next slew, however obvious the next step is.
     /// </summary>
     [Fact]
     public async Task EveryLaterPoint_WaitsToBeConfirmed()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
         await harness.ReadyAsync();
+        await harness.WaitForSampleAsync(1);
 
-        await harness.Session.SendAsync(new CaptureNextPointCommand());
-
-        // A proposal for point 2 exists, and it does require movement -- but
-        // nothing has moved.
-        SlewProposedEvent? proposed = harness.Recorder.Last<SlewProposedEvent>();
-        Assert.Equal(2, proposed!.PointIndex);
+        SlewProposedEvent proposed = await harness.Recorder.WaitForAsync<SlewProposedEvent>(e => e.PointIndex == 2);
         Assert.True(proposed.RequiresMotion);
+
+        await Task.Delay(200);
         Assert.Empty(harness.Mount.Slews);
+        Assert.Single(harness.Recorder.All<PointCapturedEvent>());
 
         await harness.Session.SendAsync(new CaptureNextPointCommand());
+        await harness.WaitForSampleAsync(2);
 
         Assert.Single(harness.Mount.Slews);
-        Assert.Equal(2, harness.Recorder.Last<PointCapturedEvent>()!.Point.Index);
     }
 
     /// <summary>
@@ -350,99 +119,104 @@ public class ConfirmBeforeSlewTests
     /// enough to invalidate the fit it is part of.
     /// </summary>
     [Fact]
-    public async Task ConfirmingTheProposal_HoldsTheMechanicalDeclinationOnEveryPoint()
+    public async Task ConfirmingEveryProposal_HoldsTheMechanicalDeclinationAndCompletes()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
         await harness.ReadyAsync();
 
-        double planned = harness.Recorder.Last<TargetSelectedEvent>()!.DeclinationDegrees;
-
-        for (int i = 0; i < 5; i++)
+        for (int point = 1; point <= 5; point++)
         {
-            await harness.Session.SendAsync(new CaptureNextPointCommand());
-            Assert.True(harness.Recorder.Last<SessionFaultedEvent>() is null, harness.Recorder.Trail());
+            await harness.WaitForSampleAsync(point);
+            if (point < 5)
+            {
+                await harness.Recorder.WaitForAsync<SlewProposedEvent>(e => e.PointIndex == point + 1);
+                await harness.Session.SendAsync(new CaptureNextPointCommand());
+            }
         }
 
+        await harness.Recorder.WaitForAsync<SessionCompletedEvent>();
         Assert.Equal(4, harness.Mount.Slews.Count);
 
+        double planned = SessionHarness.MechanicalDeclinationOf(harness.Mount.Slews[0].Ra, harness.Mount.Slews[0].Dec);
         foreach ((double ra, double dec) in harness.Mount.Slews)
         {
-            Assert.Equal(planned, MechanicalDeclinationOf(ra, dec), tolerance: ToleranceDegrees);
+            Assert.Equal(planned, SessionHarness.MechanicalDeclinationOf(ra, dec), tolerance: ToleranceDegrees);
         }
+
+        // Five points over 60°, all trusted, from a noiseless solver: the
+        // injected misalignment comes back.
+        AlignmentEstimate estimate = harness.Recorder.Last<AlignmentUpdatedEvent>()!.Estimate;
+        Assert.Equal(SessionHarness.Injected.AltitudeErrorArcminutes, estimate.AltitudeErrorArcminutes, tolerance: 0.5);
+        Assert.Equal(SessionHarness.Injected.AzimuthErrorArcminutes, estimate.AzimuthErrorArcminutes, tolerance: 0.5);
     }
 
     // ---- Overriding ----
 
     /// <summary>
     /// Moving along the same arc is an ordinary override: the user can see a tree
-    /// where the engine cannot, and a planner that insisted on its own hour angle
-    /// would be wrong more often than they are. The sequence continues, and the
-    /// declination is snapped back to the plan's exactly -- because the few
-    /// arcminutes a hand-typed declination would otherwise sit out by is real
-    /// declination movement, and the sequence must not contain any.
+    /// where the engine cannot. The sequence continues, and the declination is
+    /// snapped back to the sequence's exactly -- because the few arcminutes a
+    /// hand-typed declination would otherwise sit out by is real declination
+    /// movement, and the sequence must not contain any.
+    ///
+    /// The override here lands only 10° from the first sample, inside D27's
+    /// spacing. It is sampled anyway: the spacing rule is for motion the engine
+    /// did not command, and a slew the user confirmed to a position they chose is
+    /// the opposite of that.
     /// </summary>
     [Fact]
     public async Task AnOverrideAlongTheSameArc_KeepsTheSequenceAndSnapsTheDeclination()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
         await harness.ReadyAsync();
+        await harness.WaitForSampleAsync(1);
 
-        double planned = harness.Recorder.Last<TargetSelectedEvent>()!.DeclinationDegrees;
+        SlewProposedEvent proposal = await harness.Recorder.WaitForAsync<SlewProposedEvent>(e => e.PointIndex == 2);
+        double sampleDeclination = harness.MechanicalDeclinationNow();
 
-        await harness.Session.SendAsync(new CaptureNextPointCommand());
-        SlewProposedEvent proposal = harness.Recorder.Last<SlewProposedEvent>()!;
-
-        // Ten degrees further west along the same declination.
+        // Five degrees back east of the proposal, along the same declination.
         await harness.Session.SendAsync(new ConfirmSlewCommand(
-            (proposal.RaDegrees + 10.0) % 360.0, proposal.DecDegrees));
+            (proposal.RaDegrees + 5.0) % 360.0, proposal.DecDegrees));
 
-        Assert.True(harness.Recorder.Last<AlignmentWithheldEvent>() is null, harness.Recorder.Trail());
+        await harness.WaitForSampleAsync(2);
+
+        Assert.Null(harness.Recorder.Last<AlignmentWithheldEvent>());
         Assert.True(harness.Recorder.Last<SlewConfirmedEvent>()!.WasOverridden);
         Assert.Null(harness.Recorder.Last<SlewConfirmedEvent>()!.ReanchoredReason);
 
-        // The sequence carried on rather than restarting.
-        Assert.Equal(2, harness.Recorder.Last<PointCapturedEvent>()!.Point.Index);
-
         (double ra, double dec) = harness.Mount.Slews[^1];
-        Assert.Equal(planned, MechanicalDeclinationOf(ra, dec), tolerance: ToleranceDegrees);
+        Assert.Equal(sampleDeclination, SessionHarness.MechanicalDeclinationOf(ra, dec), tolerance: ToleranceDegrees);
     }
 
     /// <summary>
     /// Moving to a different declination is a different target, and the earlier
-    /// captures are discarded.
+    /// samples are discarded.
     ///
     /// This is the case where being generous would be dangerous. Points at
     /// different declinations do not lie on one circle about the polar axis, so
     /// fitting them together does not merely add noise -- it produces a
     /// confident wrong answer, which is the single failure mode this project
-    /// exists to avoid. Restarting costs the user twenty minutes; not restarting
-    /// costs them a night of trailed subframes and no idea why.
+    /// exists to avoid.
     /// </summary>
     [Fact]
     public async Task AnOverrideToADifferentDeclination_DiscardsWhatCameBeforeAndSaysWhy()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
         await harness.ReadyAsync();
+        await harness.WaitForSampleAsync(1);
 
-        await harness.Session.SendAsync(new CaptureNextPointCommand());
-        await harness.Session.SendAsync(new CaptureNextPointCommand());
-        Assert.Equal(2, harness.Recorder.Last<PointCapturedEvent>()!.Point.Index);
-
-        SlewProposedEvent proposal = harness.Recorder.Last<SlewProposedEvent>()!;
+        SlewProposedEvent proposal = await harness.Recorder.WaitForAsync<SlewProposedEvent>(e => e.PointIndex == 2);
         double before = harness.Recorder.Last<TargetSelectedEvent>()!.DeclinationDegrees;
 
-        // A degree further south: unmistakably a different target rather than a
-        // different hour angle on the same one.
-        await harness.Session.SendAsync(new ConfirmSlewCommand(
-            proposal.RaDegrees, proposal.DecDegrees - 1.0));
+        // A degree nearer the pole: unmistakably a different target.
+        await harness.Session.SendAsync(new ConfirmSlewCommand(proposal.RaDegrees, proposal.DecDegrees + 1.0));
 
-        AlignmentWithheldEvent? withheld = harness.Recorder.Last<AlignmentWithheldEvent>();
-        Assert.True(withheld is not null, harness.Recorder.Trail());
-        Assert.Contains("declination", withheld!.Reason, StringComparison.OrdinalIgnoreCase);
+        AlignmentWithheldEvent withheld = await harness.Recorder.WaitForAsync<AlignmentWithheldEvent>();
+        Assert.Contains("declination", withheld.Reason, StringComparison.OrdinalIgnoreCase);
 
         // Re-planned, and counting from one again.
-        Assert.Equal(1, harness.Recorder.Last<PointCapturedEvent>()!.Point.Index);
-        Assert.True(harness.Recorder.All<TargetSelectedEvent>().Count() >= 2, harness.Recorder.Trail());
+        int restartedAt = harness.Recorder.IndexOfLast<AlignmentWithheldEvent>();
+        await harness.Recorder.WaitForAsync<PointCapturedEvent>(e => e.Point.Index == 1, fromIndex: restartedAt, poll: harness.PollAsync);
 
         double after = harness.Recorder.Last<TargetSelectedEvent>()!.DeclinationDegrees;
         Assert.True(
@@ -452,40 +226,40 @@ public class ConfirmBeforeSlewTests
 
     /// <summary>
     /// An estimate already on screen must not survive the re-anchor either: it
-    /// was computed from captures that have just been thrown away.
+    /// was computed from samples that have just been thrown away.
     /// </summary>
     [Fact]
     public async Task ReanchoringAfterAnEstimate_WithdrawsThatEstimate()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
         await harness.ReadyAsync();
 
-        for (int i = 0; i < 3; i++)
+        for (int point = 1; point <= 3; point++)
         {
-            await harness.Session.SendAsync(new CaptureNextPointCommand());
+            await harness.WaitForSampleAsync(point);
+            await harness.Recorder.WaitForAsync<SlewProposedEvent>(e => e.PointIndex == point + 1);
+            if (point < 3)
+            {
+                await harness.Session.SendAsync(new CaptureNextPointCommand());
+            }
         }
 
-        // Three points is the minimum the fit needs (D7), so there is now an
-        // estimate to withdraw.
         Assert.True(harness.Recorder.Last<AlignmentUpdatedEvent>() is not null, harness.Recorder.Trail());
 
         SlewProposedEvent proposal = harness.Recorder.Last<SlewProposedEvent>()!;
-        await harness.Session.SendAsync(new ConfirmSlewCommand(
-            proposal.RaDegrees, proposal.DecDegrees - 1.5));
+        await harness.Session.SendAsync(new ConfirmSlewCommand(proposal.RaDegrees, proposal.DecDegrees + 1.5));
 
-        int withheldAt = harness.Recorder.Events.FindLastIndex(e => e is AlignmentWithheldEvent);
-        int updatedAt = harness.Recorder.Events.FindLastIndex(e => e is AlignmentUpdatedEvent);
+        int withheldAt = harness.Recorder.IndexOfLast<AlignmentWithheldEvent>();
+        int updatedAt = harness.Recorder.IndexOfLast<AlignmentUpdatedEvent>();
 
         Assert.True(withheldAt >= 0, harness.Recorder.Trail());
         Assert.True(
             withheldAt > updatedAt,
             "the withdrawal must come after the last estimate, or the UI would keep showing a number " +
-            "computed from captures that no longer exist");
+            "computed from samples that no longer exist");
     }
 
-    /// <summary>
-    /// Coordinates that are not on the sky are refused before anything moves.
-    /// </summary>
+    /// <summary>Coordinates that are not on the sky are refused before anything moves.</summary>
     [Theory]
     [InlineData(400.0, 30.0)]
     [InlineData(-10.0, 30.0)]
@@ -494,28 +268,26 @@ public class ConfirmBeforeSlewTests
     [InlineData(double.NaN, 30.0)]
     public async Task CoordinatesOffTheSky_AreRefusedWithoutMoving(double ra, double dec)
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness(initialRotationDegrees: 12.0);
         await harness.ReadyAsync();
-        await harness.Session.SendAsync(new CaptureNextPointCommand());
 
-        int slewsBefore = harness.Mount.Slews.Count;
         await harness.Session.SendAsync(new ConfirmSlewCommand(ra, dec));
 
         Assert.True(harness.Recorder.Last<CommandRejectedEvent>() is not null, harness.Recorder.Trail());
-        Assert.Equal(slewsBefore, harness.Mount.Slews.Count);
+        Assert.Empty(harness.Mount.Slews);
     }
 
     // ---- Preconditions ----
 
     /// <summary>
-    /// A sequence needs a camera, a mount and a confirmed site, and says which is
-    /// missing. Refusing is deliberately not a fault: nothing has broken, and
-    /// presenting it as a fault would train the user to ignore faults.
+    /// A sequence needs a camera and a confirmed site, and says which is missing.
+    /// Refusing is deliberately not a fault: nothing has broken, and presenting it
+    /// as a fault would train the user to ignore faults.
     /// </summary>
     [Fact]
     public async Task WithoutACamera_StartingIsRefusedRatherThanFaulted()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
 
         await harness.Session.SendAsync(new ConnectDeviceCommand(
             DeviceKind.Mount, AlignmentSession.AttachedProviderName, "mount"));
@@ -536,7 +308,7 @@ public class ConfirmBeforeSlewTests
     [Fact]
     public async Task WithoutAConfirmedSite_StartingIsRefused()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
 
         await harness.ConnectAsync();
         await harness.StartAsync();
@@ -548,13 +320,13 @@ public class ConfirmBeforeSlewTests
     }
 
     /// <summary>
-    /// Fewer than three captures cannot determine a circle (D7), so it is
-    /// refused rather than attempted and withheld later.
+    /// Fewer than three samples cannot determine a circle (D7), so it is refused
+    /// rather than attempted and withheld later.
     /// </summary>
     [Fact]
     public async Task FewerThanThreeCaptures_IsRefused()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
 
         await harness.ConnectAsync();
         await harness.ConfirmSiteAsync();
@@ -565,7 +337,7 @@ public class ConfirmBeforeSlewTests
     }
 
     /// <summary>
-    /// Devices cannot be swapped out from under a running sequence. Every capture
+    /// Devices cannot be swapped out from under a running sequence. Every sample
     /// already taken was made with the current pair, and pulling one mid-sequence
     /// would surface as an opaque driver error rather than as the deliberate act
     /// it was.
@@ -573,9 +345,9 @@ public class ConfirmBeforeSlewTests
     [Fact]
     public async Task DisconnectingMidSequence_IsRefused()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
         await harness.ReadyAsync();
-        await harness.Session.SendAsync(new CaptureNextPointCommand());
+        await harness.WaitForSampleAsync(1);
 
         await harness.Session.SendAsync(new DisconnectDeviceCommand(DeviceKind.Camera));
 
@@ -584,161 +356,120 @@ public class ConfirmBeforeSlewTests
 
         // And the sequence is still usable.
         await harness.Session.SendAsync(new CaptureNextPointCommand());
-        Assert.Equal(2, harness.Recorder.Last<PointCapturedEvent>()!.Point.Index);
+        await harness.WaitForSampleAsync(2);
     }
 
     // ---- Status ----
 
     /// <summary>
     /// The mount's tracking state and reported position have to reach the UI, or
-    /// the user cannot tell a stopped drive from a running one -- and a stopped
-    /// drive during a sequence means every frame after the first is of somewhere
-    /// else.
+    /// the user cannot tell a stopped drive from a running one.
     /// </summary>
     [Fact]
     public async Task MountStatus_ReportsPositionAndTracking()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
         await harness.ConnectAsync();
 
-        await harness.Session.SendAsync(new RefreshMountStatusCommand());
+        await harness.PollAsync();
 
         MountStatusEvent? status = harness.Recorder.Last<MountStatusEvent>();
         Assert.True(status is not null, harness.Recorder.Trail());
         Assert.Equal(MountTrackingState.Tracking, status!.Tracking);
         Assert.InRange(status.RaDegrees, 0.0, 360.0);
         Assert.InRange(status.DecDegrees, -90.0, 90.0);
+        Assert.False(status.IsMoving);
     }
 
     /// <summary>
     /// A driver that does not report tracking must produce "unknown", never
-    /// "stopped". They are indistinguishable in a boolean and mean very
-    /// different things to someone deciding whether the numbers they are
-    /// watching should be changing on their own.
+    /// "stopped" -- and one that does report it stopped must say so.
     /// </summary>
     [Fact]
     public async Task AMountWithTheDriveStopped_SaysSoRatherThanReportingNothing()
     {
-        var options = new SimulatedMountOptions(Site, new MountMisalignment(10.0, 10.0), Tracking: false);
-        var simulated = new SimulatedMount(options);
-        var mount = new RecordingMount(simulated);
-        var camera = new StubCamera();
+        using var harness = new SessionHarness(tracking: false);
+        await harness.ConnectAsync();
+        await harness.PollAsync();
 
-        using var session = new AlignmentSession(camera, mount, new PerfectSolver(simulated));
-        var recorder = new Recorder();
-        using IDisposable subscription = session.Events.Subscribe(recorder);
-
-        await session.SendAsync(new ConnectDeviceCommand(
-            DeviceKind.Mount, AlignmentSession.AttachedProviderName, "mount"));
-        await session.SendAsync(new RefreshMountStatusCommand());
-
-        Assert.Equal(MountTrackingState.Stopped, recorder.Last<MountStatusEvent>()!.Tracking);
+        Assert.Equal(MountTrackingState.Stopped, harness.Recorder.Last<MountStatusEvent>()!.Tracking);
     }
 
-    // ---- The captured frame ----
+    // ---- The frame ----
 
     /// <summary>
     /// The frame is announced before the solve is attempted. A user whose solve
     /// has just failed needs the image, because "no stars detected" is answered
-    /// by looking at it -- a lens cap, cloud, wild defocus and a tracking runaway
-    /// are all obvious in the picture and none are distinguishable from the
-    /// message.
+    /// by looking at it.
     /// </summary>
     [Fact]
-    public async Task TheFrameIsAnnouncedBeforeTheSolveIsAttempted()
+    public async Task TheFrameIsAnnouncedBeforeItIsSolved()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
         await harness.ReadyAsync();
+        await harness.WaitForSampleAsync(1);
 
-        await harness.Session.SendAsync(new CaptureNextPointCommand());
+        SolveStartedEvent started = harness.Recorder.Last<SolveStartedEvent>()!;
+        IReadOnlyList<EngineEvent> events = harness.Recorder.Events;
+        int frameAt = events.ToList().FindIndex(e => e is FrameCapturedEvent f && f.FitsPath == started.FitsPath);
+        int solveAt = events.ToList().IndexOf(started);
+        int sampleAt = harness.Recorder.IndexOfLast<PointCapturedEvent>();
 
-        int frameAt = harness.Recorder.Events.FindIndex(e => e is FrameCapturedEvent);
-        int solvedAt = harness.Recorder.Events.FindIndex(e => e is PointCapturedEvent);
-
-        Assert.True(frameAt >= 0, harness.Recorder.Trail());
-        Assert.True(frameAt < solvedAt, "the frame must be available before the solve resolves it");
-        Assert.Equal(1, harness.Recorder.Last<FrameCapturedEvent>()!.PointIndex);
+        Assert.True(frameAt >= 0 && frameAt < solveAt && solveAt < sampleAt, harness.Recorder.Trail());
     }
 
     /// <summary>
     /// The session tells the camera what only the session knows, so the frame
-    /// can record it.
-    ///
-    /// Where the mount believes it is pointing and what focal length is in use
-    /// are not the camera's to discover, and a frame found in a temp directory
-    /// afterwards is a rectangle of numbers without them. The position asserted
-    /// here is the one the session had just read from the mount and published,
-    /// so the frame and the event agree about the same instant.
+    /// can record it: where the mount believes it is pointing (D20).
     /// </summary>
     [Fact]
     public async Task TheCameraIsToldWhereTheMountThinksItIsPointing()
     {
-        using var harness = new Harness();
-        await harness.ReadyAsync();
+        using var harness = new SessionHarness();
+        await harness.ConnectAsync();
+        await harness.PollAsync();
 
-        await harness.Session.SendAsync(new CaptureNextPointCommand());
-
-        CaptureContext? context = harness.Camera.LastContext;
-        Assert.NotNull(context);
+        int framesBefore = harness.Camera.Exposures;
+        await harness.Recorder.WaitForAsync<FrameCapturedEvent>(fromIndex: harness.Recorder.Count);
+        await harness.Recorder.WaitForAsync<FrameCapturedEvent>(fromIndex: harness.Recorder.Count);
 
         MountStatusEvent status = harness.Recorder.Last<MountStatusEvent>()!;
+        CaptureContext? context = harness.Camera.Frames.Skip(framesBefore).Last().Context;
+
+        Assert.NotNull(context);
         Assert.Equal(status.RaDegrees, context!.MountRaDegrees!.Value, precision: 9);
         Assert.Equal(status.DecDegrees, context.MountDecDegrees!.Value, precision: 9);
     }
 
     /// <summary>
-    /// And it is announced even when the solve fails, which is the case it
-    /// exists for.
+    /// A failed solve is reported and its frame kept for diagnosis (D26), rather
+    /// than faulting the sequence or deleting the one frame worth looking at.
     /// </summary>
     [Fact]
-    public async Task AFailedSolve_StillLeavesTheFrameAvailable()
+    public async Task AFailedSolve_IsReportedAndItsFrameKept()
     {
-        var options = new SimulatedMountOptions(Site, new MountMisalignment(30.0, -25.0));
-        var simulated = new SimulatedMount(options);
-        var mount = new RecordingMount(simulated);
-        var camera = new StubCamera();
+        using var harness = new SessionHarness(solver: new HopelessSolver());
+        await harness.ReadyAsync();
 
-        using var session = new AlignmentSession(camera, mount, new HopelessSolver());
-        var recorder = new Recorder();
-        using IDisposable subscription = session.Events.Subscribe(recorder);
+        SolveFailedEvent failed = await harness.Recorder.WaitForAsync<SolveFailedEvent>();
 
-        await session.SendAsync(new ConnectDeviceCommand(
-            DeviceKind.Camera, AlignmentSession.AttachedProviderName, "camera"));
-        await session.SendAsync(new ConnectDeviceCommand(
-            DeviceKind.Mount, AlignmentSession.AttachedProviderName, "mount"));
-        await session.SendAsync(new ConfigureSiteCommand(
-            Site.LatitudeDegrees, Site.LongitudeDegrees, Site.HeightMeters));
-        await session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 60.0, TimeSpan.FromSeconds(1))));
-
-        await session.SendAsync(new CaptureNextPointCommand());
-
-        Assert.NotNull(recorder.Last<FrameCapturedEvent>());
-        Assert.NotNull(recorder.Last<CaptureFailedEvent>());
-        Assert.Null(recorder.Last<PointCapturedEvent>());
-    }
-
-    /// <summary>A solver that never matches anything, for the failure path.</summary>
-    private sealed class HopelessSolver : ISolver
-    {
-        public string Name => "Hopeless (test)";
-
-        public Task<PlateSolveResult> SolveAsync(PlateSolveRequest request, CancellationToken cancellationToken = default) =>
-            Task.FromResult(PlateSolveResult.Failed(
-                PlateSolveFailureReason.NoStarsDetected, "No stars were detected in the image."));
+        Assert.Null(harness.Recorder.Last<SessionFaultedEvent>());
+        Assert.Null(harness.Recorder.Last<PointCapturedEvent>());
+        Assert.Equal(1, failed.ConsecutiveFailures);
     }
 
     // ---- Readout modes ----
 
     /// <summary>
     /// A camera that offers no readout modes refuses a selection rather than
-    /// pretending to have made one. Most cameras are in this position, and a
-    /// silently ignored setting is the worst outcome: the user believes they are
-    /// reading out at sixteen bits and has no way to find out otherwise.
+    /// pretending to have made one. A silently ignored setting is the worst
+    /// outcome: the user believes they are reading out at sixteen bits and has
+    /// no way to find out otherwise.
     /// </summary>
     [Fact]
     public async Task ACameraWithNoReadoutModes_RefusesASelection()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
         await harness.ConnectAsync();
 
         await harness.Session.SendAsync(new SetReadoutModeCommand(1));
@@ -748,52 +479,43 @@ public class ConfirmBeforeSlewTests
     }
 
     /// <summary>
-    /// The mode cannot be changed part-way through a sequence. The frames already
-    /// captured were read out differently, and the fit weights every observation
-    /// alike -- so mixing depths would quietly degrade the answer by an amount
-    /// nothing reports.
+    /// The mode can be changed part-way through a sequence (D22, D25 as revised).
+    /// It was refused, on the reasoning that the fit weights every frame alike;
+    /// but the bit depth changes how noisy a solved position is, not where it
+    /// is, and refusing it left a user stuck with a mode found wrong mid-sequence.
     /// </summary>
     [Fact]
-    public async Task ChangingTheReadoutModeMidSequence_IsRefused()
+    public async Task ChangingTheReadoutModeMidSequence_IsAccepted()
     {
-        var options = new SimulatedMountOptions(Site, new MountMisalignment(30.0, -25.0));
-        var simulated = new SimulatedMount(options);
-        var mount = new RecordingMount(simulated);
-
-        // The simulated camera has real readout modes, so this exercises the
-        // mid-sequence guard rather than the no-modes one.
+        var mountOptions = new SimulatedMountOptions(
+            Site, new MountMisalignment(30.0, -25.0), InitialMechanicalRotationDegrees: -70.0);
         var provider = new SimulatedDeviceProvider(
-            StarCatalog.LoadCsv(CatalogPath), options);
+            StarCatalog.LoadCsv(CatalogPath), mountOptions,
+            new SimulatedCameraOptions(WidthPixels: 320, HeightPixels: 240));
+        var mount = new RecordingMount(provider.MountInstance);
 
         using ICamera camera = provider.OpenCamera("sim-camera");
-        using var session = new AlignmentSession(camera, mount, new PerfectSolver(simulated));
+        using var session = new AlignmentSession(camera, mount, new PerfectSolver(provider.MountInstance, Site),
+            new AlignmentSessionOptions(ExposureDuration: TimeSpan.FromMilliseconds(20), FailedSolvesDirectory: TempDirectory()));
         var recorder = new Recorder();
         using IDisposable subscription = session.Events.Subscribe(recorder);
 
-        await session.SendAsync(new ConnectDeviceCommand(
-            DeviceKind.Camera, AlignmentSession.AttachedProviderName, "camera"));
-        await session.SendAsync(new ConnectDeviceCommand(
-            DeviceKind.Mount, AlignmentSession.AttachedProviderName, "mount"));
+        await session.SendAsync(new ConnectDeviceCommand(DeviceKind.Camera, AlignmentSession.AttachedProviderName, "camera"));
+        await session.SendAsync(new ConnectDeviceCommand(DeviceKind.Mount, AlignmentSession.AttachedProviderName, "mount"));
+        await session.SendAsync(new ConfigureSiteCommand(Site.LatitudeDegrees, Site.LongitudeDegrees, Site.HeightMeters));
+        await session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 60.0)));
+        Assert.NotNull(recorder.Last<SessionStartedEvent>());
 
-        // Before a sequence: accepted.
         await session.SendAsync(new SetReadoutModeCommand(1));
-        Assert.Equal(8, recorder.Last<ReadoutModeChangedEvent>()!.BitDepth);
 
-        await session.SendAsync(new ConfigureSiteCommand(
-            Site.LatitudeDegrees, Site.LongitudeDegrees, Site.HeightMeters));
-        await session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 60.0, TimeSpan.FromSeconds(1))));
-
-        // During one: refused.
-        await session.SendAsync(new SetReadoutModeCommand(0));
-
-        CommandRejectedEvent? rejected = recorder.Last<CommandRejectedEvent>();
-        Assert.True(rejected is not null, recorder.Trail());
-        Assert.Contains("sequence", rejected!.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(recorder.Last<CommandRejectedEvent>());
         Assert.Equal(8, recorder.Last<ReadoutModeChangedEvent>()!.BitDepth);
     }
 
     private static string CatalogPath =>
         Path.Combine(AppContext.BaseDirectory, "fixtures", "tycho2_subset.csv");
+
+    private static string TempDirectory() => Path.Combine(Path.GetTempPath(), $"fpa-failed-{Guid.NewGuid():N}");
 
     /// <summary>
     /// The camera reports its readout modes on connect, so the UI can offer them
@@ -803,11 +525,13 @@ public class ConfirmBeforeSlewTests
     public async Task ConnectingReportsTheAvailableReadoutModes()
     {
         var options = new SimulatedMountOptions(Site, new MountMisalignment(10.0, 10.0));
-        var provider = new SimulatedDeviceProvider(StarCatalog.LoadCsv(CatalogPath), options);
+        var provider = new SimulatedDeviceProvider(StarCatalog.LoadCsv(CatalogPath), options,
+            new SimulatedCameraOptions(WidthPixels: 320, HeightPixels: 240));
 
         using ICamera camera = provider.OpenCamera("sim-camera");
         using IMount mount = provider.OpenMount("sim-mount");
-        using var session = new AlignmentSession(camera, mount, new PerfectSolver(provider.MountInstance));
+        using var session = new AlignmentSession(camera, mount, new PerfectSolver(provider.MountInstance, Site),
+            new AlignmentSessionOptions(FailedSolvesDirectory: TempDirectory()));
 
         var recorder = new Recorder();
         using IDisposable subscription = session.Events.Subscribe(recorder);
@@ -830,24 +554,21 @@ public class ConfirmBeforeSlewTests
 
     /// <summary>
     /// When the mount's own site differs from the confirmed one, the confirmed
-    /// one is used and the difference is reported. A driver's site is very often
-    /// a factory default or a leftover from wherever the mount was last set up,
-    /// and a silent disagreement is the first sign that one of the two figures is
-    /// simply wrong.
+    /// one is used and the difference is reported (D19).
     /// </summary>
     [Fact]
     public async Task AMountReportingADifferentSite_IsNotedButNotObeyed()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
         await harness.ConnectAsync();
 
         // Half a degree of latitude away -- thirty arcminutes of pure bias in
         // the reported altitude error if it were used by mistake.
-        await harness.Session.SendAsync(new ConfigureSiteCommand(Latitude + 0.5, 15.0, 200.0));
+        await harness.Session.SendAsync(new ConfigureSiteCommand(SessionHarness.Latitude + 0.5, 15.0, 200.0));
 
         SiteConfiguredEvent? configured = harness.Recorder.Last<SiteConfiguredEvent>();
         Assert.True(configured is not null, harness.Recorder.Trail());
-        Assert.Equal(Latitude + 0.5, configured!.LatitudeDegrees, precision: 6);
+        Assert.Equal(SessionHarness.Latitude + 0.5, configured!.LatitudeDegrees, precision: 6);
         Assert.NotNull(configured.MountReportedDisagreement);
         Assert.Contains("latitude", configured.MountReportedDisagreement!, StringComparison.OrdinalIgnoreCase);
     }
@@ -856,35 +577,34 @@ public class ConfirmBeforeSlewTests
     [Fact]
     public async Task AMountReportingTheSameSite_ProducesNoNote()
     {
-        using var harness = new Harness();
+        using var harness = new SessionHarness();
         await harness.ConnectAsync();
         await harness.ConfirmSiteAsync();
 
         Assert.Null(harness.Recorder.Last<SiteConfiguredEvent>()!.MountReportedDisagreement);
     }
 
-    // ---- Manual mode ----
+    // ---- A mount that cannot slew ----
 
     /// <summary>
-    /// On a mount turned by hand (D10) the engine must never command a slew, and
-    /// must say what to do instead. The measurement itself does not care how the
-    /// telescope reached each position.
+    /// A connected mount that cannot slew is read but never driven (D10 as
+    /// revised): the engine says what to do instead, and a slew command is
+    /// refused rather than attempted.
     /// </summary>
     [Fact]
-    public async Task ManualMode_NeverCommandsASlew()
+    public async Task AMountThatCannotSlew_IsNeverCommanded()
     {
-        using var harness = new Harness(manualMode: true);
+        using var harness = new SessionHarness(canSlew: false);
         await harness.ReadyAsync();
 
-        for (int i = 0; i < 3; i++)
-        {
-            Assert.False(harness.Recorder.Last<SlewProposedEvent>()!.RequiresMotion);
-            Assert.NotNull(harness.Recorder.Last<ManualActionRequiredEvent>());
+        Assert.Equal(SequenceMode.Observed, harness.Recorder.Last<SessionStartedEvent>()!.Mode);
+        Assert.False(harness.Recorder.Last<SlewProposedEvent>()!.RequiresMotion);
+        Assert.NotNull(harness.Recorder.Last<ManualActionRequiredEvent>());
 
-            await harness.Session.SendAsync(new CaptureNextPointCommand());
-        }
+        await harness.WaitForSampleAsync(1);
+        await harness.Session.SendAsync(new CaptureNextPointCommand());
 
+        Assert.True(harness.Recorder.Last<CommandRejectedEvent>() is not null, harness.Recorder.Trail());
         Assert.Empty(harness.Mount.Slews);
-        Assert.Equal(3, harness.Camera.Exposures);
     }
 }

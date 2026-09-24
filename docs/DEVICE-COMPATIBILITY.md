@@ -212,6 +212,40 @@ treated as more solid than its tag says.
   this outright for the ASCOM layer specifically. **[UNKNOWN]**, not
   inferred further than that.
 
+### `Slewing` and motion this application did not command (all three drivers)
+
+D26 solves a sample when a slew ends, and a slew can be started from the
+hand controller, a phone app, or another ASCOM client as well as by this
+application. Whether the driver reports those through `Slewing` decides
+whether the end of one is visible at all.
+
+- The ASCOM interface defines `Slewing` as true "if the mount is in motion
+  resulting from a slew, parking, find-home, or a move-axis", and its notes
+  describe it as the way to detect completion of the client's own
+  asynchronous calls (`SlewToCoordinatesAsync`, `SlewToTargetAsync`, `Park`,
+  `FindHome`, a `SideOfPier` write). It does not mention motion started
+  outside the ASCOM interface. **[DOC]** —
+  [ASCOM ITelescope interface, `Slewing`](https://ascom-standards.org/newdocs/telescope.html#Telescope.Slewing)
+- Whether a hand-controller or SynScan-app slew, or a slew commanded by a
+  second client through the same driver instance, sets `Slewing` is
+  therefore up to each driver. I found nothing stating it either way for
+  the iOptron driver, EQMOD/EQASCOM or the SynScan driver. **[UNKNOWN]**,
+  and **VERIFY** on each: start a slew from the hand controller while
+  polling `Slewing`, and again from a second ASCOM client.
+- A related case, also **[UNKNOWN]**: whether holding a direction button on
+  the hand controller, which is motion at a guide or centring rate rather
+  than a goto, is reported as slewing by any of the three.
+- **What the engine does about it.** It does not rely on `Slewing` alone
+  (D26): a status poll counts the mount as moving while its reported
+  position is still changing, and a slew as ended only when the driver no
+  longer reports slewing *and* the position has stopped changing. A driver
+  that never reports outside motion as slewing should therefore still be
+  handled, provided its reported coordinates follow the hand controller —
+  which is itself unverified for these drivers **[UNKNOWN]**, and is the
+  more important of the two to check. A driver that throws on `Slewing` is
+  read as not slewing (`AscomMount.IsSlewing`), leaving the position check
+  to carry the whole load.
+
 ---
 
 ## What this means for D9/D8 in this project
@@ -263,6 +297,10 @@ treated as more solid than its tag says.
   and if so from what source.
 - Any meridian-flip firmware behaviour specific to the SynScan driver
   analogous to iOptron's "Meridian Treatment" setting.
+- **[UNKNOWN]** Whether any of the three drivers reports hand-controller or
+  other-software motion through `Slewing`, and whether their reported
+  coordinates follow it. See the `Slewing` section above; D26 depends on
+  at least the second.
 - **[UNKNOWN]** Whether a camera driver's `SetupDialog` behaves correctly when
   called from a dedicated STA thread rather than from the client's own UI
   thread. ASCOM's convention is the latter; this application calls it from a

@@ -112,7 +112,7 @@ public class DeferredDispatcherTests
             settings: null,
             log: null,
             warnings: null,
-            new SessionConfiguration(6, 70.0, TimeSpan.FromSeconds(2)),
+            new SessionConfiguration(6, 70.0),
             postToUiThread: dispatcher.Post);
 
         return (viewModel, engine, dispatcher);

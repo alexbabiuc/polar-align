@@ -83,7 +83,7 @@ public class CameraGainTests
 
         public Task<CapturedImage> ExposeAsync(
             TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException("These tests never expose.");
+            StubFrames.ExposeAsync(duration, cancellationToken);
 
         public void Dispose()
         {
@@ -124,7 +124,7 @@ public class CameraGainTests
 
         public Task<CapturedImage> ExposeAsync(
             TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+            StubFrames.ExposeAsync(duration, cancellationToken);
 
         public void Dispose()
         {
@@ -139,21 +139,6 @@ public class CameraGainTests
             throw new NotSupportedException();
     }
 
-    private sealed class Recorder : IObserver<EngineEvent>
-    {
-        public List<EngineEvent> Events { get; } = new();
-
-        public void OnCompleted()
-        {
-        }
-
-        public void OnError(Exception error)
-        {
-        }
-
-        public void OnNext(EngineEvent value) => Events.Add(value);
-    }
-
     private sealed class Harness : IDisposable
     {
         private readonly IDisposable _subscription;
@@ -163,7 +148,7 @@ public class CameraGainTests
         {
             _mount = new SimulatedMount(new SimulatedMountOptions(Site, new MountMisalignment(30.0, -25.0)));
             Session = new AlignmentSession(
-                camera, _mount, new UnusedSolver(), new AlignmentSessionOptions(CaptureCount: 5, SweepDegrees: 60.0));
+                camera, _mount, new UnusedSolver(), new AlignmentSessionOptions(CaptureCount: 5, SweepDegrees: 60.0, ExposureDuration: StubFrames.Exposure));
             _subscription = Session.Events.Subscribe(Recorder);
         }
 
@@ -314,21 +299,23 @@ public class CameraGainTests
     }
 
     /// <summary>
-    /// Refused mid-sequence: gain changes the noise in every star position, and
-    /// the fit weights every frame alike.
+    /// Accepted mid-sequence (D25 as revised). It was refused, on the reasoning
+    /// that the fit weights every frame alike; but gain changes the noise in a
+    /// solved position, not the position, and a sky found swamping the frame
+    /// part-way through a sequence has to be answerable there and then.
     /// </summary>
     [Fact]
-    public async Task DuringASequence_GainIsRefused()
+    public async Task DuringASequence_GainIsAccepted()
     {
         var camera = new GainCamera();
         using var harness = new Harness(camera);
         await harness.ConnectAsync(mountToo: true);
         await harness.Session.SendAsync(new ConfigureSiteCommand(Site.LatitudeDegrees, Site.LongitudeDegrees, Site.HeightMeters));
-        await harness.Session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 60.0, TimeSpan.FromSeconds(1))));
+        await harness.Session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 60.0)));
 
         await harness.Session.SendAsync(new SetCameraGainCommand(80));
 
-        Assert.Equal(0, camera.SetCalls);
-        Assert.Contains("during a sequence", harness.LastRejection);
+        Assert.Equal(1, camera.SetCalls);
+        Assert.Null(harness.LastRejection);
     }
 }

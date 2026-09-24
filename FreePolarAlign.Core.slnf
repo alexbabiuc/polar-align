@@ -7,6 +7,8 @@
       "src\\FreePolarAlign.Solving\\FreePolarAlign.Solving.csproj",
       "src\\FreePolarAlign.Devices\\FreePolarAlign.Devices.csproj",
       "src\\FreePolarAlign.Devices.Simulated\\FreePolarAlign.Devices.Simulated.csproj",
+      "src\\FreePolarAlign.Devices.Zwo\\FreePolarAlign.Devices.Zwo.csproj",
+      "src\\FreePolarAlign.Devices.ToupTek\\FreePolarAlign.Devices.ToupTek.csproj",
       "src\\FreePolarAlign.Session\\FreePolarAlign.Session.csproj",
       "src\\FreePolarAlign.App\\FreePolarAlign.App.csproj",
       "tests\\FreePolarAlign.Tests.Core\\FreePolarAlign.Tests.Core.csproj",

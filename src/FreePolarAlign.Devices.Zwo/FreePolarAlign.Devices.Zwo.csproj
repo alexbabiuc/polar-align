@@ -1,0 +1,77 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      net10.0, not net10.0-windows: the ZWO SDK is a plain C library on every
+      platform it ships for, so nothing here is Windows-specific. That also lets
+      the layout and parsing tests run on the macOS build machine.
+    -->
+    <RootNamespace>FreePolarAlign.Devices.Zwo</RootNamespace>
+    <AssemblyName>FreePolarAlign.Devices.Zwo</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!--
+    Compiled against, never shipped beside: see D24 and the Ascom plugin's
+    project file. Imaging is listed although nothing here names it, because it
+    arrives transitively through Devices and would otherwise be copied beside
+    the plugin all the same, which the first build of this project did.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\FreePolarAlign.Devices\FreePolarAlign.Devices.csproj"
+                      Private="false" ExcludeAssets="runtime" />
+    <ProjectReference Include="..\FreePolarAlign.Imaging\FreePolarAlign.Imaging.csproj"
+                      Private="false" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <!--
+    ZWO's native library, from resources/zwo/camera/libs, copied into the
+    plugin's output by architecture.
+
+    With a runtime identifier (the release publish is win-x64) only the matching
+    DLL is copied, straight beside the plugin: a 32-bit DLL beside a 64-bit
+    process cannot load, and shipping it would only give the next person
+    something to drop in the wrong place. With no runtime identifier (day to
+    day builds, the test run) both go in the standard
+    runtimes/<rid>/native layout, and NativeLibraryLocator picks the one
+    matching the running process.
+
+    The .lib files beside the DLLs are not copied. They are import libraries
+    for C and C++ code linking against the SDK at build time; this plugin binds
+    at run time through P/Invoke and never needs them.
+
+    ZWO's licence permits redistribution on condition that its notice travels
+    with the library, so license.txt is copied alongside whichever DLL is.
+  -->
+  <PropertyGroup>
+    <ZwoNativeRoot>$(MSBuildThisFileDirectory)..\..\resources\zwo\camera\</ZwoNativeRoot>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <None Include="$(ZwoNativeRoot)libs\x64\ASICamera2.dll" Link="ASICamera2.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x86'">
+    <None Include="$(ZwoNativeRoot)libs\x86\ASICamera2.dll" Link="ASICamera2.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == ''">
+    <None Include="$(ZwoNativeRoot)libs\x64\ASICamera2.dll" Link="runtimes\win-x64\native\ASICamera2.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="$(ZwoNativeRoot)libs\x86\ASICamera2.dll" Link="runtimes\win-x86\native\ASICamera2.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(ZwoNativeRoot)license.txt" Link="ASICamera2.license.txt"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The struct layouts are the thing most worth testing, and they are internal. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="FreePolarAlign.Tests.Devices" />
+  </ItemGroup>
+
+</Project>

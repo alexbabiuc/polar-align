@@ -35,8 +35,8 @@ Switch to SemVer when the user says so, not when the numbers look ready.
   reasoning and the measurements. New `D<n>` entries continue the numbering.
   Revise an entry when its facts change; a stale decision record is worse than
   none, because it is believed.
-- **`docs/MOUNT-COMPATIBILITY.md`** — anything learned about a specific driver
-  or mount, tagged as that file's header requires.
+- **`docs/DEVICE-COMPATIBILITY.md`** — anything learned about a specific driver,
+  mount or camera, tagged as that file's header requires.
 - **`docs/ROADMAP.md`** — when a phase's exit criterion is met, or shown not to
   be.
 - **`README.md`** — only what a newcomer needs: layout, how to build, what the

@@ -84,15 +84,34 @@
                 <Button Content="Connect" Command="{Binding ConnectCameraCommand}" />
                 <Button Content="Disconnect" Command="{Binding DisconnectCameraCommand}" />
                 <!--
-                  Shown only once a camera whose driver has such a window is
-                  connected. Gain, offset, USB bandwidth and cooling live behind
-                  it; this application models none of them and never sets them,
-                  so a camera left at a high gain by whatever ran last stays
-                  there, and the only fix is the driver's own window.
+                  ASCOM cameras only, and offered as soon as one is picked:
+                  the driver's window is where a camera is set up before
+                  anything connects to it. Gain, offset, USB bandwidth and
+                  cooling live behind it, and for an ASCOM camera this
+                  application sets none of them.
                 -->
                 <Button Content="Driver settings..." Command="{Binding OpenCameraSetupCommand}"
                         IsVisible="{Binding HasCameraSetupDialog}"
                         ToolTip.Tip="Opens the ASCOM driver's own settings window. Everything stops until you close it." />
+              </StackPanel>
+
+              <!--
+                Native-SDK cameras only (ZWO, ToupTek), which have no driver
+                window of their own; the SDK sets gain directly, so it gets a
+                control here instead. A percentage of this camera's own range,
+                because raw gain units differ by vendor and mean little to a
+                person; the raw value is shown beneath for matching another
+                program. Visible once such a camera is picked, editable once it
+                is connected and has said what its range is.
+              -->
+              <StackPanel Spacing="4" IsVisible="{Binding ShowGainControl}">
+                <TextBlock Classes="label" Text="Gain (% of this camera's range)" />
+                <NumericUpDown Value="{Binding GainPercent, Mode=TwoWay}"
+                               Minimum="0" Maximum="100" Increment="1" FormatString="0"
+                               HorizontalAlignment="Stretch"
+                               IsEnabled="{Binding IsGainEditable}"
+                               ToolTip.Tip="Remembered for this camera. Lower gain is usually better here: a sky bright enough to swamp the stars is the commonest reason a solve fails." />
+                <TextBlock Classes="label" Text="{Binding GainDetailText}" TextWrapping="Wrap" />
               </StackPanel>
               <TextBlock Classes="value" Text="{Binding CameraSummary}" />
               <TextBlock Classes="label" Text="Sensor" />

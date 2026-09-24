@@ -7,7 +7,7 @@ namespace FreePolarAlign.Devices.Ascom;
 /// <see cref="IMount"/> over a late-bound ASCOM <c>ITelescope</c> COM driver
 /// (see <see cref="AscomDeviceProvider"/> for why late-bound). UNVERIFIED
 /// against a real driver -- see that class's doc comment and
-/// docs/MOUNT-COMPATIBILITY.md.
+/// docs/DEVICE-COMPATIBILITY.md.
 ///
 /// Contract/ASCOM epoch mismatch (worth recording since <see cref="IMount"/>
 /// is frozen): <see cref="IMount.SlewToCoordinatesAsync"/> is documented as

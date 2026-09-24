@@ -176,6 +176,21 @@ are the seam two developers work either side of. Version the contract assembly.
 Plugin load failures must be surfaced clearly, not swallowed — a missing ASCOM
 Platform should produce a readable message, not an empty device list.
 
+*Contract changed once, while it was still cheap:* discovery was two methods,
+`DiscoverCameras()` and `DiscoverMounts()`, and is now one, `DiscoverDevices()`,
+returning `CameraDescriptor`s and `MountDescriptor`s. Every provider but ASCOM
+lists only one kind, and was implementing a second method to return nothing.
+Subtypes rather than one record with a role field, because the capabilities
+known at discovery are not shared: gain control means nothing for a mount, and a
+single record let a provider say a mount had it. The hierarchy is closed to other
+assemblies except through the copy constructor records require, so the catalogue
+goes by the subtype, not by `Role`, and reports anything else. The cost
+is granularity — one failure now loses a provider's whole list rather than one
+kind — which bought nothing in practice, since ASCOM's two lists fail together
+when the Platform is missing. Opening stays split (`OpenCamera`, `OpenMount`)
+because the two return different types. Made before any third-party plugin
+existed to break.
+
 ---
 
 ## D5 — Astrometry via a pure C# IAU 2000B implementation
@@ -560,7 +575,7 @@ with coordinates of date; applying them here would apply them twice. It is
 geometric for the same reason the rest of this decision is. Systems other than
 J2000 and JNow (`equOther`, `equJ2050`, `equB1950`) are still refused outright,
 naming the driver's actual system: they are rare enough that a diagnosable
-refusal beats a guess. See `docs/MOUNT-COMPATIBILITY.md`.
+refusal beats a guess. See `docs/DEVICE-COMPATIBILITY.md`.
 
 **How this was found.** Not by inspection. The residual check from D11 rejected
 the fit — residuals ten times the expected solve noise — and the reported reason
@@ -872,9 +887,18 @@ through JSON is a way to silently lose a setting.
 
 ## D23 — The driver's own settings window, and everything stops while it is open
 
-The camera panel offers a **Driver settings...** button whenever the connected
-camera reports having such a window. Pressing it opens the driver's dialog and
-blocks the entire application until the user closes it.
+The camera panel offers a **Driver settings...** button for ASCOM cameras, as
+soon as one is picked. Pressing it opens the driver's dialog and blocks the
+entire application until the user closes it. With nothing connected, the engine
+opens the picked driver just long enough to show its window and releases it
+afterwards, without connecting.
+
+*Revised with D25.* The button first appeared only once a camera was connected.
+It now follows the pick, because an ASCOM driver's window is where a camera is
+set up *before* anything connects to it — connecting first would start the
+camera under the settings about to be changed. Which cameras get it is decided
+at discovery (`DeviceDescriptor.HasSetupDialog`): every ASCOM driver has such a
+window, and no native SDK does. Native cameras get a gain control instead (D25).
 
 **Why offer it.** This project models almost nothing about a camera: not gain,
 not offset, not USB bandwidth, not cooling. On real hardware those decide
@@ -915,7 +939,7 @@ every command for the rest of the session.
 
 **Unverified:** the window is shown from a dedicated STA thread rather than the
 client's UI thread, which is not what ASCOM's convention assumes. See
-`docs/MOUNT-COMPATIBILITY.md`.
+`docs/DEVICE-COMPATIBILITY.md`.
 
 ---
 
@@ -965,6 +989,84 @@ published 1.2.0 build carry the full provenance header written through that
 line. The duplicate load is verified; the failure it implies was not observed,
 and no Windows machine was available to chase the discrepancy. The packaging fix
 makes the question moot rather than answering it.
+
+---
+
+## D25 — Native camera SDKs, with gain as a percentage remembered per camera
+
+ZWO and ToupTek cameras can be used through their vendors' own SDKs, as plugins
+beside the ASCOM one. A camera reached that way gets a **gain control**, shown as
+a percentage of that camera's own range, and its readout mode and gain are
+**remembered per camera**, keyed by serial number.
+
+**Why a native path at all, when ASCOM already reaches these cameras.** Gain.
+Through ASCOM the application cannot see it or set it — it lives behind the
+driver's window (D23) — and a camera left at a high gain put the sky at 57% of
+full well on the night a solve mattered most. Through the vendor SDK it is one
+call. Frames taken this way also record their `GAIN` in the header; the night
+just mentioned was diagnosed partly by asking what the gain had been, and
+nothing could say.
+
+**Why gain is offered only for native cameras.** An ASCOM camera's gain belongs
+to its driver's window. A second control fighting it over the same value would
+leave the user unsure which one the frames were taken at. The same ZWO camera
+can appear twice in the picker — once through ASCOM, once through its SDK — and
+each gets the control that matches the path.
+
+**Why a percentage.** The raw units are not comparable and mostly not meaningful
+to a person: an ASI290 counts 0 to 600 in tenths of a decibel, a ToupTek camera
+100 to several thousand in percent of unity. A percentage of *this camera's*
+range says the one thing that transfers — how far towards maximum it is turned —
+and the raw value is shown beneath for anyone matching another program. The
+range is read from the camera (`ASIGetControlCaps`, `Toupcam_get_ExpoAGainRange`),
+never hardcoded: models differ, and a table would be wrong for the next one
+released. Whole percents are enough — on the widest range seen a step is 49 raw
+units, and every whole percent survives the round trip on both vendors' ranges.
+The value reported back is what the camera actually took, read back rather than
+echoed, so a clamped request shows where the camera really is.
+
+**Why per camera, and why the serial.** Both settings mean different things on
+different cameras: readout index 1 is a position in one camera's own list, and a
+gain chosen for one sensor over-exposes another. The enumeration id is not good
+enough as a key — for ZWO it is a slot that changes when a camera is unplugged,
+and two ASI290s share a model name — so the key is provider plus serial number,
+falling back to the enumeration id only for a camera that reports none. A
+readout mode stored before settings were kept per camera is applied once, to the
+camera it was chosen on, and to no other.
+
+**What the plugins do not do.** Colour cameras are read out as raw Bayer data
+and written as they come; debayering is left for later. No binning, no ROI —
+the solve wants every star and the scale assumes unbinned pixels. Offset, USB
+bandwidth and cooling stay at the SDK's defaults.
+
+**Where the vendor library comes from, and why its absence is quiet.** ZWO's
+SDK licence permits redistribution provided its notice goes with it, so ZWO's
+`ASICamera2.dll` is kept in `resources/zwo/camera/libs/` (x64 and x86, each
+checked by its PE header to be the architecture its folder claims, and each
+checked to export every function the plugin calls) and the build copies it with
+the notice: only the matching architecture, beside the plugin, when published
+for a runtime identifier; both, in the `runtimes/<rid>/native` layout, when not.
+A test reads the PE header of each copied DLL, because an x86 and an x64 build
+swapped in `resources/` would pass every build and fail only at the telescope.
+The ToupTek library as redistributed by INDI is LGPL-2.1, but those are its Linux
+and macOS builds, and no terms were found for the Windows `toupcam.dll`, so it
+is not in the repository and the user supplies it. Either way, each plugin looks
+for its library beside itself, then in `runtimes/<rid>/native` under the running
+process's own architecture, then on the system path. Absent everywhere is
+reported as `ProviderUnavailableException`, which the catalogue logs rather
+than shows — for anyone without that brand of camera it is the normal state,
+and a permanent banner would teach them to ignore the banner. Present but
+unloadable (a 32-bit DLL beside a 64-bit build) lets its real exception through
+and *is* shown. The runtime's own probing reports both as the same
+`DllNotFoundException`, which is why this is done by hand.
+
+**How the bindings were checked.** The ZWO structs carry C `long` fields — 32
+bits on Windows, 64 elsewhere — so their size genuinely differs by platform, and
+a wrong layout does not fail loudly: the SDK writes past the end of the struct.
+Every size and offset used was checked against the real headers with the C
+compiler for both the Windows x64 and the macOS/Linux ABI, using compile-time
+assertions confirmed to fail on a wrong value, and tests pin the managed
+declarations to those numbers. Neither plugin has run against a real camera.
 
 ---
 

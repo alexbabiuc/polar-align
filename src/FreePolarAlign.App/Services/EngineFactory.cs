@@ -167,6 +167,13 @@ public static class EngineFactory
             log.Write(LogSeverity.Warning, problem);
         }
 
+        // Logged and not shown: a vendor plugin with no vendor library is the
+        // normal state for anyone who does not own that brand of camera.
+        foreach (string note in result.Notes)
+        {
+            log.Write(LogSeverity.Info, note);
+        }
+
         log.Write(
             LogSeverity.Info,
             $"Devices discovered: {result.Cameras.Count} camera(s), {result.Mounts.Count} mount(s).");

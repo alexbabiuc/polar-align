@@ -11,7 +11,7 @@ namespace FreePolarAlign.Tests.Devices;
 /// Everything else in that project (AscomMount, AscomCamera,
 /// AscomDeviceProvider) talks to a live ASCOM driver via late-bound COM and
 /// is compiled-but-unverified -- see that project's doc comments and
-/// docs/MOUNT-COMPATIBILITY.md.
+/// docs/DEVICE-COMPATIBILITY.md.
 /// </summary>
 public sealed class AscomMappingTests
 {

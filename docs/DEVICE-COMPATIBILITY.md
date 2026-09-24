@@ -1,4 +1,10 @@
-# Mount compatibility research (Phase 3 / D9 VERIFY)
+# Device compatibility research
+
+What is known — and, as carefully, what is not — about specific drivers, mounts
+and cameras. It began as the mount research D9 asked for, which is still most of
+it; camera and SDK findings live here too, since they are the same kind of
+evidence and get tagged the same way. Named `MOUNT-COMPATIBILITY.md` until
+cameras outgrew the title.
 
 D9 names iOptron (CEM/GEM/HAE via the iOptron ASCOM driver) and Sky-Watcher (via
 EQMOD/EQASCOM, or the SynScan ASCOM driver) as the initial test targets, flags
@@ -266,6 +272,18 @@ treated as more solid than its tag says.
   or will not close. If a driver's settings window misbehaves — blank, frozen,
   or refusing to close — this is the first thing to suspect. See
   `AscomCamera.ShowSetupDialogAsync`.
+- **[UNKNOWN]** Everything about the native ZWO and ToupTek camera plugins at
+  runtime (D25). No native call in either has executed: the development machine
+  has neither the cameras nor the vendor libraries. What *is* known: the struct
+  layouts match the vendors' headers for both the Windows x64 and the
+  macOS/Linux ABI **[DOC]**, checked with the C compiler.
+- **[UNKNOWN]** Whether ToupTek's 16-bit RAW output is right-aligned (values up
+  to 4095 from a 12-bit sensor) or scaled to the full 16 bits. Either writes a
+  valid 16-bit frame and solves the same; it changes only what the raw numbers
+  look like in another program.
+- **[UNKNOWN]** Which ToupTek rebrands (Altair, Omegon, RisingCam, Bresser)
+  enumerate through `toupcam` itself rather than only through their own renamed
+  copy of the library. The plugin loads `toupcam` and lists what it finds.
 - Real-world `SideOfPier` behaviour on current (2025-2026-era) firmware for
   any of the three drivers — everything above is changelog/forum evidence,
   most of it years old; a driver update since could have changed any of it.

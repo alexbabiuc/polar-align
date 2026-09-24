@@ -71,8 +71,9 @@ and is copied into `plugins/` by the Windows build only. The application assembl
 has no knowledge of it and no `#if WINDOWS` anywhere. On macOS you get the
 simulator provider; on Windows, simulator plus ASCOM.
 
-This is what makes the macOS build work, and it is also what will make ASCOM
-Alpaca, INDI and the native vendor SDKs drop in later without touching the app.
+This is what makes the macOS build work, and it is how the native ZWO and
+ToupTek camera plugins arrived without touching the app — and how ASCOM Alpaca
+and INDI will.
 
 ### Project layout
 
@@ -84,6 +85,8 @@ Alpaca, INDI and the native vendor SDKs drop in later without touching the app.
 | `FreePolarAlign.Devices` | `net10.0` | `ICamera`, `IMount`, `IDeviceProvider` contracts only. |
 | `FreePolarAlign.Devices.Simulated` | `net10.0` | Virtual observatory. See below. |
 | `FreePolarAlign.Devices.Ascom` | `net10.0-windows` | ASCOM COM provider. Windows build only. |
+| `FreePolarAlign.Devices.Zwo` | `net10.0` | ZWO ASI cameras through ZWO's own SDK, which it ships from `resources/`; see below. |
+| `FreePolarAlign.Devices.ToupTek` | `net10.0` | ToupTek cameras through ToupTek's own SDK. Needs the vendor library; see below. |
 | `FreePolarAlign.Session` | `net10.0` | Orchestration state machine. |
 | `FreePolarAlign.App` | `net10.0` | Avalonia UI. |
 | `FreePolarAlign.Tests.*` | `net10.0` | Unit and end-to-end tests. Must pass on macOS. |
@@ -123,6 +126,30 @@ dotnet publish src/FreePolarAlign.App -r win-x64 -c Release --self-contained
 ```
 
 Requires the ASCOM Platform installed for the ASCOM provider to load.
+
+**Native camera SDKs.** The ZWO and ToupTek plugins call their vendor's native
+library.
+
+- **ZWO** — `ASICamera2.dll`, x64 and x86, is in `resources/zwo/camera/libs/`
+  with ZWO's licence, and the build copies it: publish the plugin with a runtime
+  identifier and only the matching architecture goes beside it, with the
+  licence notice.
+
+  ```powershell
+  dotnet publish src/FreePolarAlign.Devices.Zwo -c Release -r win-x64 --self-contained false -o <app>/plugins/Zwo
+  ```
+
+  Built without a runtime identifier, both go under `runtimes/win-x64/native/`
+  and `runtimes/win-x86/native/`, and the plugin loads whichever matches the
+  running process. The `.lib` import libraries beside them are for C code
+  linking at build time and are not copied.
+- **ToupTek** — not in the repository. Drop the 64-bit `toupcam.dll` from
+  ToupTek's SDK into `plugins/ToupTek/`.
+
+A plugin whose library is missing lists no cameras and says so in the session
+log, not in the warning banner: for anyone without that brand of camera it is
+the normal state. A library that is present but unloadable (a 32-bit DLL beside
+a 64-bit build, say) *is* shown as a warning.
 
 Cross-publishing a Windows binary from macOS works, but installer packaging and
 code signing need a real Windows machine.

@@ -10,22 +10,19 @@ namespace FreePolarAlign.Devices;
 /// selection that recorded only the device id would silently open the wrong one
 /// the next time the plugin set changed.
 /// </summary>
+/// <param name="HasSetupDialog">See <see cref="DeviceDescriptor.HasSetupDialog"/>.</param>
+/// <param name="HasGainControl">See <see cref="DeviceDescriptor.HasGainControl"/>.</param>
 public sealed record DeviceOption(
     DeviceRole Kind,
     string ProviderName,
     string DeviceId,
     string DisplayName,
-    string DriverInfo)
+    string DriverInfo,
+    bool HasSetupDialog = false,
+    bool HasGainControl = false)
 {
     /// <summary>What the picker shows. Provider included, for the reason above.</summary>
     public string Label => $"{DisplayName} ({ProviderName})";
-}
-
-/// <summary>Which list a <see cref="DeviceOption"/> belongs to.</summary>
-public enum DeviceRole
-{
-    Camera,
-    Mount
 }
 
 /// <summary>
@@ -47,12 +44,14 @@ public sealed class DeviceCatalog
         Dictionary<string, IDeviceProvider> providers,
         IReadOnlyList<DeviceOption> cameras,
         IReadOnlyList<DeviceOption> mounts,
-        IReadOnlyList<string> problems)
+        IReadOnlyList<string> problems,
+        IReadOnlyList<string> notes)
     {
         _providers = providers;
         Cameras = cameras;
         Mounts = mounts;
         Problems = problems;
+        Notes = notes;
     }
 
     public IReadOnlyList<DeviceOption> Cameras { get; }
@@ -64,6 +63,15 @@ public sealed class DeviceCatalog
     /// healthy install with no plugins.
     /// </summary>
     public IReadOnlyList<string> Problems { get; }
+
+    /// <summary>
+    /// Providers that are installed but have nothing to work with -- a vendor
+    /// plugin whose native library is absent. Worth a line in the log, so a
+    /// user wondering why their camera is missing can find out; not worth a
+    /// warning, because for everyone who does not own that brand it is the
+    /// normal state. See <see cref="ProviderUnavailableException"/>.
+    /// </summary>
+    public IReadOnlyList<string> Notes { get; }
 
     /// <summary>
     /// Builds a catalogue from providers supplied directly (the simulator, which
@@ -81,6 +89,7 @@ public sealed class DeviceCatalog
 
         var providers = new List<IDeviceProvider>(builtInProviders);
         var problems = new List<string>();
+        var notes = new List<string>();
 
         if (!string.IsNullOrWhiteSpace(pluginsRootDirectory) && Directory.Exists(pluginsRootDirectory))
         {
@@ -103,11 +112,10 @@ public sealed class DeviceCatalog
                 continue;
             }
 
-            Collect(provider, DeviceRole.Camera, cameras, problems);
-            Collect(provider, DeviceRole.Mount, mounts, problems);
+            Collect(provider, cameras, mounts, problems, notes);
         }
 
-        return new DeviceCatalog(byName, cameras, mounts, problems);
+        return new DeviceCatalog(byName, cameras, mounts, problems, notes.Distinct(StringComparer.Ordinal).ToArray());
     }
 
     public ICamera OpenCamera(DeviceOption option)
@@ -154,27 +162,51 @@ public sealed class DeviceCatalog
 
     private static void Collect(
         IDeviceProvider provider,
-        DeviceRole kind,
-        List<DeviceOption> into,
-        List<string> problems)
+        List<DeviceOption> cameras,
+        List<DeviceOption> mounts,
+        List<string> problems,
+        List<string> notes)
     {
         try
         {
-            IReadOnlyList<DeviceDescriptor> discovered = kind == DeviceRole.Camera
-                ? provider.DiscoverCameras()
-                : provider.DiscoverMounts();
-
-            foreach (DeviceDescriptor descriptor in discovered)
+            foreach (DeviceDescriptor descriptor in provider.DiscoverDevices())
             {
-                into.Add(new DeviceOption(
-                    kind, provider.Name, descriptor.Id, descriptor.DisplayName, descriptor.DriverInfo));
+                switch (descriptor)
+                {
+                    case CameraDescriptor camera:
+                        cameras.Add(new DeviceOption(
+                            DeviceRole.Camera, provider.Name, camera.Id, camera.DisplayName, camera.DriverInfo,
+                            camera.HasSetupDialog, camera.HasGainControl));
+                        break;
+
+                    case MountDescriptor mount:
+                        mounts.Add(new DeviceOption(
+                            DeviceRole.Mount, provider.Name, mount.Id, mount.DisplayName, mount.DriverInfo,
+                            mount.HasSetupDialog));
+                        break;
+
+                    default:
+                        // Switched on the type, not on Role: a descriptor the
+                        // contract did not define can claim any role it likes,
+                        // and this catalogue would not know how to open it.
+                        problems.Add(
+                            $"Provider '{provider.Name}' listed '{descriptor.DisplayName}' as a kind of device " +
+                            $"this version does not know ({descriptor.GetType().Name}); it has been left out.");
+                        break;
+                }
             }
+        }
+        catch (ProviderUnavailableException ex)
+        {
+            // Absent, not broken: logged, not shown. The message is the
+            // provider's own, since only it knows which file it looked for.
+            notes.Add($"Provider '{provider.Name}' is installed but unavailable: {ex.Message}");
         }
         catch (Exception ex)
         {
             // A provider that throws during discovery -- the missing-ASCOM-Platform
             // case D4 names -- must cost only its own devices, not everyone's.
-            problems.Add($"Provider '{provider.Name}' could not list its {kind.ToString().ToLowerInvariant()}s: {ex.Message}");
+            problems.Add($"Provider '{provider.Name}' could not list its devices: {ex.Message}");
         }
     }
 }

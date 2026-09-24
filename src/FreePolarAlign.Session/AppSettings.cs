@@ -18,6 +18,21 @@ public sealed record StoredSite(
     double HeightMeters);
 
 /// <summary>
+/// What is remembered about one particular camera.
+///
+/// Per camera, because both settings mean different things on different
+/// cameras. A readout index is a position in one camera's own list -- index 1
+/// is 16-bit on a ZWO and may be something else entirely on an ASCOM driver --
+/// and a gain chosen for a sensitive guide camera would over-expose on another.
+/// </summary>
+/// <param name="ReadoutModeIndex">The readout mode chosen, by index into that camera's list.</param>
+/// <param name="GainPercent">
+/// The gain chosen, as a percentage of that camera's range (see
+/// <c>GainScale</c>). Null for a camera whose gain is not set from here.
+/// </param>
+public sealed record CameraSettings(int? ReadoutModeIndex = null, int? GainPercent = null);
+
+/// <summary>
 /// What the application remembers between runs.
 ///
 /// Kept deliberately small, and deliberately not including anything the software
@@ -46,12 +61,23 @@ public sealed record AppSettings
     public bool IsFocalLengthSolved { get; init; }
 
     /// <summary>
-    /// The camera readout mode last chosen, by index. Remembered because it is a
-    /// deliberate trade the user made -- speed against bit depth -- and having
-    /// it silently revert to the driver's default between sessions would change
-    /// the data without changing anything on screen.
+    /// The camera readout mode last chosen, by index, from before settings were
+    /// kept per camera. Read so an existing choice is not lost -- it is applied
+    /// to the camera it was chosen for, once, and then kept in
+    /// <see cref="Cameras"/> -- and no longer written.
     /// </summary>
     public int? ReadoutModeIndex { get; init; }
+
+    /// <summary>
+    /// Settings remembered per camera, keyed by <see cref="CameraKey"/>.
+    ///
+    /// The readout mode is remembered because it is a deliberate trade the user
+    /// made -- speed against bit depth -- and having it silently revert to the
+    /// driver's default between sessions would change the data without changing
+    /// anything on screen. The gain for the same reason, and because it was the
+    /// setting that ruined a night when nobody could see it.
+    /// </summary>
+    public IReadOnlyDictionary<string, CameraSettings>? Cameras { get; init; }
 
     /// <summary>
     /// The exposure last chosen, in seconds. Remembered for the same reason as
@@ -70,6 +96,45 @@ public sealed record AppSettings
     public string? MountDeviceId { get; init; }
 
     public static AppSettings Empty { get; } = new();
+
+    /// <summary>
+    /// The key a camera's settings are stored under: its provider and its own
+    /// identity -- a serial number when the camera has one -- or failing that the
+    /// id the provider enumerated it under.
+    ///
+    /// The provider is part of it because the same camera reached through ASCOM
+    /// and through its vendor's SDK is two different things here: different
+    /// readout lists, and gain controlled in one and not the other.
+    /// </summary>
+    public static string CameraKey(string providerName, string? uniqueId, string deviceId) =>
+        $"{providerName}/{(string.IsNullOrEmpty(uniqueId) ? deviceId : uniqueId)}";
+
+    public CameraSettings? ForCamera(string key) =>
+        Cameras is not null && Cameras.TryGetValue(key, out CameraSettings? settings) ? settings : null;
+
+    /// <summary>
+    /// A copy with one camera's settings changed, or this same instance when the
+    /// change changes nothing -- so the caller's "did anything change" check,
+    /// which compares instances, still works across a dictionary it would
+    /// otherwise always see as new.
+    /// </summary>
+    public AppSettings WithCamera(string key, Func<CameraSettings, CameraSettings> update)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+
+        CameraSettings? existing = ForCamera(key);
+        CameraSettings next = update(existing ?? new CameraSettings());
+        if (existing is not null && existing == next)
+        {
+            return this;
+        }
+
+        var cameras = Cameras is null
+            ? new Dictionary<string, CameraSettings>(StringComparer.Ordinal)
+            : new Dictionary<string, CameraSettings>(Cameras, StringComparer.Ordinal);
+        cameras[key] = next;
+        return this with { Cameras = cameras };
+    }
 
     /// <summary>
     /// Always true. Reloading the site is a convenience for the person typing;
@@ -221,6 +286,30 @@ public sealed class JsonFileSettingsStore : ISettingsStore
         {
             complaints.Add("the stored focal length was out of range and has been discarded");
             result = result with { FocalLengthMillimetres = null, IsFocalLengthSolved = false };
+        }
+
+        if (result.Cameras is { Count: > 0 } cameras)
+        {
+            bool corrected = false;
+            var kept = new Dictionary<string, CameraSettings>(StringComparer.Ordinal);
+
+            foreach ((string key, CameraSettings camera) in cameras)
+            {
+                CameraSettings clean = camera with
+                {
+                    ReadoutModeIndex = camera.ReadoutModeIndex is >= 0 ? camera.ReadoutModeIndex : null,
+                    GainPercent = camera.GainPercent is >= 0 and <= 100 ? camera.GainPercent : null,
+                };
+
+                corrected |= clean != camera;
+                kept[key] = clean;
+            }
+
+            if (corrected)
+            {
+                complaints.Add("a stored camera setting was out of range and has been discarded");
+                result = result with { Cameras = kept };
+            }
         }
 
         warning = complaints.Count == 0

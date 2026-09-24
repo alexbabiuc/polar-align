@@ -87,6 +87,16 @@ public static class CaptureHeader
             }
         }
 
+        // Only when this application controls the gain and so actually knows
+        // it. An ASCOM camera's gain lives behind the driver's own window, and
+        // writing a guess would be worse than the silence: the over-exposed
+        // night this whole header exists because of was diagnosed partly by
+        // asking what the gain had been, and nobody could say.
+        if (camera.GainRange is not null && camera.Gain is { } gain)
+        {
+            header.Set("GAIN", gain, "camera gain, vendor units");
+        }
+
         if (context?.FocalLengthMillimetres is { } focalLength && focalLength > 0.0)
         {
             header.Set("FOCALLEN", focalLength, "focal length, mm");

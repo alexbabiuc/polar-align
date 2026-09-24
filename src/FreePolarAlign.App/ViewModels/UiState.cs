@@ -90,6 +90,18 @@ public sealed record UiState
     public bool CameraHasSetupDialog { get; init; }
 
     /// <summary>
+    /// Which camera is connected, as the key its settings are remembered under
+    /// (see <c>AppSettings.CameraKey</c>). Null when none is.
+    /// </summary>
+    public string? CameraSettingsKey { get; init; }
+
+    /// <summary>
+    /// The connected camera's gain, or null when it is not set from here --
+    /// every ASCOM camera, whose gain belongs to its driver's own window (D23).
+    /// </summary>
+    public CameraGainDescription? CameraGain { get; init; }
+
+    /// <summary>
     /// True while that window is open. Everything else must be refused until it
     /// closes: the window changes the device the next exposure comes from, and
     /// the engine is in any case blocked waiting for it, so a UI that still

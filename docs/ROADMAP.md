@@ -175,7 +175,7 @@ produces a reported fault and a session that starts again cleanly.
 
 **Hardware half: not done, and not doable here.** No mount, no ASCOM Platform,
 and macOS. The ASCOM provider is written and compiles, but has never executed —
-see its doc comments and `docs/MOUNT-COMPATIBILITY.md`, which researches the
+see its doc comments and `docs/DEVICE-COMPATIBILITY.md`, which researches the
 iOptron and Sky-Watcher `SideOfPier` behaviour D9 marked VERIFY, tagging every
 claim by whether it is documented, user-reported or inferred. Two findings there
 matter more than the table: the `SideOfPier` unreliability D9 attributes mainly
@@ -431,6 +431,19 @@ macOS packaging, which by this point is packaging work rather than porting work.
 
 Each lands as a plugin. None require touching the application.
 
+**Pulled forward: ZWO and ToupTek (D25).** Both exist as plugins ahead of this
+phase, because through ASCOM the one setting that ruined a night — gain — could
+not be reached. Built and tested as far as a machine without the cameras or the
+vendor libraries allows: struct layouts checked against the real headers for
+both ABIs, all data handling tested, no native call ever executed. *Not yet
+verified against real hardware*, which is this phase's actual bar.
+
+The line above turned out not to be quite true. The plugins themselves needed
+nothing from the application, but offering their gain did: a gain member on
+`ICamera`, capabilities on `DeviceDescriptor` so the UI can offer the right
+control before connecting, and settings remembered per camera. Contract changes,
+made once; the next vendor should need none of them.
+
 ---
 
 ## Risks
@@ -441,6 +454,11 @@ crash, because the user acts on it. Mitigated by D11, and by treating residual
 checks as a correctness feature rather than a nicety.
 
 **Vendor SDK redistribution terms.** Check each licence before Phase 6, not during.
+Checked for the two pulled forward (D25): ZWO's SDK licence permits
+redistribution with its notice. The ToupTek library is LGPL-2.1 as INDI
+redistributes it, but that covers its Linux and macOS builds; no terms were found
+for the Windows `toupcam.dll`. ZWO's library is now shipped from `resources/`
+with its notice; ToupTek's is supplied by the user.
 
 **Watney's library API.** D3 assumes it is usable as an embedded library with
 manageable database tiers. If that assumption fails, the fallback is subprocessing

@@ -244,5 +244,6 @@ public static class EngineFactory
         "Download the bundled core packs (D13) and extract each one -- including its .qdbindex sidecar, " +
         "which Watney requires alongside the .qdb files -- into that directory:" +
         Environment.NewLine + string.Join(Environment.NewLine, CorePackUrls) +
-        Environment.NewLine + "Or set the FPA_QUADDB_DIR environment variable to point at an existing database.";
+        Environment.NewLine + "Download-QuadDatabase.ps1, beside the application, does this for you. " +
+        "Or set the FPA_QUADDB_DIR environment variable to point at an existing database.";
 }

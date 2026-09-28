@@ -245,8 +245,8 @@ public class PresentationTests
 
         Assert.Equal(0, state.CapturedPointCount);
         Assert.True(state.SessionActive);
-        Assert.Contains(state.Log, entry => entry.Contains("WARN", StringComparison.Ordinal) &&
-                                            entry.Contains("3.2' in declination", StringComparison.Ordinal));
+        Assert.Contains(state.Log, entry => entry.Severity == LogSeverity.Warning &&
+                                            entry.Text.Contains("3.2' in declination", StringComparison.Ordinal));
     }
 
     // ---- Formatting and hemisphere ----
@@ -297,11 +297,18 @@ public class PresentationTests
             new SessionCompletedEvent());
 
         Assert.Equal(5, state.Log.Count);
-        Assert.Contains(state.Log, entry => entry.Contains("Result withheld: Meridian crossed.", StringComparison.Ordinal));
+        Assert.Contains(state.Log, entry => entry.Text.Contains("Result withheld: Meridian crossed.", StringComparison.Ordinal));
 
         // Severity is on the line, so the file and the screen can both be
         // skimmed for the entries that matter without reading every one.
-        Assert.Contains(state.Log, entry => entry.Contains("ERROR", StringComparison.Ordinal));
+        Assert.Contains(state.Log, entry => entry.Text.Contains("ERROR", StringComparison.Ordinal));
+
+        // And it travels with the entry, which is what the window tints the line
+        // by -- the only way a warning stands out now that it has no banner.
+        LogEntry withheld = state.Log.Single(entry => entry.Message.StartsWith("Result withheld", StringComparison.Ordinal));
+        Assert.Equal(LogSeverity.Error, withheld.Severity);
+        Assert.True(withheld.IsError);
+        Assert.All(state.Log.Where(e => e != withheld), e => Assert.Equal(LogSeverity.Info, e.Severity));
     }
 
     /// <summary>
@@ -315,8 +322,8 @@ public class PresentationTests
     {
         UiState state = After(Fresh(), new SiteConfiguredEvent(51.47733, -0.00139, 47.0));
 
-        Assert.Contains(state.Log, entry => entry.Contains("51.47733", StringComparison.Ordinal));
-        Assert.Contains(state.Log, entry => entry.Contains("-0.00139", StringComparison.Ordinal));
+        Assert.Contains(state.Log, entry => entry.Text.Contains("51.47733", StringComparison.Ordinal));
+        Assert.Contains(state.Log, entry => entry.Text.Contains("-0.00139", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -597,7 +604,7 @@ public class PresentationTests
         UiState state = After(Fresh(), new EquipmentConfiguredEvent(null, false, null, null));
 
         Assert.Null(state.FocalLengthMillimetres);
-        Assert.Contains(state.Log, entry => entry.Contains("blind", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(state.Log, entry => entry.Text.Contains("blind", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -647,7 +654,7 @@ public class PresentationTests
             Fresh(),
             new SolveStartedEvent(SampleTrigger.SlewEnded, "/tmp/fpa/capture-0003.fits"));
 
-        Assert.Contains(state.Log, entry => entry.Contains("capture-0003.fits", StringComparison.Ordinal));
+        Assert.Contains(state.Log, entry => entry.Text.Contains("capture-0003.fits", StringComparison.Ordinal));
     }
 
     /// <summary>

@@ -106,7 +106,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             merge: (waiting, arriving) => arriving is Restretch && waiting is ShowFrame ? waiting : arriving,
             onError: ex => _postToUiThread(() => FramePreviewProblem = $"Could not build a preview: {ex.Message}"));
 
-        Warnings = warnings ?? Array.Empty<string>();
+        IReadOnlyList<string> startupWarnings = warnings ?? Array.Empty<string>();
         DefaultConfiguration = defaultConfiguration;
         LogPath = log?.Path;
 
@@ -149,10 +149,17 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             _focalLengthText = focalLength.ToString("F1", CultureInfo.InvariantCulture);
         }
 
-        _state = UiState.Initial();
+        // Startup problems open the log rather than a banner across the top of
+        // the window. A banner that is always up is one nobody reads, and most
+        // of what used to fill it described a normal installation.
+        DateTimeOffset startedAt = DateTimeOffset.UtcNow;
+        _state = UiState.Initial() with
+        {
+            Log = startupWarnings.Select(w => new LogEntry(startedAt, LogSeverity.Warning, w)).ToArray(),
+        };
         if (engine is null)
         {
-            _state = _state with { StatusMessage = "No engine available. See the warnings above." };
+            _state = _state with { StatusMessage = "No engine available. See the warnings in the log below." };
         }
 
         // Every predicate starts from Ready, which is "there is an engine and it
@@ -227,15 +234,6 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Standing conditions of the install, shown persistently rather than folded
-    /// into the transient status line: a missing quad database (D13) or a plugin
-    /// that would not load (D4) describes the installation, not a moment.
-    /// </summary>
-    public IReadOnlyList<string> Warnings { get; }
-
-    public bool HasWarnings => Warnings.Count > 0;
-
-    /// <summary>
     /// There is an engine, and it is not blocked behind the camera driver's
     /// settings window. Every command's precondition begins here.
     ///
@@ -245,8 +243,6 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     /// the button is what makes that impossible rather than merely unlikely.
     /// </summary>
     private bool Ready => _engine is not null && !State.CameraSetupDialogOpen;
-
-    public string WarningText => string.Join(Environment.NewLine + Environment.NewLine, Warnings);
 
     public string? LogPath { get; }
 
@@ -794,7 +790,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
     public string? RejectionReason => State.RejectionReason;
 
-    public IReadOnlyList<string> Log => State.Log;
+    public IReadOnlyList<LogEntry> Log => State.Log;
 
     /// <summary>Called by the window's clock, so a countdown shown between events keeps counting.</summary>
     public void OnClockTick()

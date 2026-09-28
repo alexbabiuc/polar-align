@@ -1138,11 +1138,10 @@ and macOS builds, and no terms were found for the Windows `toupcam.dll`, so it
 is not in the repository and the user supplies it. Either way, each plugin looks
 for its library beside itself, then in `runtimes/<rid>/native` under the running
 process's own architecture, then on the system path. Absent everywhere is
-reported as `ProviderUnavailableException`, which the catalogue logs rather
-than shows — for anyone without that brand of camera it is the normal state,
-and a permanent banner would teach them to ignore the banner. Present but
-unloadable (a 32-bit DLL beside a 64-bit build) lets its real exception through
-and *is* shown. The runtime's own probing reports both as the same
+reported as `ProviderUnavailableException`, which the catalogue logs as
+information rather than a warning — for anyone without that brand of camera it
+is the normal state. Present but unloadable (a 32-bit DLL beside a 64-bit
+build) lets its real exception through and is logged as a warning (D28). The runtime's own probing reports both as the same
 `DllNotFoundException`, which is why this is done by hand.
 
 **How the bindings were checked.** The ZWO structs carry C `long` fields — 32
@@ -1311,6 +1310,43 @@ meridian margin when the step would cross it.
 while its σ is 3′–5′. The covariance is honest there; it matched the observed
 scatter in Phase 1. But the success indication judges the total error alone,
 without its σ, so a shrunk sweep could show a success it has not earned.
+
+---
+
+## D28 — Problems go in the log, tinted by severity; there is no warning banner
+
+Install-level problems no longer get a banner across the top of the window:
+a missing quad database, a plugin that would not load, an unreadable settings
+file. They open the on-screen log as warnings. Every log line carries its
+severity and is tinted by it, faintly: green for information, yellow for a
+warning, red for an error. The severity stays in the text as well (`WARN`,
+`ERROR`), because a colour does not survive a copied line.
+
+**Why.** Asked for directly, and the banner had earned it. It was always up,
+and most of what filled it described a normal installation. The worst offender
+was ZWO's own `ASICamera2.dll`, reported at every start of every install as "a
+plugin that could not be loaded", though it sat exactly where D25 put it. A
+warning that is always showing is one nobody reads, which is the argument D25
+already made for the missing-vendor-library case.
+
+**A native library in a plugin folder is that plugin's dependency, not a
+failed plugin.** The loader now reads each file's PE header and skips a valid
+image with no .NET metadata. A file that is not a valid image at all is still
+reported, since a corrupt or mistyped file in a plugin folder is worth a
+warning. The same fault had a second effect nobody saw: the plugin's load
+context was rooted at the folder's first DLL alphabetically, and
+`ASICamera2.dll` sorts ahead of the ZWO plugin's assembly. The context is now
+rooted at the first .NET assembly.
+
+**The log's text colour is fixed, not themed.** Its background was always
+hard-coded dark while the text followed the system theme, so on a light Windows
+theme the log was dark text on a dark ground. Found while checking the tints on
+a rendered window.
+
+**Cost.** A problem at startup is now one line among others rather than
+something that cannot be missed. The tint is what keeps it findable, and it is
+the first line in the log, since startup problems are logged before anything
+else happens.
 
 ---
 

@@ -1,6 +1,35 @@
 using FreePolarAlign.Core.Engine;
+using FreePolarAlign.Session;
 
 namespace FreePolarAlign.App.ViewModels;
+
+/// <summary>
+/// One line of the on-screen log. The severity travels with it rather than
+/// being baked into the text, so the window can colour the line by it -- which
+/// is how a warning is now told apart from routine progress, since warnings no
+/// longer get a banner of their own.
+/// </summary>
+public sealed record LogEntry(DateTimeOffset TimestampUtc, LogSeverity Severity, string Message)
+{
+    public string Text => $"{TimestampUtc.ToLocalTime():HH:mm:ss} {Prefix} {Message}";
+
+    /// <summary>
+    /// Kept in the text as well as the colour: a colour is lost in a copied line,
+    /// and a severity nobody can distinguish by colour must still be readable.
+    /// </summary>
+    private string Prefix => Severity switch
+    {
+        LogSeverity.Warning => "WARN ",
+        LogSeverity.Error => "ERROR",
+        _ => "     ",
+    };
+
+    public bool IsWarning => Severity == LogSeverity.Warning;
+
+    public bool IsError => Severity == LogSeverity.Error;
+
+    public override string ToString() => Text;
+}
 
 /// <summary>
 /// One connected (or not connected) device, as the UI shows it.
@@ -276,7 +305,7 @@ public sealed record UiState
 
     public double? RequestedSweepDegrees { get; init; }
 
-    public IReadOnlyList<string> Log { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<LogEntry> Log { get; init; } = Array.Empty<LogEntry>();
 
     /// <summary>
     /// A fresh state with nothing configured. Deliberately takes no site: the

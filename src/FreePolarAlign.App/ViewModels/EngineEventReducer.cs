@@ -391,16 +391,9 @@ public static class EngineEventReducer
             return state;
         }
 
-        string prefix = narrated.Severity switch
-        {
-            LogSeverity.Warning => "WARN ",
-            LogSeverity.Error => "ERROR",
-            _ => "     ",
-        };
-
-        var log = new List<string>(state.Log.Count + 1);
+        var log = new List<LogEntry>(state.Log.Count + 1);
         log.AddRange(state.Log);
-        log.Add($"{engineEvent.TimestampUtc.ToLocalTime():HH:mm:ss} {prefix} {narrated.Message}");
+        log.Add(new LogEntry(engineEvent.TimestampUtc, narrated.Severity, narrated.Message));
 
         if (log.Count > MaxLogEntries)
         {

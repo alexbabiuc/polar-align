@@ -85,6 +85,9 @@ public enum SamplingActivity
     Failed,
 
     Sampled,
+
+    /// <summary>The sweep is finished and the last frame solved gave the live reading (D29).</summary>
+    Live,
 }
 
 /// <param name="SolveDueUtc">When a scheduled solve is due, so the countdown can be shown without another event.</param>
@@ -259,6 +262,22 @@ public sealed record UiState
     /// value on screen under a banner.
     /// </summary>
     public AlignmentEstimate? CurrentEstimate { get; init; }
+
+    /// <summary>
+    /// True once the sweep has handed over to the live reading (D29), until the
+    /// sequence ends or starts again. <see cref="CurrentEstimate"/> is then the
+    /// latest frame's, not the sweep's.
+    /// </summary>
+    public bool IsLiveReading { get; init; }
+
+    /// <summary>
+    /// How far each bolt has moved the axis since the sweep, from the latest
+    /// live reading; null outside one. Worth showing for its own sake (D17): a
+    /// bolt that reads as moved when it was not touched means something else did.
+    /// </summary>
+    public double? AppliedAltitudeArcminutes { get; init; }
+
+    public double? AppliedAzimuthArcminutes { get; init; }
 
     /// <summary>Non-null exactly when the last relevant event was <see cref="AlignmentWithheldEvent"/>.</summary>
     public string? WithheldReason { get; init; }

@@ -193,14 +193,16 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             () => Ready && State.Camera.IsConnected);
 
         // No mount is an ordinary mode, not a missing device (D10 as revised):
-        // positions then come from blind solves.
+        // positions then come from blind solves. Allowed during the live
+        // reading too, because a fresh sweep is how its result is checked (D29).
         StartCommand = new RelayCommand(
             StartAsync,
-            () => Ready && !State.SessionActive && State.Camera.IsConnected && State.IsSiteConfigured);
+            () => Ready && (!State.SessionActive || State.IsLiveReading) &&
+                  State.Camera.IsConnected && State.IsSiteConfigured);
 
         RecordSampleCommand = new RelayCommand(
             () => SendAsync(new RecordSampleCommand()),
-            () => Ready && State.SessionActive);
+            () => Ready && State.SessionActive && !State.IsLiveReading);
 
         // Only a proposal that needs a slew has anything to confirm. The rest are
         // carried out at the mount and sampled once it settles (D26), and a slew
@@ -711,6 +713,28 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     public string TotalErrorText => State.CurrentEstimate is { } e
         ? AlignmentFormatting.FormatMagnitudeWithSigma(e.TotalErrorArcminutes, e.TotalSigmaArcminutes)
         : "--";
+
+    /// <summary>
+    /// The sweep has finished and the figures are following the bolts (D29).
+    /// Distinct from <see cref="IsTracking"/>, which is the mount's drive.
+    /// </summary>
+    public bool IsLiveReading => State.IsLiveReading;
+
+    public string AltitudeCorrectionText => State.CurrentEstimate is { } e
+        ? AlignmentFormatting.AltitudeCorrection(e.AltitudeErrorArcminutes)
+        : string.Empty;
+
+    public string AzimuthCorrectionText => State.CurrentEstimate is { } e && State.SiteLatitudeDegrees is { } latitude
+        ? AlignmentFormatting.AzimuthCorrection(e.AzimuthErrorArcminutes, latitude)
+        : string.Empty;
+
+    public bool HasAppliedBolts => State.IsLiveReading &&
+                                   State.AppliedAltitudeArcminutes is not null &&
+                                   State.AppliedAzimuthArcminutes is not null;
+
+    public string AppliedBoltsText => HasAppliedBolts
+        ? AlignmentFormatting.AppliedBolts(State.AppliedAltitudeArcminutes!.Value, State.AppliedAzimuthArcminutes!.Value)
+        : string.Empty;
 
     public string ResidualRmsText => State.CurrentEstimate is { } e
         ? AlignmentFormatting.FormatResidualRms(e.ResidualRmsArcseconds)
@@ -1362,6 +1386,11 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(AzimuthErrorText),
         nameof(TotalErrorText),
         nameof(ResidualRmsText),
+        nameof(IsLiveReading),
+        nameof(AltitudeCorrectionText),
+        nameof(AzimuthCorrectionText),
+        nameof(HasAppliedBolts),
+        nameof(AppliedBoltsText),
         nameof(HemisphereText),
         nameof(ProgressText),
         nameof(SweepShortfall),

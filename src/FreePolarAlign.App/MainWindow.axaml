@@ -408,7 +408,19 @@
           -->
           <Border Classes="panel">
             <StackPanel Spacing="10">
-              <TextBlock Classes="h" FontSize="18" Text="Alignment estimate" />
+              <!--
+                LIVE because the same figures mean two different things: the
+                sweep's measurement, or that measurement carried along by every
+                frame since (D29). Only the first is checked by residuals.
+              -->
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Classes="h" FontSize="18" Text="Alignment estimate" VerticalAlignment="Center" />
+                <Border Background="#8C2A2A" CornerRadius="3" Padding="6,1" VerticalAlignment="Center"
+                        IsVisible="{Binding IsLiveReading}"
+                        ToolTip.Tip="Every frame is solved and the figures follow the bolts from the sweep's answer. Start a new sequence to check the result with a fresh sweep.">
+                  <TextBlock Text="LIVE" Foreground="White" FontSize="11" FontWeight="Bold" />
+                </Border>
+              </StackPanel>
               <TextBlock Classes="label" Text="{Binding HemisphereText}" />
 
               <Border Background="#28304A" CornerRadius="4" Padding="10">
@@ -429,6 +441,24 @@
                 <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding AltitudeErrorText}" FontSize="20" />
                 <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding AzimuthErrorText}" FontSize="20" />
               </Grid>
+
+              <!--
+                The signs above, turned into what to do with the knobs. Left and
+                right are as seen from behind the mount, facing the pole, which
+                is where anyone turning them is standing; the compass direction
+                is added because the knobs are labelled with neither.
+              -->
+              <Border Background="#1E2E1E" CornerRadius="4" Padding="10" IsVisible="{Binding HasCurrentEstimate}">
+                <StackPanel Spacing="3">
+                  <TextBlock Classes="label" TextWrapping="Wrap"
+                             Text="To correct, standing behind the mount facing the pole" />
+                  <TextBlock Text="{Binding AltitudeCorrectionText}" FontSize="15" FontWeight="Bold" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding AzimuthCorrectionText}" FontSize="15" FontWeight="Bold" TextWrapping="Wrap" />
+                  <TextBlock Classes="label" Text="{Binding AppliedBoltsText}" TextWrapping="Wrap"
+                             IsVisible="{Binding HasAppliedBolts}"
+                             ToolTip.Tip="How far each bolt has moved the axis since the sweep. If a bolt you have not touched reads as moved, something else moved -- start a new sequence." />
+                </StackPanel>
+              </Border>
 
               <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
                 <StackPanel Grid.Column="0" Spacing="2">

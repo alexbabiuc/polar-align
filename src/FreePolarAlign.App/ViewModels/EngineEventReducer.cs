@@ -105,6 +105,13 @@ public static class EngineEventReducer
             // else. A failed solve in particular is not a warning banner:
             // while the mount is being turned most frames fail, and a banner
             // that is always up is a banner nobody reads.
+            // The live reading solves every frame (D29). Left to the cases
+            // below, the sampling line would cycle through "next solve" and
+            // "solving" several times a second; what it says instead comes from
+            // the readings and the failures.
+            SolveScheduledEvent { Trigger: SampleTrigger.Tracking } => withLog,
+            SolveStartedEvent { Trigger: SampleTrigger.Tracking } => withLog,
+
             SolveScheduledEvent e => withLog with
             {
                 Sampling = state.Sampling with
@@ -153,6 +160,9 @@ public static class EngineEventReducer
             SequenceRestartedEvent => withLog with
             {
                 CurrentEstimate = null,
+                IsLiveReading = false,
+                AppliedAltitudeArcminutes = null,
+                AppliedAzimuthArcminutes = null,
                 CapturedPointCount = 0,
                 Proposal = null,
                 Sampling = SamplingView.Idle,
@@ -173,6 +183,9 @@ public static class EngineEventReducer
                 SessionActive = true,
                 SequenceMode = e.Mode,
                 CurrentEstimate = null,
+                IsLiveReading = false,
+                AppliedAltitudeArcminutes = null,
+                AppliedAzimuthArcminutes = null,
                 WithheldReason = null,
                 FaultReason = null,
                 GuidanceInstruction = null,
@@ -257,6 +270,43 @@ public static class EngineEventReducer
                 StatusMessage = "Alignment estimate updated.",
             },
 
+            // D29: the sweep's answer stays on screen, and from here on each
+            // frame replaces it.
+            TrackingStartedEvent e => withLog with
+            {
+                IsLiveReading = true,
+                GuidanceInstruction = e.Instruction,
+                Proposal = null,
+                Sampling = SamplingView.Idle,
+                RejectionReason = null,
+                StatusMessage = e.IsUsableGeometry
+                    ? "Sweep finished. Turn the bolts: the figures follow them live."
+                    : "Sweep finished, but the bolts cannot be told apart at this pointing -- see the next step.",
+            },
+
+            // Every frame, so the status line is left alone, as for frames. An
+            // unreliable reading clears the figures rather than leaving the
+            // last good ones up: the user is acting on them continuously, and a
+            // stale live number is the worst kind (D11, D17).
+            AlignmentTrackedEvent { IsReliable: true } e => withLog with
+            {
+                CurrentEstimate = e.Estimate,
+                AppliedAltitudeArcminutes = e.AppliedAltitudeArcminutes,
+                AppliedAzimuthArcminutes = e.AppliedAzimuthArcminutes,
+                WithheldReason = null,
+                FaultReason = null,
+                Sampling = new SamplingView(SamplingActivity.Live),
+            },
+
+            AlignmentTrackedEvent e => withLog with
+            {
+                CurrentEstimate = null,
+                AppliedAltitudeArcminutes = null,
+                AppliedAzimuthArcminutes = null,
+                WithheldReason = e.UnreliableReason ?? "The bolts cannot be told apart at this pointing.",
+                Sampling = new SamplingView(SamplingActivity.Live),
+            },
+
             // D11: the engine itself has determined this fit cannot be
             // trusted (residuals, conditioning, or curvature identifiability).
             // The reason is surfaced prominently and the numeric estimate is
@@ -288,6 +338,9 @@ public static class EngineEventReducer
             {
                 SessionActive = false,
                 CurrentEstimate = null,
+                IsLiveReading = false,
+                AppliedAltitudeArcminutes = null,
+                AppliedAzimuthArcminutes = null,
                 GuidanceInstruction = null,
                 Proposal = null,
                 Sampling = SamplingView.Idle,
@@ -297,10 +350,12 @@ public static class EngineEventReducer
 
             // Normal completion. The roadmap is explicit that the actual
             // figure stays visible after success, so CurrentEstimate is left
-            // exactly as the last AlignmentUpdatedEvent set it.
+            // exactly as the last reading set it -- the sweep's or the live
+            // one's. It is no longer live, though, and stops saying so.
             SessionCompletedEvent => withLog with
             {
                 SessionActive = false,
+                IsLiveReading = false,
                 GuidanceInstruction = null,
                 Proposal = null,
                 Sampling = SamplingView.Idle,

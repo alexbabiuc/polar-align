@@ -50,6 +50,58 @@ public static class AlignmentFormatting
         return FormattableString.Invariant($"{sign}{Math.Abs(valueArcminutes):F1}' ± {sigmaArcminutes:F1}'");
     }
 
+    /// <summary>
+    /// Below this a correction is not worth turning a bolt for: a tenth of the
+    /// display's own resolution would be shown as 0.0' and read as "done".
+    /// </summary>
+    private const double NegligibleCorrectionArcminutes = 0.05;
+
+    /// <summary>
+    /// Which way to turn the altitude adjustment, and how far. The error is the
+    /// axis minus the pole, so a positive one means the axis is too high.
+    /// </summary>
+    public static string AltitudeCorrection(double altitudeErrorArcminutes)
+    {
+        double size = Math.Abs(altitudeErrorArcminutes);
+        if (size < NegligibleCorrectionArcminutes)
+        {
+            return "Altitude: leave it where it is";
+        }
+
+        string way = altitudeErrorArcminutes > 0 ? "Lower" : "Raise";
+        return FormattableString.Invariant($"{way} the altitude by {size:F1}'");
+    }
+
+    /// <summary>
+    /// Which way to turn the azimuth adjustment, and how far, as seen standing
+    /// behind the mount and looking along the polar axis towards the pole.
+    ///
+    /// A positive error is the axis clockwise of the pole seen from above. For
+    /// someone facing the pole, clockwise is to their right in both hemispheres
+    /// -- facing north, east is on the right; facing south, west is -- so a
+    /// positive error is always corrected to the left. The compass direction
+    /// that "left" means is what differs, and it is given too, because the
+    /// azimuth knobs on most mounts are labelled with neither.
+    /// </summary>
+    public static string AzimuthCorrection(double azimuthErrorArcminutes, double siteLatitudeDegrees)
+    {
+        double size = Math.Abs(azimuthErrorArcminutes);
+        if (size < NegligibleCorrectionArcminutes)
+        {
+            return "Azimuth: leave it where it is";
+        }
+
+        bool left = azimuthErrorArcminutes > 0;
+        bool north = siteLatitudeDegrees >= 0;
+        string compass = left == north ? "west" : "east";
+        return FormattableString.Invariant($"Move the azimuth {(left ? "left" : "right")} ({compass}) by {size:F1}'");
+    }
+
+    /// <summary>How far the bolts have moved the axis since the sweep, signed as the errors are (D29).</summary>
+    public static string AppliedBolts(double altitudeArcminutes, double azimuthArcminutes) =>
+        FormattableString.Invariant(
+            $"Turned since the sweep: altitude {altitudeArcminutes:+0.0;-0.0;0.0}', azimuth {azimuthArcminutes:+0.0;-0.0;0.0}'");
+
     public static string FormatResidualRms(double residualRmsArcseconds) =>
         FormattableString.Invariant($"{residualRmsArcseconds:F1}\"");
 
@@ -190,6 +242,7 @@ public static class AlignmentFormatting
             SamplingActivity.Failed => FormattableString.Invariant(
                 $"Last solve failed ({sampling.ConsecutiveFailures} in a row): {sampling.Detail}"),
             SamplingActivity.Sampled => "Sample taken.",
+            SamplingActivity.Live => "Live: every frame is solved, and the figures are from the latest.",
             _ => null,
         };
 

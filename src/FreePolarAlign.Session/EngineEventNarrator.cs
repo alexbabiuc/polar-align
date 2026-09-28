@@ -98,6 +98,11 @@ public static class EngineEventNarrator
             // that matter are the solved ones, logged with their solve.
             FrameCapturedEvent => new NarratedEvent(LogSeverity.Info, string.Empty),
 
+            // The live reading solves every frame (D29), and a line for each
+            // step of that would bury the readings themselves, which are logged.
+            SolveScheduledEvent { Trigger: SampleTrigger.Tracking } => Quiet,
+            SolveStartedEvent { Trigger: SampleTrigger.Tracking } => Quiet,
+
             SolveScheduledEvent e => Info(e.Delay > TimeSpan.Zero
                 ? Inv($"{DescribeTrigger(e.Trigger)}: solving in {e.Delay.TotalSeconds:G3} s unless the mount moves.")
                 : $"{DescribeTrigger(e.Trigger)}: solving the next frame."),
@@ -106,6 +111,11 @@ public static class EngineEventNarrator
             // again afterwards, and "which image was point 3" is the first
             // question anyone asks about a sequence that went wrong.
             SolveStartedEvent e => Info($"Solving ({DescribeTrigger(e.Trigger).ToLowerInvariant()}): {e.FitsPath}"),
+
+            // While the bolts are being turned most frames fail, and that is the
+            // user's pace rather than anything to warn about (D26, D29).
+            SolveFailedEvent { Trigger: SampleTrigger.Tracking } e => Info(
+                $"Live reading: solve failed ({e.ConsecutiveFailures} in a row): {e.Reason}"),
 
             SolveFailedEvent e => new NarratedEvent(LogSeverity.Warning, Inv(
                 $"Solve failed ({e.ConsecutiveFailures} in a row): {e.Reason}",
@@ -131,6 +141,21 @@ public static class EngineEventNarrator
                 $"residual RMS {e.Estimate.ResidualRmsArcseconds:F2}\".")),
 
             AlignmentWithheldEvent e => new NarratedEvent(LogSeverity.Error, $"Result withheld: {e.Reason}"),
+
+            TrackingStartedEvent e => e.IsUsableGeometry
+                ? Info($"Live reading started: {e.Instruction}")
+                : new NarratedEvent(LogSeverity.Warning, $"Live reading started, but not usable here yet: {e.Instruction}"),
+
+            // One line a frame, which is what a session log is for: the morning
+            // after, it is the record of what each bolt turn actually did.
+            AlignmentTrackedEvent { IsReliable: true } e => Info(Inv(
+                $"Live: total {e.Estimate.TotalErrorArcminutes:F2}' ",
+                $"(altitude {e.Estimate.AltitudeErrorArcminutes:+0.00;-0.00}', azimuth {e.Estimate.AzimuthErrorArcminutes:+0.00;-0.00}'); ",
+                $"bolts turned so far: altitude {e.AppliedAltitudeArcminutes:+0.00;-0.00}', ",
+                $"azimuth {e.AppliedAzimuthArcminutes:+0.00;-0.00}'.")),
+
+            AlignmentTrackedEvent e => new NarratedEvent(
+                LogSeverity.Warning, $"Live reading withheld: {e.UnreliableReason}"),
 
             ManualActionRequiredEvent e => Info($"Manual action required: {e.Instruction}"),
 
@@ -190,12 +215,16 @@ public static class EngineEventNarrator
         SampleTrigger.SlewEnded => "Mount settled",
         SampleTrigger.Periodic => "Next blind solve",
         SampleTrigger.Retry => "Retrying after a failed solve",
+        SampleTrigger.Tracking => "Live reading",
         _ => "Sample requested",
     };
 
     private static string Kind(DeviceKind kind) => kind == DeviceKind.Camera ? "Camera" : "Mount";
 
     private static NarratedEvent Info(string message) => new(LogSeverity.Info, message);
+
+    /// <summary>Not worth a line: the reducer and the log file both skip an empty message.</summary>
+    private static NarratedEvent Quiet { get; } = new(LogSeverity.Info, string.Empty);
 
     /// <summary>
     /// Invariant interpolation. Named rather than overloaded on both

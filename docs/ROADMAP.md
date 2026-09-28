@@ -245,6 +245,14 @@ cannot be here; it compiles, and the app launches and stays running with the
 virtual observatory wired up, which demonstrates the dependency graph constructs
 and nothing more. The correction reticle (D12) is still a placeholder.
 
+**Freeze-and-track is now wired into the session and the window (D29, 0.0.12).**
+Until then it existed only in the core, and the screen stopped at the sweep's
+estimate. A finished sweep now hands over to the live reading, which says which
+way to turn each knob. On the virtual observatory, through the real solver,
+starting 2° out, one sweep and one turn by the live reading left 0.03′ of true
+error, and the reading agreed with the truth to 0.007′. Whether the left/right
+wording matches what a user at a real mount sees is VERIFY until a night allows it.
+
 **The exit criterion is not met and cannot be here.** It asks for a real night on
 real equipment, which needs both hardware and a sky. What has been established is
 that the numbers behind the screen are right and that the screen does not

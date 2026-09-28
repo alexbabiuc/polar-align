@@ -236,4 +236,33 @@ public class SimulatedMountMotionTests
         (_, double arrived) = MechanicsAt(mount, DateTime.UtcNow);
         Assert.Equal(-6.0, (arrived - declination) * 60.0, 1e-3);
     }
+
+    /// <summary>
+    /// With the drive off, a mount's encoders hold still and the sky moves past,
+    /// so the RA it reports drifts at the sidereal rate while the telescope
+    /// stays put. The simulator once went on reporting the RA it was last sent
+    /// to, which is what a *driven* mount reports: a live reading that takes
+    /// the drive's turn from the report (D29) would have read that as tracking.
+    /// </summary>
+    [Fact]
+    public async Task AnUndrivenMount_ReportsAnRAThatDriftsWithTheSky()
+    {
+        var mount = new SimulatedMount(new SimulatedMountOptions(Site, MountMisalignment.Aligned, Tracking: false));
+        await mount.ConnectAsync();
+
+        MountPosition before = await mount.GetPositionAsync();
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        MountPosition after = await mount.GetPositionAsync();
+
+        double seconds = (after.TimestampUtc - before.TimestampUtc).TotalSeconds;
+        double driftArcseconds = RotationDifference(after.RaDegrees, before.RaDegrees) * 3600.0;
+
+        // A fixed hour angle under a turning sky: RA rises with sidereal time,
+        // 15.04" of it per second.
+        Assert.Equal(15.041 * seconds, driftArcseconds, tolerance: 0.5);
+        Assert.Equal(
+            MechanicsAt(mount, before.TimestampUtc).Rotation,
+            MechanicsAt(mount, after.TimestampUtc).Rotation,
+            precision: 6);
+    }
 }

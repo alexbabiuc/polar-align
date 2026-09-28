@@ -134,7 +134,7 @@ public class ConfirmBeforeSlewTests
             }
         }
 
-        await harness.Recorder.WaitForAsync<SessionCompletedEvent>();
+        await harness.Recorder.WaitForAsync<TrackingStartedEvent>();
         Assert.Equal(4, harness.Mount.Slews.Count);
 
         double planned = SessionHarness.MechanicalDeclinationOf(harness.Mount.Slews[0].Ra, harness.Mount.Slews[0].Dec);

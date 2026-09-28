@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Reflection.PortableExecutable;
 
 namespace FreePolarAlign.Devices.Plugins;
 
@@ -53,16 +54,29 @@ public static class PluginLoader
 
     private static void LoadPluginDirectory(string directory, List<IDeviceProvider> providers, List<PluginLoadFailure> failures)
     {
-        string[] assemblies = Directory.GetFiles(directory, "*.dll", SearchOption.TopDirectoryOnly);
-        if (assemblies.Length == 0)
+        string[] libraries = Directory.GetFiles(directory, "*.dll", SearchOption.TopDirectoryOnly);
+        if (libraries.Length == 0)
         {
             failures.Add(new PluginLoadFailure(directory, $"Plugin directory '{directory}' contains no .dll files.", null));
             return;
         }
 
+        // A native library beside a plugin is that plugin's own dependency --
+        // the ZWO plugin ships ASICamera2.dll there (D25) -- not a plugin that
+        // failed to load. Reporting it as one put a warning on every start of
+        // every installation for a file that was exactly where it belonged.
+        string[] assemblies = libraries.Where(path => !IsNativeLibrary(path)).ToArray();
+        if (assemblies.Length == 0)
+        {
+            failures.Add(new PluginLoadFailure(
+                directory, $"Plugin directory '{directory}' contains only native libraries and no .NET assembly.", null));
+            return;
+        }
+
         // One load context per plugin directory (D4 isolation), rooted at the
-        // first assembly found so dependency resolution has a .deps.json to
-        // start from if the plugin published one.
+        // first .NET assembly found so dependency resolution has a .deps.json
+        // to start from if the plugin published one. The first *file* would not
+        // do: ASICamera2.dll sorts ahead of the ZWO plugin's own assembly.
         PluginAssemblyLoadContext context;
         try
         {
@@ -77,6 +91,25 @@ public static class PluginLoader
         foreach (string assemblyPath in assemblies.OrderBy(a => a, StringComparer.Ordinal))
         {
             LoadAssemblyInto(context, assemblyPath, providers, failures);
+        }
+    }
+
+    /// <summary>
+    /// A valid PE image with no .NET metadata: a native library. Anything that is
+    /// not a valid image at all is left for the loader to report, since a
+    /// corrupt or mistyped file in a plugin folder is worth saying so about.
+    /// </summary>
+    internal static bool IsNativeLibrary(string path)
+    {
+        try
+        {
+            using FileStream stream = File.OpenRead(path);
+            using var reader = new PEReader(stream);
+            return reader.PEHeaders.PEHeader is not null && !reader.HasMetadata;
+        }
+        catch (Exception ex) when (ex is BadImageFormatException or IOException or UnauthorizedAccessException)
+        {
+            return false;
         }
     }
 

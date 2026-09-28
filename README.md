@@ -152,10 +152,10 @@ library.
 - **ToupTek** — not in the repository. Drop the 64-bit `toupcam.dll` from
   ToupTek's SDK into `plugins/ToupTek/`.
 
-A plugin whose library is missing lists no cameras and says so in the session
-log, not in the warning banner: for anyone without that brand of camera it is
-the normal state. A library that is present but unloadable (a 32-bit DLL beside
-a 64-bit build, say) *is* shown as a warning.
+A plugin whose library is missing lists no cameras and says so in the log as
+information: for anyone without that brand of camera it is the normal state. A
+library that is present but unloadable (a 32-bit DLL beside a 64-bit build, say)
+is logged as a warning (D28).
 
 Cross-publishing a Windows binary from macOS works, but installer packaging and
 code signing need a real Windows machine.

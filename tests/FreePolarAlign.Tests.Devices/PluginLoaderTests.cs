@@ -133,6 +133,56 @@ public sealed class PluginLoaderTests : IDisposable
         Assert.Empty(result.Failures);
     }
 
+    /// <summary>
+    /// A native library beside a plugin is its dependency, not a failed plugin.
+    /// Reported as one, ZWO's ASICamera2.dll -- shipped in the plugin's own
+    /// folder (D25) -- put a warning on screen at every start. It also sorts
+    /// ahead of the plugin's assembly, which must still be what the load context
+    /// is rooted at. The real DLL from resources/ is used because "native" is
+    /// exactly the property under test, and a fabricated PE could get it wrong.
+    /// </summary>
+    [Fact]
+    public void ANativeLibraryBesideAPlugin_IsNotReportedAsAFailure()
+    {
+        string pluginDir = Path.Combine(_root, "zwo-like");
+        FixtureAssemblyCompiler.CompileToFile(WorkingProviderSource("NativeNeighbourProvider"), pluginDir, "NativeNeighbourAssembly");
+        File.Copy(ZwoNativeLibrary, Path.Combine(pluginDir, "ASICamera2.dll"));
+
+        PluginLoadResult result = PluginLoader.Load(_root);
+
+        Assert.Equal("NativeNeighbourProvider", Assert.Single(result.Providers).Name);
+        Assert.Empty(result.Failures);
+    }
+
+    /// <summary>A folder of native libraries alone is still not a plugin, and says so.</summary>
+    [Fact]
+    public void APluginFolderOfOnlyNativeLibraries_SaysSo()
+    {
+        string pluginDir = Path.Combine(_root, "native-only");
+        Directory.CreateDirectory(pluginDir);
+        File.Copy(ZwoNativeLibrary, Path.Combine(pluginDir, "ASICamera2.dll"));
+
+        PluginLoadResult result = PluginLoader.Load(_root);
+
+        Assert.Empty(result.Providers);
+        Assert.Contains("no .NET assembly", Assert.Single(result.Failures).Message);
+    }
+
+    private static string ZwoNativeLibrary
+    {
+        get
+        {
+            DirectoryInfo? directory = new(AppContext.BaseDirectory);
+            while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "FreePolarAlign.sln")))
+            {
+                directory = directory.Parent;
+            }
+
+            Assert.NotNull(directory);
+            return Path.Combine(directory!.FullName, "resources", "zwo", "camera", "libs", "x64", "ASICamera2.dll");
+        }
+    }
+
     [Fact]
     public void ValidProviderAsLooseDllInRoot_IsDiscoveredAndInstantiated()
     {

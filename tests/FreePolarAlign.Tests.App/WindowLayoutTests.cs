@@ -96,10 +96,10 @@ public class WindowLayoutTests
     }
 
     /// <param name="withWarnings">
-    /// The banner that pushed the original defect over the edge: an install
-    /// warning (a plugin that would not load, a missing quad database) takes a
-    /// permanent strip off the top of the window, and the user who reported this
-    /// had two of them.
+    /// Install warnings, which once had a banner that took a permanent strip off
+    /// the top of the window and pushed the original defect over the edge. They
+    /// now open the log instead, and the parameter stays to prove the window's
+    /// layout no longer depends on them.
     /// </param>
     private static void WithWindow(double width, double height, bool withWarnings, Action<Window> assertions)
     {

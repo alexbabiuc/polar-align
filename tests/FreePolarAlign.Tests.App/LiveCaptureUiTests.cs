@@ -199,6 +199,26 @@ public sealed class LiveCaptureUiTests : IDisposable
     }
 
     /// <summary>
+    /// Install warnings open the log, as warnings, rather than taking a banner
+    /// across the top of the window. A banner that is always up is one nobody
+    /// reads, and most of what filled it described a normal installation.
+    /// </summary>
+    [Fact]
+    public void StartupWarnings_OpenTheLogAsWarnings()
+    {
+        var viewModel = new MainWindowViewModel(
+            new PublishingEngine(), catalog: null, settingsStore: null, settings: null, log: null,
+            warnings: new[] { "No Watney quad database found." },
+            new SessionConfiguration(6, 70.0),
+            renderPreview: new RecordingRenderer().Render);
+
+        LogEntry entry = Assert.Single(viewModel.Log);
+        Assert.Equal(LogSeverity.Warning, entry.Severity);
+        Assert.Contains("No Watney quad database found.", entry.Text, StringComparison.Ordinal);
+        Assert.Null(typeof(MainWindowViewModel).GetProperty("HasWarnings"));
+    }
+
+    /// <summary>
     /// A real FITS file whose first pixel identifies it, so a test can tell
     /// which frame a render was for.
     /// </summary>

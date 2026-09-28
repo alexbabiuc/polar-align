@@ -260,10 +260,10 @@
         </StackPanel>
       </ScrollViewer>
 
-      <!-- ================= Measurement ================= -->
+      <!-- ================= Captured frame ================= -->
       <!--
-        The one column that does not scroll, and deliberately: the numbers stay
-        where they are and the frame view takes the height that is left.
+        The one column that does not scroll, and deliberately: the frame view
+        takes exactly the height the window gives it.
 
         Scrolling was tried here and is worse. Inside a ScrollViewer a child is
         measured with unlimited height, so the image asked for its natural size
@@ -276,49 +276,7 @@
         ClipToBounds is the backstop: whatever the arithmetic, this column paints
         inside its own bounds rather than over its neighbours.
       -->
-      <Grid Grid.Column="1" x:Name="MeasurementColumn" RowDefinitions="Auto,*" RowSpacing="10" ClipToBounds="True">
-        <Border Grid.Row="0" Classes="panel">
-          <StackPanel Spacing="10">
-            <TextBlock Classes="h" FontSize="18" Text="Alignment estimate" />
-            <TextBlock Classes="label" Text="{Binding HemisphereText}" />
-
-            <Border Background="#28304A" CornerRadius="4" Padding="10">
-              <StackPanel Spacing="4">
-                <TextBlock Classes="label" TextWrapping="Wrap"
-                           Text="Total error (success is judged on this figure alone)" />
-                <TextBlock Text="{Binding TotalErrorText}" FontSize="34" FontWeight="Bold" />
-                <Border Background="#1F6F3F" CornerRadius="3" Padding="6,3" HorizontalAlignment="Left"
-                        IsVisible="{Binding IsGoodEnoughToStop}">
-                  <TextBlock Text="Good enough to stop turning bolts (below 10')" Foreground="White" FontSize="12" />
-                </Border>
-              </StackPanel>
-            </Border>
-
-            <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="2">
-              <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="Altitude error" />
-              <TextBlock Grid.Row="0" Grid.Column="1" Classes="label" Text="Azimuth error" />
-              <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding AltitudeErrorText}" FontSize="20" />
-              <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding AzimuthErrorText}" FontSize="20" />
-            </Grid>
-
-            <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
-              <StackPanel Grid.Column="0" Spacing="2">
-                <TextBlock Classes="label" Text="Residual RMS (fit health)" />
-                <TextBlock Text="{Binding ResidualRmsText}" FontSize="16" />
-              </StackPanel>
-              <StackPanel Grid.Column="1" Spacing="2">
-                <TextBlock Classes="label" Text="Progress" />
-                <TextBlock Text="{Binding ProgressText}" FontSize="16" />
-              </StackPanel>
-            </Grid>
-
-            <Border Background="#5A4A1E" BorderBrush="#B3943A" BorderThickness="1" CornerRadius="3" Padding="8"
-                    IsVisible="{Binding HasSweepShortfall}">
-              <TextBlock Text="{Binding SweepShortfall}" TextWrapping="Wrap" Foreground="#FFEFCB" FontSize="12" />
-            </Border>
-          </StackPanel>
-        </Border>
-
+      <Grid Grid.Column="1" x:Name="FrameColumn" ClipToBounds="True">
         <!--
           The captured frame, always stretched. A linear rendering of an
           astronomical exposure is a black rectangle, so showing one unstretched
@@ -339,11 +297,11 @@
         <!--
           Deliberately no MinHeight: a minimum is exactly what made the panel
           demand space it had not been given, and draw itself across its
-          neighbours when it did not get it. The row it sits in is the height
+          neighbours when it did not get it. The column it sits in is the height
           available, and the DockPanel inside hands the picture whatever the
           header and the brightness control leave.
         -->
-        <Border Grid.Row="1" x:Name="CapturedFramePanel" Classes="panel" ClipToBounds="True">
+        <Border x:Name="CapturedFramePanel" Classes="panel" ClipToBounds="True">
           <DockPanel LastChildFill="True">
             <!--
               The correction reticle (D12) note lives on the title rather than on
@@ -438,14 +396,63 @@
         </Border>
       </Grid>
 
-      <!-- ================= What to do next ================= -->
+      <!-- ================= Estimate and what to do next ================= -->
       <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="10">
 
           <!--
+            The estimate sits above everything else here so that the middle
+            column can be the frame alone: the picture is what is looked at
+            while turning bolts, and it was sharing its height with a panel of
+            numbers that fit just as well in this narrower column.
+          -->
+          <Border Classes="panel">
+            <StackPanel Spacing="10">
+              <TextBlock Classes="h" FontSize="18" Text="Alignment estimate" />
+              <TextBlock Classes="label" Text="{Binding HemisphereText}" />
+
+              <Border Background="#28304A" CornerRadius="4" Padding="10">
+                <StackPanel Spacing="4">
+                  <TextBlock Classes="label" TextWrapping="Wrap"
+                             Text="Total error (success is judged on this figure alone)" />
+                  <TextBlock Text="{Binding TotalErrorText}" FontSize="34" FontWeight="Bold" />
+                  <Border Background="#1F6F3F" CornerRadius="3" Padding="6,3" HorizontalAlignment="Left"
+                          IsVisible="{Binding IsGoodEnoughToStop}">
+                    <TextBlock Text="Good enough to stop turning bolts (below 10')" Foreground="White" FontSize="12" />
+                  </Border>
+                </StackPanel>
+              </Border>
+
+              <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="2">
+                <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="Altitude error" />
+                <TextBlock Grid.Row="0" Grid.Column="1" Classes="label" Text="Azimuth error" />
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding AltitudeErrorText}" FontSize="20" />
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding AzimuthErrorText}" FontSize="20" />
+              </Grid>
+
+              <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                <StackPanel Grid.Column="0" Spacing="2">
+                  <TextBlock Classes="label" Text="Residual RMS (fit health)" />
+                  <TextBlock Text="{Binding ResidualRmsText}" FontSize="16" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="2">
+                  <TextBlock Classes="label" Text="Progress" />
+                  <TextBlock Text="{Binding ProgressText}" FontSize="16" />
+                </StackPanel>
+              </Grid>
+
+              <Border Background="#5A4A1E" BorderBrush="#B3943A" BorderThickness="1" CornerRadius="3" Padding="8"
+                      IsVisible="{Binding HasSweepShortfall}">
+                <TextBlock Text="{Binding SweepShortfall}" TextWrapping="Wrap" Foreground="#FFEFCB" FontSize="12" />
+              </Border>
+            </StackPanel>
+          </Border>
+
+          <!--
             What to do next, from whichever of the proposal and the manual
-            instruction the engine gave last. At the top of the column because
-            without a mount it is the whole of the guidance (D10): which
+            instruction the engine gave last. Directly under the estimate, the
+            first thing it would move, because without a mount it is the whole
+            of the guidance (D10): which
             declination to set, then how far to turn.
 
             The coordinates and the slew button appear only for a proposal that

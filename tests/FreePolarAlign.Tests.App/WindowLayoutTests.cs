@@ -137,7 +137,7 @@ public class WindowLayoutTests
         });
     }
 
-    private static Grid Column(Window window) => window.FindControl<Grid>("MeasurementColumn")!;
+    private static Grid Column(Window window) => window.FindControl<Grid>("FrameColumn")!;
 
     private static Border Panel(Window window) => window.FindControl<Border>("CapturedFramePanel")!;
 
@@ -243,14 +243,16 @@ public class WindowLayoutTests
     /// measured with the warnings banner showing, since that is the case that
     /// squeezes hardest and the one the defect was reported from.
     ///
-    /// The two numbers are far apart because the window's minimum size genuinely
-    /// cannot fit everything: at 720px with two warning banners the frame view
-    /// is small, and the honest answer for a user in that position is a taller
-    /// window, not a rearranged one. At the default size it is a picture.
+    /// The floors were raised when the alignment estimate moved out of this
+    /// column into the right-hand one, so that the frame could have the column
+    /// to itself. Measured with the estimate still above it, the frame view was
+    /// 325px at the default size and 165px at the minimum; with the column to
+    /// itself it is 565px and 405px. Both floors sit under the new figures and
+    /// above the old ones, so putting a panel back above the frame fails here.
     /// </summary>
     [Theory]
-    [InlineData(1380.0, 880.0, 200.0)]
-    [InlineData(1100.0, 720.0, 80.0)]
+    [InlineData(1380.0, 880.0, 500.0)]
+    [InlineData(1100.0, 720.0, 350.0)]
     public void TheFrameViewKeepsRoomForAPicture(double width, double height, double floor)
     {
         WithWindow(width, height, withWarnings: true, window =>

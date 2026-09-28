@@ -228,11 +228,59 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     /// <summary>The previous unconnected solve, which the next must agree with before either is a sample (D26).</summary>
     private SolvedPosition? _lastUnconnectedSolve;
 
+    // ---- Freeze-and-track (D29) ----
+
+    /// <summary>The latest fit the engine stood behind, or null when the last one was withheld.</summary>
+    private PolarAlignmentSolution? _lastSolution;
+
+    /// <summary>The newest sample, which is where the live reading starts from: the bolts had not been touched yet.</summary>
+    private TrackingReference? _lastSampleReference;
+
+    /// <summary>
+    /// Whether an unconnected mount's drive is running, as the sweep's own
+    /// agreeing solves showed it, or null while they have not (D29). A connected
+    /// mount's rotation is read from the mount instead.
+    /// </summary>
+    private bool? _unconnectedDriveTracking;
+
+    /// <summary>Non-null once the sweep has finished and the live reading has taken over.</summary>
+    private LiveTracking? _tracking;
+
+    /// <summary>
+    /// The sidereal rate. An undriven mount holds still in the horizon frame; a
+    /// driven one turns about its own axis at this rate, and that turn has to be
+    /// handed to the tracker, or it reads as a bolt turn that grows by fifteen
+    /// arcseconds a second.
+    /// </summary>
+    private const double SiderealDegreesPerSecond = 360.98564736629 / 86400.0;
+
     private sealed record Armed(SampleTrigger Trigger, DateTime NotBeforeUtc);
 
     private sealed record Sample(double RotationDegrees, double RaDegrees, double DecDegrees, DateTime MidpointUtc);
 
-    private sealed record SolvedPosition(double RaDegrees, double DecDegrees, HorizontalCoordinates Direction);
+    private sealed record SolvedPosition(double RaDegrees, double DecDegrees, HorizontalCoordinates Direction, DateTime MidpointUtc);
+
+    /// <param name="Mount">What the mount reported when the sample was taken; null without a mount.</param>
+    private sealed record TrackingReference(SolvedPosition Solved, MountPosition? Mount);
+
+    private sealed class LiveTracking(AxisTracker tracker, TrackingReference reference, PolarAlignmentSolution sweep)
+    {
+        public AxisTracker Tracker { get; } = tracker;
+
+        public TrackingReference Reference { get; } = reference;
+
+        public PolarAlignmentSolution Sweep { get; } = sweep;
+
+        /// <summary>Unconnected only: null until it is known whether the drive is running.</summary>
+        public bool? DriveTracking { get; set; }
+
+        /// <summary>
+        /// Unconnected only: the solve a still telescope is compared against
+        /// while the drive is being worked out. Starts as the reference, and
+        /// moves on if the telescope turns out to have moved in the meantime.
+        /// </summary>
+        public required SolvedPosition DriveAnchor { get; set; }
+    }
 
     /// <summary>
     /// What the engine has suggested and is waiting on. Held as one object so
@@ -1415,8 +1463,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         if (_samples.Count >= _captureCount)
         {
-            ResetSession();
-            _events.Publish(new SessionCompletedEvent());
+            EndSweep();
             return;
         }
 
@@ -1461,9 +1508,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 if (_samples.Count >= SmallCircleFitter.MinimumObservations)
                 {
                     _events.Publish(new ManualActionRequiredEvent(
-                        $"{why} The sequence ends with the {_samples.Count} samples it has.", rotation));
-                    ResetSession();
-                    _events.Publish(new SessionCompletedEvent());
+                        $"{why} The sweep ends with the {_samples.Count} samples it has.", rotation));
+                    EndSweep();
                 }
                 else
                 {
@@ -1610,6 +1656,14 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     {
         if (!EnsureSequence())
         {
+            return;
+        }
+
+        if (_tracking is not null)
+        {
+            _events.Publish(new CommandRejectedEvent(
+                "The sweep is finished, and every frame is already being solved for the live reading. To measure " +
+                "again from scratch, start a new sequence."));
             return;
         }
 
@@ -1920,6 +1974,13 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
     private void OnSlewEnded(MountPosition position)
     {
+        if (_tracking is not null)
+        {
+            // Spacing is a sweep's concern. The live reading only needs the
+            // mount to have stopped, and it follows an RA move (D29).
+            ScheduleSolve(SampleTrigger.Tracking, _options.EffectiveSettleDelay);
+            return;
+        }
         double rotation = TargetSelection.MechanicalRotationOf(
             _site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
 
@@ -1982,10 +2043,13 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         double rotation = TargetSelection.MechanicalRotationOf(
             _site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
 
-        string reason =
-            $"The mount moved {changeArcminutes:F1}' in declination. The {_samples.Count} sample(s) taken so far " +
-            "lie on a different circle about the polar axis and cannot be combined with new ones, so they have " +
-            "been discarded and the sequence restarted here (D18). Leave declination alone from now on.";
+        string reason = _tracking is not null
+            ? $"The mount moved {changeArcminutes:F1}' in declination. The live reading follows the bolts by " +
+              "assuming nothing else turns the telescope off its circle about the polar axis, so it has stopped, " +
+              "and a new sweep has started here (D29). Leave declination alone while turning the bolts."
+            : $"The mount moved {changeArcminutes:F1}' in declination. The {_samples.Count} sample(s) taken so far " +
+              "lie on a different circle about the polar axis and cannot be combined with new ones, so they have " +
+              "been discarded and the sequence restarted here (D18). Leave declination alone from now on.";
 
         TargetPlan plan = TargetSelection.PlanFrom(
             _site!, rotation, declination, DateTime.UtcNow, _captureCount, _sweepDegrees, _options.EffectiveAtmosphere);
@@ -2168,9 +2232,14 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             HorizontalCoordinates direction = TopocentricConverter.ToAltAz(
                 solution.CenterRaDegrees, solution.CenterDecDegrees, frame.ExposureMidpointUtc,
                 observer, _options.EffectiveAtmosphere);
-            var solved = new SolvedPosition(solution.CenterRaDegrees, solution.CenterDecDegrees, direction);
+            var solved = new SolvedPosition(
+                solution.CenterRaDegrees, solution.CenterDecDegrees, direction, frame.ExposureMidpointUtc);
 
-            if (_mode == SequenceMode.Unconnected)
+            if (_tracking is { } live)
+            {
+                await OnTrackingSolveAsync(live, solved).ConfigureAwait(false);
+            }
+            else if (_mode == SequenceMode.Unconnected)
             {
                 OnUnconnectedSolve(trigger, frame, solved);
             }
@@ -2198,6 +2267,19 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             _consecutiveSolveFailures,
             kept));
 
+        if (_tracking is not null)
+        {
+            // Frames fail while a bolt is being turned, and that is the whole
+            // time the reading is wanted, so the next frame is tried at once.
+            // A moving mount is picked up again when it stops.
+            if (!_mountMoving)
+            {
+                ScheduleSolve(SampleTrigger.Tracking, TimeSpan.Zero);
+            }
+
+            return;
+        }
+
         if (_mode == SequenceMode.Unconnected)
         {
             // A failure breaks the chain of agreeing solves: the mount may be
@@ -2223,7 +2305,13 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         try
         {
-            bool settled = trigger == SampleTrigger.Forced || (previous is not null && Agrees(previous, solved));
+            bool agrees = previous is not null && Agrees(previous, solved);
+            if (agrees && DriveFrom(previous!, solved) is { } drive)
+            {
+                _unconnectedDriveTracking = drive;
+            }
+
+            bool settled = trigger == SampleTrigger.Forced || agrees;
             if (!settled)
             {
                 _events.Publish(new SampleSkippedEvent(
@@ -2303,7 +2391,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             _plan = _plan! with { MechanicalDeclinationDegrees = declination };
         }
 
-        AcceptSample(trigger, frame, solved, rotation);
+        AcceptSample(trigger, frame, solved, rotation, position);
     }
 
     /// <summary>
@@ -2320,9 +2408,11 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         return Math.Min(sky, horizon) * 60.0 <= StillToleranceArcminutes;
     }
 
-    private void AcceptSample(SampleTrigger trigger, CapturedImage frame, SolvedPosition solved, double rotation)
+    private void AcceptSample(
+        SampleTrigger trigger, CapturedImage frame, SolvedPosition solved, double rotation, MountPosition? position = null)
     {
         _atConfirmedPosition = false;
+        _lastSampleReference = new TrackingReference(solved, position);
         _observations.Add(solved.Direction);
         _samples.Add(new Sample(rotation, solved.RaDegrees, solved.DecDegrees, frame.ExposureMidpointUtc));
 
@@ -2437,6 +2527,10 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         PolarAlignmentSolution solution = PolarAlignmentSolver.Solve(
             _observations, _site!.LatitudeDegrees, _options.ExpectedSolveNoiseArcseconds);
 
+        // Kept only while trusted: an untrusted fit is not something to follow
+        // the bolts from either.
+        _lastSolution = solution.IsTrustworthy ? solution : null;
+
         if (!solution.IsTrustworthy)
         {
             _events.Publish(new AlignmentWithheldEvent(solution.UntrustworthyReason ?? "The fit could not be trusted."));
@@ -2452,6 +2546,257 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             solution.TotalSigmaArcminutes,
             solution.Fit.ResidualRmsArcseconds)));
     }
+
+    // ---- Freeze-and-track (D29) ----
+
+    /// <summary>
+    /// The sweep has all the samples it is going to get. With a trusted fit the
+    /// session carries on as the live reading; without one there is nothing to
+    /// follow the bolts from, and it ends as it always did.
+    /// </summary>
+    private void EndSweep()
+    {
+        if (_lastSolution is not { } solution || _lastSampleReference is not { } reference)
+        {
+            ResetSession();
+            _events.Publish(new SessionCompletedEvent());
+            return;
+        }
+
+        bool usable = AxisTracker.IsUsableTrackingGeometry(solution.MountAxis, reference.Solved.Direction);
+
+        if (!usable && _mode == SequenceMode.Unconnected)
+        {
+            // Pointing somewhere better means turning the mount in RA, and with
+            // no mount to say by how much, that turn cannot be told from a bolt
+            // turn. The estimate stands; a live reading from here cannot.
+            _events.Publish(new ManualActionRequiredEvent(
+                "The sweep ended pointing close to due east or west, where the altitude and azimuth bolts move " +
+                "the field the same way and cannot be told apart, so there is no live reading from here (D17). " +
+                "Turn the bolts by the figures above, then start a new sequence to check them.",
+                _samples[^1].RotationDegrees));
+            ResetSession();
+            _events.Publish(new SessionCompletedEvent());
+            return;
+        }
+
+        _proposal = null;
+        CancelPendingSolve();
+        _armed = null;
+
+        _tracking = new LiveTracking(
+            new AxisTracker(_site!.LatitudeDegrees, solution.MountAxis, reference.Solved.Direction),
+            reference,
+            solution)
+        {
+            DriveTracking = _mode == SequenceMode.Unconnected ? _unconnectedDriveTracking : null,
+            DriveAnchor = reference.Solved,
+        };
+
+        _events.Publish(new TrackingStartedEvent(BuildTrackingInstruction(usable), usable));
+        ScheduleSolve(SampleTrigger.Tracking, TimeSpan.Zero);
+    }
+
+    private string BuildTrackingInstruction(bool usable)
+    {
+        string start =
+            "The sweep is finished. Now turn the altitude and azimuth bolts: every frame is solved, and the " +
+            "figures above follow the bolts as you turn, with which way to turn each.";
+
+        string drive = _mode == SequenceMode.Unconnected && _tracking?.DriveTracking is null
+            ? " First hold the telescope still for a few seconds, while the frames show whether the drive is running."
+            : string.Empty;
+
+        string axes = _mode == SequenceMode.Unconnected
+            ? " Leave the RA and declination axes alone: with no mount connected, the reading assumes nothing but " +
+              "the bolts moves."
+            : " Moving in RA from the hand controller is fine; moving in declination starts a new sweep.";
+
+        string geometry = usable
+            ? string.Empty
+            : " At this pointing, though, the two bolts move the field the same way and cannot be told apart " +
+              "(D17): turn the mount in RA towards the meridian first, and the reading appears once they can be.";
+
+        return start + drive + axes + geometry +
+               " Stop when the total is under 10' -- under 2' is better -- and then start a new sequence to check " +
+               "it: the live reading follows the bolts from the sweep's answer and cannot notice anything else " +
+               "moving (D17).";
+    }
+
+    private async Task OnTrackingSolveAsync(LiveTracking live, SolvedPosition solved)
+    {
+        try
+        {
+            double? rotation = _mode == SequenceMode.Unconnected
+                ? UnconnectedDriveRotation(live, solved)
+                : await ConnectedRotationAsync(live, solved).ConfigureAwait(false);
+
+            if (rotation is not { } turned || !ReferenceEquals(_tracking, live))
+            {
+                return;
+            }
+
+            AxisUpdate update = live.Tracker.Update(solved.Direction, turned);
+            PolarAlignmentSolution sweep = live.Sweep;
+
+            _events.Publish(new AlignmentTrackedEvent(
+                new AlignmentEstimate(
+                    update.AltitudeErrorArcminutes,
+                    update.AzimuthErrorArcminutes,
+                    update.TotalErrorArcminutes,
+                    sweep.AltitudeSigmaArcminutes,
+                    sweep.AzimuthSigmaArcminutes,
+                    sweep.TotalSigmaArcminutes,
+                    sweep.Fit.ResidualRmsArcseconds),
+                update.AppliedAltitudeArcminutes,
+                update.AppliedAzimuthArcminutes,
+                update.IsReliable,
+                update.UnreliableReason));
+        }
+        finally
+        {
+            if (_sessionActive && ReferenceEquals(_tracking, live) && !_mountMoving)
+            {
+                ScheduleSolve(SampleTrigger.Tracking, TimeSpan.Zero);
+            }
+        }
+    }
+
+    /// <summary>
+    /// How far a connected mount has turned about its own axis since the
+    /// reference sample, from what it reports. The drive and an RA move from the
+    /// hand controller both show up there, and neither is a bolt turn.
+    /// </summary>
+    private async Task<double?> ConnectedRotationAsync(LiveTracking live, SolvedPosition solved)
+    {
+        // A frame from a mount that has started moving is of somewhere between
+        // two places, and the report that would be paired with it is of neither.
+        if (_mountMoving)
+        {
+            return null;
+        }
+
+        MountPosition now;
+        try
+        {
+            now = await _mount!.GetPositionAsync(_sessionCts.Token).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // The status poll reports a mount that has gone; a single missed
+            // reading here costs one frame.
+            return null;
+        }
+
+        if (now.IsSlewing)
+        {
+            return null;
+        }
+
+        MountPosition then = live.Reference.Mount!;
+        if (now.PierSide != PierSide.Unknown && then.PierSide != PierSide.Unknown && now.PierSide != then.PierSide)
+        {
+            ResetSession();
+            _events.Publish(new AlignmentWithheldEvent(
+                $"The mount flipped from {then.PierSide} to {now.PierSide} (D8), which turns the telescope over, and " +
+                "the live reading cannot follow that. Start a new sequence on this side of the meridian."));
+            _events.Publish(new SessionCompletedEvent());
+            return null;
+        }
+
+        return WrapDegrees(RotationAt(now, solved.MidpointUtc) - RotationAt(then, live.Reference.Solved.MidpointUtc));
+    }
+
+    /// <summary>
+    /// A mount's mechanical rotation at a frame's midpoint, from a report taken
+    /// a moment later. A driven mount holds its RA while its rotation advances
+    /// at the sidereal rate; an undriven one holds its rotation. The report
+    /// always follows the frame by about the same exposure and solve time, so an
+    /// error in that correction is nearly the same for the reference and for
+    /// now, and cancels between them.
+    /// </summary>
+    private double RotationAt(MountPosition report, DateTime midpointUtc)
+    {
+        double atReport = TargetSelection.MechanicalRotationOf(
+            _site!, report.RaDegrees, report.DecDegrees, report.TimestampUtc);
+        double rate = report.Tracking == TrackingState.Stopped ? 0.0 : SiderealDegreesPerSecond;
+        return atReport + rate * (midpointUtc - report.TimestampUtc).TotalSeconds;
+    }
+
+    /// <summary>
+    /// How far an unconnected mount's drive has turned it since the reference
+    /// sample: the sidereal rate if the drive is running, nothing if not. Null,
+    /// with the user asked to hold still, until that is known.
+    /// </summary>
+    private double? UnconnectedDriveRotation(LiveTracking live, SolvedPosition solved)
+    {
+        if (live.DriveTracking is null)
+        {
+            live.DriveTracking = DriveFrom(live.DriveAnchor, solved);
+
+            if (live.DriveTracking is null)
+            {
+                // Long enough to have told, and still neither: the telescope
+                // moved in between, so watching starts again from here.
+                if (ExpectedDriftArcminutes(live.DriveAnchor, solved) > 2.0 * DecisiveDriftArcminutes)
+                {
+                    live.DriveAnchor = solved;
+                }
+
+                _events.Publish(new SampleSkippedEvent(
+                    "Hold the telescope still for a few seconds: with no mount connected, the frames have to show " +
+                    "whether the drive is running before the reading can follow the bolts."));
+                return null;
+            }
+        }
+
+        double elapsedSeconds = (solved.MidpointUtc - live.Reference.Solved.MidpointUtc).TotalSeconds;
+        return live.DriveTracking.Value ? SiderealDegreesPerSecond * elapsedSeconds : 0.0;
+    }
+
+    /// <summary>
+    /// Whether a telescope that stood still between two solves was being
+    /// driven. A driven one holds its place on the sky and an undriven one its
+    /// place in the horizon frame, and the two part at the sidereal rate. Null
+    /// when too little time passed for them to have parted measurably, or when
+    /// neither held -- the telescope was moved.
+    /// </summary>
+    private bool? DriveFrom(SolvedPosition earlier, SolvedPosition later)
+    {
+        double expected = ExpectedDriftArcminutes(earlier, later);
+        if (expected < DecisiveDriftArcminutes)
+        {
+            return null;
+        }
+
+        double sky = SeparationDegrees(earlier.RaDegrees, earlier.DecDegrees, later.RaDegrees, later.DecDegrees) * 60.0;
+        double horizon = SeparationDegrees(
+            earlier.Direction.AzimuthDegrees, earlier.Direction.AltitudeDegrees,
+            later.Direction.AzimuthDegrees, later.Direction.AltitudeDegrees) * 60.0;
+
+        if (sky <= expected / 4.0 && horizon >= expected / 2.0)
+        {
+            return true;
+        }
+
+        if (horizon <= expected / 4.0 && sky >= expected / 2.0)
+        {
+            return false;
+        }
+
+        return null;
+    }
+
+    /// <summary>How far the sky turns past a fixed pointing between two solves, as seen at the later one's declination.</summary>
+    private static double ExpectedDriftArcminutes(SolvedPosition earlier, SolvedPosition later) =>
+        Math.Abs((later.MidpointUtc - earlier.MidpointUtc).TotalSeconds) * SiderealDegreesPerSecond * 60.0 *
+        Math.Cos(later.DecDegrees * Math.PI / 180.0);
+
+    /// <summary>
+    /// Ten times the expected solve noise. Below that, whichever frame the two
+    /// solves appear to hold still in would be decided by noise, not by the drive.
+    /// </summary>
+    private double DecisiveDriftArcminutes => 10.0 * _options.ExpectedSolveNoiseArcseconds / 60.0;
 
     // ---- Geometry ----
 
@@ -2539,6 +2884,10 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         _initialRotationSign = 0;
         _meridianWarned = false;
         _proposal = null;
+        _lastSolution = null;
+        _lastSampleReference = null;
+        _unconnectedDriveTracking = null;
+        _tracking = null;
     }
 
     private void ResetSession()

@@ -311,7 +311,7 @@ public class LiveSamplingTests
             await harness.WaitForSampleAsync(point, poll: false);
         }
 
-        await harness.Recorder.WaitForAsync<SessionCompletedEvent>();
+        await harness.Recorder.WaitForAsync<TrackingStartedEvent>();
 
         AlignmentEstimate estimate = harness.Recorder.Last<AlignmentUpdatedEvent>()!.Estimate;
         Assert.Equal(5, harness.Recorder.All<PointCapturedEvent>().Count());

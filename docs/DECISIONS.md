@@ -1350,6 +1350,77 @@ else happens.
 
 ---
 
+## D29 — The sweep hands over to a live reading, which follows the bolts until stopped
+
+When a sweep finishes with a trusted fit, the session does not end. It solves
+every frame and follows the bolts from the measured axis, using D17's
+`AxisTracker`. It keeps going until **Stop sequence**, a new **Start sequence**,
+or a declination move. The screen marks the figures LIVE and turns their signs
+into instructions: "Lower the altitude by 12.3′", and "Move the azimuth left
+(west) by 8.1′" as seen from behind the mount, facing the pole. It also shows
+how far each bolt has moved the axis since the sweep. That is D17's one
+safeguard: a bolt that reads as moved when it was not touched means something
+else moved.
+
+**Why.** A sweep per adjustment made the loop "measure, turn, sweep again",
+which is minutes per turn and the reason Phase 4 called freeze-and-track the
+feature people will judge the software by. Measured on the virtual observatory
+through the real solver, starting 2° out: one sweep, then one turn by the live
+reading, took the true error from 119.25′ to 0.03′. The reading then agreed
+with the truth to 0.007′, and no live solve failed. The same start took the
+sweep-per-turn loop of Phase 3 several rounds.
+
+**The drive's turn must be handed to the tracker, and it comes from different
+places with and without a mount.** Left in, it reads as a bolt turn growing by
+15″ a second.
+
+- **Connected:** from the mount's own reports. The rotation at each frame's
+  midpoint is worked out from the report taken just after the solve. That
+  covers the drive, on or off, and also an RA move from the hand controller,
+  which is allowed so that a user can get away from D17's east–west blind spot.
+  The report lags the frame by about the same exposure and solve time every
+  time, so an error in correcting for that lag cancels between the reference
+  and now.
+- **Unconnected:** from the frames. A still telescope that is driven holds its
+  place on the sky; an undriven one holds its place in the horizon frame. The
+  sweep's own pairs of agreeing solves (D26) usually settle which, once the
+  drift between them exceeds ten times the expected solve noise. If they did
+  not, the reading asks the user to hold still for a few seconds first. An RA
+  move by hand cannot be told from a bolt turn here, so the instruction says to
+  leave both axes alone. A sweep that ends at unusable geometry ends the
+  session as before, rather than going live.
+
+Both paths were checked by mutation: flipping the drive's sign, or ignoring
+the mount's rotation, fails the tests.
+
+**The simulated mount was wrong in a way this would have inherited.** With its
+drive off it went on reporting the RA it was last sent to, which is what a
+*driven* mount reports. It now reports the drifting RA a real undriven mount
+does. Otherwise the connected path would have taken a stopped mount for a
+tracking one.
+
+**What ends it, and what does not.** A declination move restarts the sweep,
+with a reason that says why: a single field cannot tell it from a bolt turn
+(D17), but a connected mount reports it. A pier flip ends the session. An
+unreliable reading clears the figures and shows the reason, rather than leaving
+the last good ones up (D11). **Record sample** is refused while the reading is
+live, since nothing is being sampled. **Start sequence** is allowed, since a
+fresh sweep is how a result is checked.
+
+**Logging.** One line per reading, since the morning after it is the record of
+what each turn did. The per-frame solve scheduling around the readings is not
+logged, or it would triple the log. A failed live solve is logged as
+information, not a warning: frames fail while a bolt is being turned.
+
+**Cost.** The live figures carry the sweep's own error along with them, and
+nothing but a new sweep can check them, which the instruction says. The
+uncertainties shown are the sweep's, on the grounds that one solve adds seconds
+of arc to an axis known to a fraction of a minute. Whether "left" and "right"
+match what a user at a real mount sees is reasoned, not observed: **VERIFY** on
+a real night, in both hemispheres if possible.
+
+---
+
 ## Open decisions
 
 **O1 — Licence.** ~~MIT is the natural fit and imposes nothing on Watney. GPL

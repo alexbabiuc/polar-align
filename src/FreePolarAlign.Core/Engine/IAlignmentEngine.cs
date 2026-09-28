@@ -95,6 +95,12 @@ public enum SampleTrigger
 
     /// <summary>The user asked for a sample now, whatever the spacing or stability.</summary>
     Forced,
+
+    /// <summary>
+    /// The sweep is finished and every frame is solved for the live reading
+    /// while the bolts are turned (D29). Not a sample: nothing is added to the fit.
+    /// </summary>
+    Tracking,
 }
 
 /// <summary>
@@ -543,10 +549,48 @@ public sealed record PointCapturedEvent(CapturePoint Point, SampleTrigger Trigge
 
 /// <summary>
 /// Emitted after every capture point once >= 3 points are available (D7). The
-/// engine re-fits and re-emits after each new point, which is also the
-/// mechanism behind freeze-and-track mode (Phase 4).
+/// engine re-fits and re-emits after each new point. Once the sweep is finished
+/// the reading is carried on by <see cref="AlignmentTrackedEvent"/> instead.
 /// </summary>
 public sealed record AlignmentUpdatedEvent(AlignmentEstimate Estimate) : EngineEvent;
+
+/// <summary>
+/// The sweep is finished and the engine has gone on to freeze-and-track (D29):
+/// it keeps solving every frame and follows the bolts from the measured axis.
+/// The session stays active until it is stopped, a new one is started, or the
+/// mount moves in declination.
+/// </summary>
+/// <param name="IsUsableGeometry">
+/// False when, at the pointing the sweep ended on, the two bolts move the field
+/// the same way and cannot be told apart (D17). The instruction then says where
+/// to point instead, and every reading is withheld until that is done.
+/// </param>
+public sealed record TrackingStartedEvent(string Instruction, bool IsUsableGeometry) : EngineEvent;
+
+/// <summary>
+/// The live reading from one frame while the bolts are being turned (D29).
+/// </summary>
+/// <param name="Estimate">
+/// Where the axis is now. The uncertainties are the sweep's: a single solve
+/// adds arcseconds to an axis the sweep knew to a fraction of an arcminute, so
+/// how well the starting point was known is what limits the reading.
+/// </param>
+/// <param name="AppliedAltitudeArcminutes">
+/// How far the altitude bolt has moved the axis since the sweep, signed as the
+/// error is. Surfaced because it is the one safeguard a live reading has
+/// (D17): a user who has turned only the altitude bolt, and is told the azimuth
+/// one moved, has learned that something else moved.
+/// </param>
+/// <param name="IsReliable">
+/// False when the geometry cannot separate the two bolts. The estimate is then
+/// not to be shown: a live figure that is wrong is acted on continuously.
+/// </param>
+public sealed record AlignmentTrackedEvent(
+    AlignmentEstimate Estimate,
+    double AppliedAltitudeArcminutes,
+    double AppliedAzimuthArcminutes,
+    bool IsReliable,
+    string? UnreliableReason = null) : EngineEvent;
 
 /// <summary>
 /// A likely declination drift or meridian flip was detected from fit residuals

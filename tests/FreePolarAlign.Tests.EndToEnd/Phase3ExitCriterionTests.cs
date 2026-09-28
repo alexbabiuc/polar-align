@@ -116,6 +116,9 @@ public class Phase3ExitCriterionTests
             {
                 switch (events[seen])
                 {
+                    // The sweep ends where the live reading takes over (D29);
+                    // each round here re-measures with a fresh sweep instead.
+                    case TrackingStartedEvent:
                     case SessionCompletedEvent:
                     case SessionFaultedEvent:
                         return (recorder.Last<AlignmentUpdatedEvent>()?.Estimate, recorder);
@@ -204,6 +207,83 @@ public class Phase3ExitCriterionTests
             Assert.True(errors[i] < errors[i - 1],
                 $"round {i} made the alignment worse, not better: {trail}");
         }
+    }
+
+    /// <summary>
+    /// The same two degrees, closed with one sweep and the live reading (D29):
+    /// the bolts are turned by what each frame says, and nothing is swept
+    /// again. Through the real solver on rendered frames, so the reading is as
+    /// noisy as a solve is, and checked against the simulated mount's true axis.
+    ///
+    /// A live reading carries the sweep's own error along with it -- it
+    /// measures bolt turns, not the axis -- so where this ends up is the sweep's
+    /// accuracy, and that is why the bar is the same 2′.
+    /// </summary>
+    [SkippableFact]
+    public async Task VirtualObservatory_OneSweepThenTheLiveReading_ReachesTwoArcminutes()
+    {
+        RequireQuadDatabase();
+
+        var injected = new MountMisalignment(AltitudeErrorArcminutes: 84.85, AzimuthErrorArcminutes: 120.0);
+        SimulatedDeviceProvider provider = BuildProvider(injected);
+        SimulatedMount mount = provider.MountInstance;
+
+        using ICamera camera = provider.OpenCamera("sim-camera");
+        using var solver = new WatneyPlateSolver(QuadDatabaseDirectory);
+        using var session = new AlignmentSession(camera, mount, solver, LiveOptions(6, TempDirectory()));
+
+        var recorder = new Recorder();
+        using IDisposable subscription = session.Events.Subscribe(recorder);
+        Task PollAsync() => session.SendAsync(new RefreshMountStatusCommand()).AsTask();
+
+        await ConnectAndConfirmSiteAsync(session);
+        await session.SendAsync(new StartSessionCommand(new SessionConfiguration(6, 70.0)));
+
+        int seen = 0;
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromMinutes(3);
+        while (recorder.Last<TrackingStartedEvent>() is null)
+        {
+            Assert.True(DateTime.UtcNow < deadline && recorder.Last<SessionFaultedEvent>() is null, recorder.Trail());
+            IReadOnlyList<EngineEvent> events = recorder.Events;
+            for (; seen < events.Count; seen++)
+            {
+                if (events[seen] is SlewProposedEvent { RequiresMotion: true })
+                {
+                    await session.SendAsync(new CaptureNextPointCommand());
+                }
+            }
+
+            await PollAsync();
+            await Task.Delay(50);
+        }
+
+        // A reading wholly from after the last turn: the first one published
+        // after it may have come from a frame exposed before.
+        async Task<AlignmentTrackedEvent> FreshReadingAsync()
+        {
+            DateTimeOffset turnedAt = DateTimeOffset.UtcNow;
+            AlignmentTrackedEvent straddling = await recorder.WaitForAsync<AlignmentTrackedEvent>(
+                e => e.TimestampUtc > turnedAt, poll: PollAsync, timeout: TimeSpan.FromMinutes(1));
+            return await recorder.WaitForAsync<AlignmentTrackedEvent>(
+                e => e.TimestampUtc > straddling.TimestampUtc && e.IsReliable, poll: PollAsync, timeout: TimeSpan.FromMinutes(1));
+        }
+
+        var errors = new List<double> { AxisErrorArcminutes(mount) };
+        AlignmentTrackedEvent reading = await FreshReadingAsync();
+
+        for (int turn = 0; turn < 3 && reading.Estimate.TotalErrorArcminutes >= 1.0; turn++)
+        {
+            mount.AdjustAxis(-reading.Estimate.AltitudeErrorArcminutes, -reading.Estimate.AzimuthErrorArcminutes);
+            errors.Add(AxisErrorArcminutes(mount));
+            reading = await FreshReadingAsync();
+        }
+
+        string trail = string.Join(" -> ", errors.Select(e => $"{e:F2}'"));
+        Assert.True(AxisErrorArcminutes(mount) < 2.0, $"the live reading left {trail}{recorder.Trail()}");
+
+        // And what the screen says is what is left, not an optimistic figure.
+        Assert.Equal(AxisErrorArcminutes(mount), reading.Estimate.TotalErrorArcminutes, tolerance: 1.0);
+        Assert.Single(recorder.All<TrackingStartedEvent>());
     }
 
     /// <summary>
@@ -340,7 +420,7 @@ public class Phase3ExitCriterionTests
             rotation += spacing;
         }
 
-        await recorder.WaitForAsync<SessionCompletedEvent>();
+        await recorder.WaitForAsync<TrackingStartedEvent>();
         AlignmentUpdatedEvent? updated = recorder.Last<AlignmentUpdatedEvent>();
         Assert.True(updated is not null, recorder.Trail());
 

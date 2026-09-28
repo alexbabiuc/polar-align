@@ -243,7 +243,11 @@ public sealed class SimulatedMount : IMount
             double ra = _commandedRaDegrees;
             double dec = _commandedDecDegrees;
             bool slewing = _slew is not null;
-            if (slewing)
+
+            // With the drive off the mechanical angles hold and the sky moves
+            // past, so what the encoders say the mount points at drifts at the
+            // sidereal rate, as a real undriven mount's report does.
+            if (slewing || !Options.Tracking)
             {
                 (double rotation, double declination) = MechanicsAt(now);
                 (ra, dec) = BeliefFromMechanics(rotation, declination, now);

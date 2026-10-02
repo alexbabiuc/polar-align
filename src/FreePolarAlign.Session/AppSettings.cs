@@ -33,9 +33,10 @@ public sealed record StoredSite(
 public sealed record CameraSettings(int? ReadoutModeIndex = null, int? GainPercent = null);
 
 /// <summary>
-/// Which plate solver does a job. Only <see cref="Internal"/> exists today; the
-/// others are choosable so the choice is already stored when their adapters
-/// arrive, and no stored setting has to be migrated then.
+/// Which plate solver does a job. <see cref="Internal"/> and <see cref="Astap"/>
+/// have adapters; the others are choosable so the choice is already stored when
+/// theirs arrive, and no stored setting has to be migrated then. Whatever is
+/// chosen, the internal solver gets the frames it cannot solve.
 /// </summary>
 public enum SolverKind
 {

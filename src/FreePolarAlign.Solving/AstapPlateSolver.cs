@@ -19,26 +19,33 @@ namespace FreePolarAlign.Solving;
 /// <remarks>
 /// ASTAP's CLI is documented informally (its own <c>-h</c> output and long
 /// community use in tools such as N.I.N.A. and APT) rather than by a
-/// versioned API contract the way Watney's library is, so the argument names
-/// and success/failure heuristics here are the best-documented, most stable
-/// subset: <c>-f</c> (input file), <c>-fov</c> (diagonal field of view hint,
-/// degrees), <c>-ra</c>/<c>-spd</c> (nearby-search center, RA in decimal
-/// hours and south polar distance = dec + 90, both in degrees) and
-/// <c>-wcs</c> (write the WCS solution into the FITS header in place). This
-/// has not been exercised against a real ASTAP binary (none is installed on
-/// the development machine); only the argument-building and failure-mapping
-/// logic is unit-tested, plus the "binary is absent" path end to end.
+/// versioned API contract the way Watney's library is, so only the
+/// best-documented, most stable subset is used: <c>-f</c> (input file),
+/// <c>-fov</c> (field <em>height</em> in degrees, 0 for automatic),
+/// <c>-ra</c>/<c>-spd</c>/<c>-r</c> (search centre as RA in decimal hours and
+/// south polar distance = dec + 90, and search radius) and <c>-wcs</c>.
+///
+/// Checked against ASTAP v2026.09.15 on macOS arm64 with the D05 database, on
+/// simulator frames of known pointing. Three things the documentation does not
+/// make obvious, all of which an earlier version of this adapter got wrong:
+/// <c>-fov</c> is the height and not the diagonal (ASTAP's own "inexact
+/// scale" warning names the height); the answer is written to a <c>.ini</c>
+/// beside the input and never into the FITS header; and the exit code says why
+/// a solve failed, which the text does only loosely.
+///
+/// With no usable star database the GUI build shows a dialog and waits rather
+/// than exiting, so that case surfaces as a timeout, not a readable error.
 /// </remarks>
 public sealed class AstapPlateSolver : ISolver
 {
     private readonly string _executablePath;
 
     /// <param name="executablePath">
-    /// Path to the ASTAP command-line executable (commonly <c>astap_cli</c> on
-    /// Linux/macOS or <c>astap.exe</c> on Windows). Defaults to <c>"astap"</c>,
-    /// which relies on it being resolvable via PATH, since .NET's
-    /// <see cref="Process"/> searches PATH for a bare filename on every
-    /// supported platform.
+    /// Path to the ASTAP executable, either the GUI build or <c>astap_cli</c>:
+    /// both take the same arguments. <see cref="ResolveExecutable"/> turns what
+    /// a user is likely to type into one. Defaults to <c>"astap"</c>, which
+    /// relies on PATH, since .NET's <see cref="Process"/> searches PATH for a
+    /// bare filename on every supported platform.
     /// </param>
     public AstapPlateSolver(string executablePath = "astap")
     {
@@ -117,7 +124,7 @@ public sealed class AstapPlateSolver : ISolver
             }
 
             stopwatch.Stop();
-            return MapProcessOutcome(outcome, workingCopyPath, stopwatch.Elapsed);
+            return MapProcessOutcome(outcome, Path.ChangeExtension(workingCopyPath, ".ini"), image.Width, image.Height, stopwatch.Elapsed);
         }
         finally
         {
@@ -131,21 +138,29 @@ public sealed class AstapPlateSolver : ISolver
     /// <summary>
     /// Pure translation from the solver-agnostic request to ASTAP's CLI
     /// arguments -- unit-tested directly, without running any process.
+    ///
+    /// Every search parameter is passed even when there is no hint for it,
+    /// because ASTAP otherwise falls back on whatever its own settings file
+    /// last held -- a field size or search radius from someone else's session
+    /// in the GUI.
     /// </summary>
     internal static string[] BuildArguments(PlateSolveRequest request, string imagePath, int imageWidth, int imageHeight)
     {
         var args = new List<string> { "-f", imagePath, "-wcs", "-z", "0" };
 
-        if (request.ApproximateScaleArcsecPerPixel is { } scale)
-        {
-            double diagonalPixels = Math.Sqrt((double)imageWidth * imageWidth + (double)imageHeight * imageHeight);
-            double fovDegrees = diagonalPixels * scale / 3600.0;
-            args.Add("-fov");
-            args.Add(fovDegrees.ToString("F4", CultureInfo.InvariantCulture));
-        }
+        double fovDegrees = request.ApproximateScaleArcsecPerPixel is { } scale
+            ? imageHeight * scale / 3600.0
+            : 0.0;
+        args.Add("-fov");
+        args.Add(fovDegrees.ToString("F4", CultureInfo.InvariantCulture));
 
         bool hasPositionHint = request.ApproximateRaDegrees is not null && request.ApproximateDecDegrees is not null;
-        if (hasPositionHint)
+        if (!hasPositionHint)
+        {
+            args.Add("-r");
+            args.Add("180");
+        }
+        else
         {
             double raHours = request.ApproximateRaDegrees!.Value / 15.0;
             double southPolarDistanceDegrees = request.ApproximateDecDegrees!.Value + 90.0;
@@ -195,31 +210,105 @@ public sealed class AstapPlateSolver : ISolver
         return new ProcessOutcome(process.ExitCode, stdout.ToString(), stderr.ToString());
     }
 
-    internal static PlateSolveResult MapProcessOutcome(ProcessOutcome outcome, string imagePath, TimeSpan elapsed)
+    /// <summary>
+    /// Reads ASTAP's verdict from the <c>.ini</c> it writes beside the input,
+    /// falling back on the exit code when there is none. The <c>.ini</c> is
+    /// written on failure too, with an <c>ERROR=</c> line, which is the most
+    /// specific explanation ASTAP gives.
+    /// </summary>
+    internal static PlateSolveResult MapProcessOutcome(ProcessOutcome outcome, string iniPath, int imageWidth, int imageHeight, TimeSpan elapsed)
     {
         string combinedOutput = outcome.StandardOutput + "\n" + outcome.StandardError;
 
-        if (outcome.ExitCode != 0)
-        {
-            return ClassifyFailureText(combinedOutput);
-        }
-
-        TanWcsSolution wcs;
-        int width, height;
+        IReadOnlyDictionary<string, string> ini;
         try
         {
-            FitsImage solvedImage = FitsFile.Read(imagePath);
-            wcs = TanWcsSolution.FromHeader(solvedImage.ExtraHeader);
-            width = solvedImage.Width;
-            height = solvedImage.Height;
+            ini = File.Exists(iniPath) ? ReadIni(iniPath) : new Dictionary<string, string>();
         }
-        catch (Exception ex) when (ex is KeyNotFoundException or NotSupportedException or IOException or InvalidDataException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return PlateSolveResult.Failed(PlateSolveFailureReason.SolverError,
-                $"ASTAP exited successfully but no usable TAN WCS solution could be read back: {ex.Message}");
+                $"ASTAP's result file '{iniPath}' could not be read: {ex.Message}");
         }
 
-        return PlateSolveResult.Succeeded(BuildSolution(wcs, width, height, combinedOutput, elapsed));
+        if (outcome.ExitCode == 0 && ini.TryGetValue("PLTSOLVD", out string? solved) && solved == "T")
+        {
+            TanWcsSolution? wcs = WcsFromIni(ini);
+            if (wcs is null)
+            {
+                return PlateSolveResult.Failed(PlateSolveFailureReason.SolverError,
+                    "ASTAP reported a solution but its result file did not carry a complete CD-matrix WCS.");
+            }
+
+            return PlateSolveResult.Succeeded(BuildSolution(wcs, imageWidth, imageHeight, combinedOutput, elapsed));
+        }
+
+        string detail = ini.TryGetValue("ERROR", out string? error) && !string.IsNullOrWhiteSpace(error)
+            ? error.Trim()
+            : combinedOutput.Trim();
+
+        if (outcome.ExitCode == 0)
+        {
+            return PlateSolveResult.Failed(PlateSolveFailureReason.SolverError,
+                "ASTAP exited successfully but wrote no solution" +
+                (string.IsNullOrEmpty(detail) ? "." : $": {detail}"));
+        }
+
+        return ClassifyExitCode(outcome.ExitCode, detail);
+    }
+
+    /// <summary>
+    /// ASTAP's documented exit codes. Text matching is kept for any other code,
+    /// since a newer ASTAP may add some and its wording is the only clue then.
+    /// </summary>
+    internal static PlateSolveResult ClassifyExitCode(int exitCode, string detail)
+    {
+        string suffix = string.IsNullOrWhiteSpace(detail) ? string.Empty : $" ({detail})";
+
+        return exitCode switch
+        {
+            1 => PlateSolveResult.Failed(PlateSolveFailureReason.NoMatchFound,
+                "ASTAP could not match the field against its star database" + suffix + "."),
+            2 => PlateSolveResult.Failed(PlateSolveFailureReason.NoStarsDetected,
+                "ASTAP did not detect enough stars in the image" + suffix + "."),
+            16 => PlateSolveResult.Failed(PlateSolveFailureReason.InvalidImage,
+                "ASTAP could not read the image" + suffix + "."),
+            32 or 33 => PlateSolveResult.Failed(PlateSolveFailureReason.SolverError,
+                "ASTAP could not find or read its star database" + suffix +
+                ". Install one that covers this field size (D05 for 0.6-6 degree fields, G05 for wider)."),
+            _ => ClassifyFailureText(detail),
+        };
+    }
+
+    private static Dictionary<string, string> ReadIni(string path)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string line in File.ReadAllLines(path))
+        {
+            int equals = line.IndexOf('=');
+            if (equals > 0)
+            {
+                values[line[..equals].Trim()] = line[(equals + 1)..].Trim();
+            }
+        }
+
+        return values;
+    }
+
+    private static TanWcsSolution? WcsFromIni(IReadOnlyDictionary<string, string> ini)
+    {
+        string[] keys = { "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CD1_1", "CD1_2", "CD2_1", "CD2_2" };
+        var values = new double[keys.Length];
+        for (int i = 0; i < keys.Length; i++)
+        {
+            if (!ini.TryGetValue(keys[i], out string? text) ||
+                !double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out values[i]))
+            {
+                return null;
+            }
+        }
+
+        return new TanWcsSolution(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7]);
     }
 
     internal static PlateSolveResult ClassifyFailureText(string output)
@@ -231,7 +320,7 @@ public sealed class AstapPlateSolver : ISolver
                 "ASTAP could not match the field against its star database.");
         }
 
-        if (lower.Contains("no stars") || lower.Contains("star detect") || lower.Contains("too few star"))
+        if (lower.Contains("no stars") || lower.Contains("star detect") || lower.Contains("too few star") || lower.Contains("not enough stars"))
         {
             return PlateSolveResult.Failed(PlateSolveFailureReason.NoStarsDetected,
                 "ASTAP did not detect enough stars in the image.");
@@ -289,6 +378,64 @@ public sealed class AstapPlateSolver : ISolver
     {
         Match match = Regex.Match(output, @"(\d+)\s*(?:matched|matching)\s*stars?", RegexOptions.IgnoreCase);
         return match.Success && int.TryParse(match.Groups[1].Value, out int count) ? count : 0;
+    }
+
+    /// <summary>
+    /// Turns what a user is likely to type into the settings window -- nothing,
+    /// a macOS app bundle, an install folder, or the executable itself -- into
+    /// an executable to run.
+    ///
+    /// Left empty, the platform's usual install location is tried, so a stock
+    /// ASTAP install works without anything typed. The check is only that a
+    /// file is there: whether it runs is learned from the first solve, which
+    /// falls back to the internal solver when it does not.
+    /// </summary>
+    public static string ResolveExecutable(string? configured) =>
+        ResolveExecutable(configured, File.Exists, Directory.Exists, DefaultInstallLocations());
+
+    internal static string ResolveExecutable(
+        string? configured,
+        Func<string, bool> fileExists,
+        Func<string, bool> directoryExists,
+        IEnumerable<string> defaultLocations)
+    {
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            return defaultLocations.FirstOrDefault(fileExists) ?? "astap";
+        }
+
+        string path = configured.Trim();
+        if (!directoryExists(path))
+        {
+            return path;
+        }
+
+        if (path.TrimEnd('/').EndsWith(".app", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine(path, "Contents", "MacOS", "astap");
+        }
+
+        // The command-line build first where both are installed: it is the
+        // one that cannot stop to show a dialog.
+        string[] names = { "astap_cli", "astap_cli.exe", "astap", "astap.exe" };
+        return names.Select(name => Path.Combine(path, name)).FirstOrDefault(fileExists)
+            ?? Path.Combine(path, OperatingSystem.IsWindows() ? "astap.exe" : "astap");
+    }
+
+    private static IEnumerable<string> DefaultInstallLocations()
+    {
+        if (OperatingSystem.IsMacOS())
+        {
+            return new[] { "/Applications/ASTAP.app/Contents/MacOS/astap", "/usr/local/bin/astap_cli" };
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            return new[] { Path.Combine(programFiles, "astap", "astap_cli.exe"), Path.Combine(programFiles, "astap", "astap.exe") };
+        }
+
+        return new[] { "/opt/astap/astap_cli", "/opt/astap/astap", "/usr/local/bin/astap_cli", "/usr/local/bin/astap" };
     }
 
     private static void TryDelete(string path)

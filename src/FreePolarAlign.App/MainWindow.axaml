@@ -587,7 +587,7 @@
                  IsVisible="{Binding LogPath, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
       <Border Grid.Row="2" BorderBrush="#4A4A4A" BorderThickness="1" CornerRadius="4">
-        <ListBox Classes="log" ItemsSource="{Binding Log}" Background="#101010" FontFamily="monospace" FontSize="12">
+        <ListBox x:Name="LogList" Classes="log" ItemsSource="{Binding Log}" Background="#101010" FontFamily="monospace" FontSize="12">
           <ListBox.ItemTemplate>
             <DataTemplate x:DataType="vm:LogEntry">
               <Border Classes="logline" Classes.warning="{Binding IsWarning}" Classes.error="{Binding IsError}">

@@ -1,4 +1,6 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Threading;
 using FreePolarAlign.App.ViewModels;
 
@@ -36,6 +38,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
+        LogList.TemplateApplied += OnLogTemplateApplied;
+
         _statusTimer = new DispatcherTimer { Interval = StatusPollInterval };
         _statusTimer.Tick += OnStatusTick;
         _statusTimer.Start();
@@ -43,6 +47,54 @@ public partial class MainWindow : Window
         _clockTimer = new DispatcherTimer { Interval = ClockInterval };
         _clockTimer.Tick += OnClockTick;
         _clockTimer.Start();
+    }
+
+    private ScrollViewer? _logScroll;
+    private bool _logFollowsNewest = true;
+    private Vector _logOffset;
+
+    private void OnLogTemplateApplied(object? sender, TemplateAppliedEventArgs e)
+    {
+        if (_logScroll is not null)
+        {
+            _logScroll.ScrollChanged -= OnLogScrollChanged;
+        }
+
+        _logScroll = e.NameScope.Find<ScrollViewer>("PART_ScrollViewer");
+        if (_logScroll is not null)
+        {
+            _logScroll.ScrollChanged += OnLogScrollChanged;
+        }
+    }
+
+    /// <summary>
+    /// The view model replaces the whole log list on every entry, which makes the
+    /// ListBox rebuild and jump back to the top. So the position is decided here:
+    /// a change in extent is the list growing, and the reader's intent is whatever
+    /// they last left it at -- the bottom follows the newest line, anywhere else
+    /// stays put. Only a change with the extent unchanged is the reader scrolling.
+    /// </summary>
+    private void OnLogScrollChanged(object? sender, ScrollChangedEventArgs e)
+    {
+        if (_logScroll is not { } scroll)
+        {
+            return;
+        }
+
+        if (e.ExtentDelta == default)
+        {
+            _logOffset = scroll.Offset;
+            _logFollowsNewest = scroll.Offset.Y >= scroll.Extent.Height - scroll.Viewport.Height - 1;
+            return;
+        }
+
+        Vector target = _logFollowsNewest
+            ? new Vector(0, Math.Max(0, scroll.Extent.Height - scroll.Viewport.Height))
+            : _logOffset;
+        if (scroll.Offset != target)
+        {
+            scroll.Offset = target;
+        }
     }
 
     private void OnStatusTick(object? sender, EventArgs e)

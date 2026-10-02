@@ -167,6 +167,39 @@ public class SelectedSolverTests
         Assert.Contains(log, line => line.Contains(@"D:\Tools\"));
     }
 
+    /// <summary>
+    /// Each job has its own limit, applied whatever the request carried: the
+    /// session asks for two minutes, and the settings say otherwise.
+    /// </summary>
+    [Fact]
+    public async Task BlindAndNearFrames_GetTheirOwnTimeouts()
+    {
+        var inner = new CountingSolver();
+        var solver = Create(inner);
+
+        await solver.SolveAsync(Blind with { Timeout = TimeSpan.FromMinutes(2) });
+        await solver.SolveAsync(Near with { Timeout = TimeSpan.FromMinutes(2) });
+
+        Assert.Equal(TimeSpan.FromSeconds(20), inner.Requests[0].Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(5), inner.Requests[1].Timeout);
+    }
+
+    [Fact]
+    public async Task ChangedTimeouts_ApplyFromTheNextFrame_AndAreLogged()
+    {
+        var inner = new CountingSolver();
+        var log = new List<string>();
+        var solver = Create(inner, log);
+
+        solver.Configure(new AppSettings { BlindSolveTimeoutSeconds = 45.0, NearSolveTimeoutSeconds = 2.5 });
+        await solver.SolveAsync(Blind);
+        await solver.SolveAsync(Near);
+
+        Assert.Equal(TimeSpan.FromSeconds(45), inner.Requests[0].Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(2.5), inner.Requests[1].Timeout);
+        Assert.Contains(log, line => line == "Solve timeouts: 45 s blind, 2.5 s near.");
+    }
+
     /// <summary>Configure runs on every settings change, including the exposure.</summary>
     [Fact]
     public void UnrelatedSettingsChange_IsNotLoggedAgain()

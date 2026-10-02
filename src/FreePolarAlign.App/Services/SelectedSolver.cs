@@ -18,6 +18,10 @@ namespace FreePolarAlign.App.Services;
 ///
 /// Every result is stamped with the name of the solver that produced it, so
 /// the session log says which solver each sample and reading came from.
+///
+/// The timeout is chosen the same way, from the blind or near setting, and
+/// replaces whatever the request carried: the line between the two jobs is
+/// drawn here, so this is where each job's limit is applied (D33).
 /// </summary>
 public sealed class SelectedSolver : ISolver, IDisposable
 {
@@ -27,7 +31,7 @@ public sealed class SelectedSolver : ISolver, IDisposable
     private readonly bool _canRunWindowsSolvers;
 
     private volatile Routes _routes;
-    private (SolverKind Blind, SolverKind Near, string? AstapPath, string? AspsPath, string? Ps3Path)? _configuredFrom;
+    private (SolverKind Blind, SolverKind Near, string? AstapPath, string? AspsPath, string? Ps3Path, TimeSpan BlindTimeout, TimeSpan NearTimeout)? _configuredFrom;
 
     /// <param name="internalSolver">
     /// The built-in solver, used when it is the choice. Owned, and disposed
@@ -53,7 +57,7 @@ public sealed class SelectedSolver : ISolver, IDisposable
         _log = log;
         _resolveExecutable = resolveExecutable ?? ResolveInstalled;
         _canRunWindowsSolvers = canRunWindowsSolvers ?? OperatingSystem.IsWindows();
-        _routes = new Routes(_internal, _internal);
+        _routes = new Routes(_internal, _internal, AppSettings.Empty.BlindSolveTimeout, AppSettings.Empty.NearSolveTimeout);
     }
 
     public string Name => _routes.Blind.Name;
@@ -72,7 +76,9 @@ public sealed class SelectedSolver : ISolver, IDisposable
             Near: settings.NearSolver ?? SolverKind.Internal,
             settings.AstapPath,
             settings.AspsPath,
-            settings.Ps3Path);
+            settings.Ps3Path,
+            BlindTimeout: settings.BlindSolveTimeout,
+            NearTimeout: settings.NearSolveTimeout);
         if (_configuredFrom == wanted)
         {
             return;
@@ -82,9 +88,12 @@ public sealed class SelectedSolver : ISolver, IDisposable
         ISolver blind = Build(wanted.Blind, settings, "blind");
         ISolver near = wanted.Near == wanted.Blind ? blind : Build(wanted.Near, settings, "near");
 
+        _log?.Invoke(FormattableString.Invariant(
+            $"Solve timeouts: {wanted.BlindTimeout.TotalSeconds:G4} s blind, {wanted.NearTimeout.TotalSeconds:G4} s near."));
+
         // One reference swap, so a solve already under way finishes on the
         // route it started on and the next one takes the new pair whole.
-        _routes = new Routes(blind, near);
+        _routes = new Routes(blind, near, wanted.BlindTimeout, wanted.NearTimeout);
     }
 
     public async Task<PlateSolveResult> SolveAsync(PlateSolveRequest request, CancellationToken cancellationToken = default)
@@ -94,8 +103,9 @@ public sealed class SelectedSolver : ISolver, IDisposable
         Routes routes = _routes;
         bool near = request.ApproximateRaDegrees is not null && request.ApproximateDecDegrees is not null;
         ISolver solver = near ? routes.Near : routes.Blind;
+        TimeSpan timeout = near ? routes.NearTimeout : routes.BlindTimeout;
 
-        PlateSolveResult result = await solver.SolveAsync(request, cancellationToken).ConfigureAwait(false);
+        PlateSolveResult result = await solver.SolveAsync(request with { Timeout = timeout }, cancellationToken).ConfigureAwait(false);
         return result.From(solver.Name);
     }
 
@@ -150,5 +160,5 @@ public sealed class SelectedSolver : ISolver, IDisposable
         }
     }
 
-    private sealed record Routes(ISolver Blind, ISolver Near);
+    private sealed record Routes(ISolver Blind, ISolver Near, TimeSpan BlindTimeout, TimeSpan NearTimeout);
 }

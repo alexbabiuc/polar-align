@@ -31,6 +31,8 @@ public sealed class SettingsViewModel : ViewModelBase
     private string _capturePointsText;
     private SolverOption _blindSolver;
     private SolverOption _nearSolver;
+    private string _blindTimeoutText;
+    private string _nearTimeoutText;
     private string _aspsPath;
     private string _astapPath;
     private string _ps3Path;
@@ -48,6 +50,8 @@ public sealed class SettingsViewModel : ViewModelBase
         _capturePointsText = (current.DefaultCapturePoints ?? defaultCapturePoints).ToString(CultureInfo.InvariantCulture);
         _blindSolver = OptionFor(current.BlindSolver);
         _nearSolver = OptionFor(current.NearSolver);
+        _blindTimeoutText = Seconds(current.BlindSolveTimeout);
+        _nearTimeoutText = Seconds(current.NearSolveTimeout);
         _aspsPath = current.AspsPath ?? string.Empty;
         _astapPath = current.AstapPath ?? string.Empty;
         _ps3Path = current.Ps3Path ?? string.Empty;
@@ -86,6 +90,20 @@ public sealed class SettingsViewModel : ViewModelBase
         set => SetField(ref _nearSolver, value);
     }
 
+    /// <summary>The blind solve timeout, in seconds.</summary>
+    public string BlindTimeoutText
+    {
+        get => _blindTimeoutText;
+        set => SetField(ref _blindTimeoutText, value);
+    }
+
+    /// <summary>The near solve timeout, in seconds.</summary>
+    public string NearTimeoutText
+    {
+        get => _nearTimeoutText;
+        set => SetField(ref _nearTimeoutText, value);
+    }
+
     public string AspsPath
     {
         get => _aspsPath;
@@ -119,12 +137,21 @@ public sealed class SettingsViewModel : ViewModelBase
             return;
         }
 
+        if (ParseTimeout(BlindTimeoutText) is not { } blindTimeout || ParseTimeout(NearTimeoutText) is not { } nearTimeout)
+        {
+            Error = FormattableString.Invariant(
+                $"A solve timeout must be between {AppSettings.MinimumSolveTimeoutSeconds:G} and {AppSettings.MaximumSolveTimeoutSeconds:G} seconds.");
+            return;
+        }
+
         Error = null;
         _save(_original with
         {
             DefaultCapturePoints = points,
             BlindSolver = BlindSolver.Kind,
             NearSolver = NearSolver.Kind,
+            BlindSolveTimeoutSeconds = blindTimeout,
+            NearSolveTimeoutSeconds = nearTimeout,
             AspsPath = NullIfBlank(AspsPath),
             AstapPath = NullIfBlank(AstapPath),
             Ps3Path = NullIfBlank(Ps3Path),
@@ -134,6 +161,20 @@ public sealed class SettingsViewModel : ViewModelBase
 
     private static SolverOption OptionFor(SolverKind? kind) =>
         SolverOptions.First(option => option.Kind == (kind ?? SolverKind.Internal));
+
+    private static string Seconds(TimeSpan timeout) =>
+        timeout.TotalSeconds.ToString("G", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Seconds as typed, with a decimal point or a decimal comma: on a
+    /// decimal-comma locale "2,5" is how the number is written, and a field
+    /// that rejects it for want of a point is a field that looks broken.
+    /// </summary>
+    private static double? ParseTimeout(string text) =>
+        double.TryParse(text.Trim().Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out double seconds) &&
+        AppSettings.IsValidSolveTimeout(seconds)
+            ? seconds
+            : null;
 
     private static string? NullIfBlank(string text) =>
         string.IsNullOrWhiteSpace(text) ? null : text.Trim();

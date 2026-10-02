@@ -1520,8 +1520,7 @@ headless:
 **Cost.** A frame the chosen solver refuses is lost, even when Watney could have
 solved it. A misconfigured external solver fails every frame, and the log says
 so on every frame, naming the solver. ASTAP without a database is the worst
-case: it waits at a dialog, so each frame costs the session's full two-minute
-timeout. With no ASTAP path set, the platform's usual install location is tried
+case: it waits at a dialog, so each frame costs the whole solve timeout (D33). With no ASTAP path set, the platform's usual install location is tried
 (on macOS `/Applications/ASTAP.app`). A folder or a `.app` bundle is
 accepted in place of the executable, and in a folder `astap_cli` is preferred
 over the GUI build, since it cannot stop at a dialog.
@@ -1580,11 +1579,41 @@ unzip, so it has no install location. The default is
 it. In a folder, the first `PlateSolve3*.exe` is used, the pattern N.I.N.A.
 browses for. Setting the path is the reliable route for both.
 
-**Time.** The session allows each solve two minutes. N.I.N.A. allows its
-command-line solvers ten. An ASPS blind solve, which is astrometry.net
-underneath, may need more than two, and then times out unsolved. If
-that happens under the sky, the limit should be the solver's own and not the
-session's.
+**Time.** A solve has the blind or near timeout from the settings window (D33),
+20 s and 5 s unless changed. N.I.N.A. allows its command-line solvers ten
+minutes. An ASPS blind solve, which is astrometry.net underneath, may well need
+more than 20 s. If it times out under the sky, raising the blind timeout is the
+first thing to try.
+
+---
+
+## D33 — A solve timeout per job, from the settings window
+
+A blind solve may take 20 s and a near solve 5 s, unless the settings window says
+otherwise (1–600 s each, stored in the settings file, and discarded with a
+warning on load if out of range). The limit is the frame's: whatever solver is
+chosen, it gives up and reports the frame unsolved when the time is up.
+
+**Why two.** A blind search covers the whole sky and a near one a few degrees
+around where the mount says it points, so a single limit is too short for one or
+too long for the other. The near limit matters most: the live reading (D29)
+solves frame after frame while the bolts turn, and a frame that cannot be solved
+there is better given up quickly than waited on.
+
+**Where it is applied.** In the solver the session holds, which already decides
+blind against near for every frame (D31). It replaces whatever timeout the
+request carried. The session still asks for two minutes, which now only reaches
+a solver used without the settings in between, as in tests.
+
+**The redraw shares the budget.** Watney's second try on a redrawn frame gets
+what the first attempt left, and is skipped when nothing is left. Otherwise a
+near solve given 5 s could take 10.
+
+**Cost.** The defaults are the user's starting figures, not measurements.
+Watney's blind solves of the simulator's wide frames take well under a second.
+ASTAP's took 5–12 s (D31) and its near solves 1 s. Real frames, and ASPS
+especially, may need more, and a limit set too short shows up as timeouts in the
+log, naming the solver.
 
 ---
 

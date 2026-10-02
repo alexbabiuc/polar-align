@@ -307,6 +307,8 @@ public sealed class SettingsStoreTests : IDisposable
             AspsPath = "/opt/asps",
             AstapPath = "/opt/astap",
             Ps3Path = "/opt/ps3",
+            BlindSolveTimeoutSeconds = 30.0,
+            NearSolveTimeoutSeconds = 2.5,
         };
 
         Assert.Null(store.Save(settings));
@@ -315,6 +317,21 @@ public sealed class SettingsStoreTests : IDisposable
         // stored choice to a different solver.
         Assert.Contains("\"astap\"", File.ReadAllText(path).ToLowerInvariant());
         Assert.Equal(settings, new JsonFileSettingsStore(path).Load().Settings);
+    }
+
+    [Fact]
+    public void AnOutOfRangeSolveTimeout_IsDiscarded_AndTheDefaultUsed()
+    {
+        string path = PathIn("timeouts.json");
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(path, "{\"blindSolveTimeoutSeconds\": 0, \"nearSolveTimeoutSeconds\": 3}");
+
+        SettingsLoadResult result = new JsonFileSettingsStore(path).Load();
+
+        Assert.Null(result.Settings.BlindSolveTimeoutSeconds);
+        Assert.Equal(TimeSpan.FromSeconds(20), result.Settings.BlindSolveTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(3), result.Settings.NearSolveTimeout);
+        Assert.Contains("blind solve timeout", result.Warning);
     }
 
     [Fact]

@@ -121,6 +121,41 @@ public sealed record AppSettings
     /// </summary>
     public SolverKind? NearSolver { get; init; }
 
+    /// <summary>
+    /// How long a blind solve may take, in seconds, or null for
+    /// <see cref="DefaultBlindSolveTimeoutSeconds"/>. Separate from the near
+    /// one because a blind search covers the whole sky and a near one a few
+    /// degrees, and a single limit would be too short for one or too long for
+    /// the other.
+    /// </summary>
+    public double? BlindSolveTimeoutSeconds { get; init; }
+
+    /// <summary>How long a near solve may take, in seconds, or null for <see cref="DefaultNearSolveTimeoutSeconds"/>.</summary>
+    public double? NearSolveTimeoutSeconds { get; init; }
+
+    public const double DefaultBlindSolveTimeoutSeconds = 20.0;
+
+    public const double DefaultNearSolveTimeoutSeconds = 5.0;
+
+    /// <summary>
+    /// The range a solve timeout is kept in. A second is the least any solver
+    /// here needs to start; ten minutes is N.I.N.A.'s limit for the same
+    /// command-line solvers, and anything longer is a frame nobody is waiting
+    /// for.
+    /// </summary>
+    public const double MinimumSolveTimeoutSeconds = 1.0;
+
+    public const double MaximumSolveTimeoutSeconds = 600.0;
+
+    [JsonIgnore]
+    public TimeSpan BlindSolveTimeout => TimeSpan.FromSeconds(BlindSolveTimeoutSeconds ?? DefaultBlindSolveTimeoutSeconds);
+
+    [JsonIgnore]
+    public TimeSpan NearSolveTimeout => TimeSpan.FromSeconds(NearSolveTimeoutSeconds ?? DefaultNearSolveTimeoutSeconds);
+
+    public static bool IsValidSolveTimeout(double seconds) =>
+        double.IsFinite(seconds) && seconds >= MinimumSolveTimeoutSeconds && seconds <= MaximumSolveTimeoutSeconds;
+
     /// <summary>Where the ASPS executable is, or null if not set.</summary>
     public string? AspsPath { get; init; }
 
@@ -348,6 +383,18 @@ public sealed class JsonFileSettingsStore : ISettingsStore
         {
             complaints.Add("the stored near solver was not one this version knows and has been discarded");
             result = result with { NearSolver = null };
+        }
+
+        if (result.BlindSolveTimeoutSeconds is { } blindTimeout && !AppSettings.IsValidSolveTimeout(blindTimeout))
+        {
+            complaints.Add("the stored blind solve timeout was out of range and has been discarded");
+            result = result with { BlindSolveTimeoutSeconds = null };
+        }
+
+        if (result.NearSolveTimeoutSeconds is { } nearTimeout && !AppSettings.IsValidSolveTimeout(nearTimeout))
+        {
+            complaints.Add("the stored near solve timeout was out of range and has been discarded");
+            result = result with { NearSolveTimeoutSeconds = null };
         }
 
         if (result.Cameras is { Count: > 0 } cameras)

@@ -33,6 +33,20 @@ public sealed record StoredSite(
 public sealed record CameraSettings(int? ReadoutModeIndex = null, int? GainPercent = null);
 
 /// <summary>
+/// Which plate solver does a job. Only <see cref="Internal"/> exists today; the
+/// others are choosable so the choice is already stored when their adapters
+/// arrive, and no stored setting has to be migrated then.
+/// </summary>
+public enum SolverKind
+{
+    /// <summary>The built-in Watney solver.</summary>
+    Internal,
+    Asps,
+    Astap,
+    Ps3,
+}
+
+/// <summary>
 /// What the application remembers between runs.
 ///
 /// Kept deliberately small, and deliberately not including anything the software
@@ -86,6 +100,36 @@ public sealed record AppSettings
     /// session is how a frame ends up over-exposed again.
     /// </summary>
     public double? ExposureSeconds { get; init; }
+
+    /// <summary>
+    /// The number of capture points a sequence starts with, or null for the
+    /// built-in default. A starting value, not a limit: the sequence panel can
+    /// still be edited for one run.
+    /// </summary>
+    public int? DefaultCapturePoints { get; init; }
+
+    /// <summary>
+    /// The solver for frames where the pointing is unknown, or null for
+    /// <see cref="SolverKind.Internal"/>.
+    /// </summary>
+    public SolverKind? BlindSolver { get; init; }
+
+    /// <summary>
+    /// The solver for frames where the pointing is roughly known, or null for
+    /// <see cref="SolverKind.Internal"/>. Chosen separately from
+    /// <see cref="BlindSolver"/> because the two jobs are different: a solver
+    /// can be slow at one and fast at the other.
+    /// </summary>
+    public SolverKind? NearSolver { get; init; }
+
+    /// <summary>Where the ASPS executable is, or null if not set.</summary>
+    public string? AspsPath { get; init; }
+
+    /// <summary>Where the ASTAP executable is, or null if not set.</summary>
+    public string? AstapPath { get; init; }
+
+    /// <summary>Where the PS3 executable is, or null if not set.</summary>
+    public string? Ps3Path { get; init; }
 
     public string? CameraProviderName { get; init; }
 
@@ -194,6 +238,7 @@ public sealed class JsonFileSettingsStore : ISettingsStore
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new JsonStringEnumConverter() },
     };
 
     public JsonFileSettingsStore(string? filePath = null)
@@ -286,6 +331,24 @@ public sealed class JsonFileSettingsStore : ISettingsStore
         {
             complaints.Add("the stored focal length was out of range and has been discarded");
             result = result with { FocalLengthMillimetres = null, IsFocalLengthSolved = false };
+        }
+
+        if (result.DefaultCapturePoints is < 3)
+        {
+            complaints.Add("the stored default capture-point count was below the minimum of 3 and has been discarded");
+            result = result with { DefaultCapturePoints = null };
+        }
+
+        if (result.BlindSolver is { } blind && !Enum.IsDefined(blind))
+        {
+            complaints.Add("the stored blind solver was not one this version knows and has been discarded");
+            result = result with { BlindSolver = null };
+        }
+
+        if (result.NearSolver is { } near && !Enum.IsDefined(near))
+        {
+            complaints.Add("the stored near solver was not one this version knows and has been discarded");
+            result = result with { NearSolver = null };
         }
 
         if (result.Cameras is { Count: > 0 } cameras)

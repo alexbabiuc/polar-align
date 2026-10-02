@@ -257,6 +257,9 @@
                          Text="Uncertainty falls as the square of the sweep but only as the square root of the number of points, so spend on sweep first." />
             </StackPanel>
           </Border>
+
+          <Button Content="Settings..." HorizontalAlignment="Left" Click="OnSettingsClick"
+                  ToolTip.Tip="Default capture points, plate solvers and where their programs are. Remembered between runs." />
         </StackPanel>
       </ScrollViewer>
 

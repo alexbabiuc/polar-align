@@ -1421,6 +1421,31 @@ a real night, in both hemispheres if possible.
 
 ---
 
+## D30 — The solver choice is stored before the solvers exist
+
+The settings window (opened from the Settings button at the foot of the left column)
+stores a default capture-point count, a blind solver, a near solver, and the
+paths of ASPS, ASTAP and PS3. Each solver choice is one of Internal (Watney),
+ASPS, ASTAP or PS3. Only Internal is implemented; nothing yet reads the other
+three choices or the paths.
+
+**Why.** Asked for ahead of the adapters, so the settings file and the window
+do not change shape when they arrive, and an installed copy never has to
+migrate a stored choice. Blind and near are separate settings because they are
+separate jobs (no pointing known, against pointing roughly known), and a solver
+can be good at one and slow at the other.
+
+**Stored by name.** The enum is written as text, so reordering it cannot
+reassign a stored choice to a different solver. A number outside the enum, or a
+count below the minimum of 3 (D7), is discarded with a warning and costs only
+that setting. An unknown *name* (a file from a newer version) is a JSON error
+and falls back to the whole defaults, as any unreadable settings file does.
+
+**Cost.** Until the adapters exist, choosing ASPS, ASTAP or PS3 changes
+nothing, and the window says so.
+
+---
+
 ## Open decisions
 
 **O1 — Licence.** ~~MIT is the natural fit and imposes nothing on Watney. GPL

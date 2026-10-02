@@ -293,4 +293,42 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal(new CameraSettings(ReadoutModeIndex: 1, GainPercent: null), result.Settings.ForCamera("ZWO/1"));
         Assert.NotNull(result.Warning);
     }
+
+    [Fact]
+    public void SolverChoicesPathsAndDefaultPointsSurviveARestart()
+    {
+        string path = PathIn("solvers", "settings.json");
+        var store = new JsonFileSettingsStore(path);
+        var settings = new AppSettings
+        {
+            DefaultCapturePoints = 8,
+            BlindSolver = SolverKind.Astap,
+            NearSolver = SolverKind.Internal,
+            AspsPath = "/opt/asps",
+            AstapPath = "/opt/astap",
+            Ps3Path = "/opt/ps3",
+        };
+
+        Assert.Null(store.Save(settings));
+
+        // Read back by name in the file, so a reordered enum cannot reassign a
+        // stored choice to a different solver.
+        Assert.Contains("\"astap\"", File.ReadAllText(path).ToLowerInvariant());
+        Assert.Equal(settings, new JsonFileSettingsStore(path).Load().Settings);
+    }
+
+    [Fact]
+    public void ASolverThisVersionDoesNotKnowCostsOnlyThatSetting()
+    {
+        string path = PathIn("future.json");
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(path, "{\"focalLengthMillimetres\": 382.5, \"blindSolver\": 99, \"defaultCapturePoints\": 1}");
+
+        SettingsLoadResult result = new JsonFileSettingsStore(path).Load();
+
+        Assert.Equal(382.5, result.Settings.FocalLengthMillimetres);
+        Assert.Null(result.Settings.BlindSolver);
+        Assert.Null(result.Settings.DefaultCapturePoints);
+        Assert.NotNull(result.Warning);
+    }
 }

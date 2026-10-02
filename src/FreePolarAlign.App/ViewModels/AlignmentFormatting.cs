@@ -38,17 +38,30 @@ public static class AlignmentFormatting
         FormattableString.Invariant($"{Math.Abs(valueArcminutes):F1}' ± {sigmaArcminutes:F1}'");
 
     /// <summary>
-    /// Value and its uncertainty, sign preserved, e.g. "+3.2' ± 0.4'" or
-    /// "-1.1' ± 0.4'". Used for the altitude and azimuth bolt figures, where
-    /// the sign is meaningful (which way the error currently points) even
-    /// though the on-screen correction *arrow* is explicitly out of scope here
-    /// (D12; that geometry is being built elsewhere).
+    /// Value and its uncertainty, sign preserved, e.g. "+1° 24.9' ± 0.4'".
+    /// Used for the altitude and azimuth figures, which are the mount's own
+    /// angles, where the sign says which way the error points. The uncertainty
+    /// stays in arcminutes: it is always a fraction of one.
     /// </summary>
-    public static string FormatSignedWithSigma(double valueArcminutes, double sigmaArcminutes)
+    public static string FormatSignedWithSigma(double valueArcminutes, double sigmaArcminutes) =>
+        FormattableString.Invariant($"{SignedAngle(valueArcminutes)} ± {sigmaArcminutes:F1}'");
+
+    /// <summary>
+    /// A mount angle as a user sets it, in degrees and arcminutes, e.g.
+    /// "1° 24.9'". Always with the degrees, even when there are none, so a
+    /// figure never changes shape as the user turns past a whole degree, and
+    /// "84.9'" is never left to be mistaken for degrees.
+    /// </summary>
+    public static string Angle(double arcminutes)
     {
-        string sign = valueArcminutes < 0 ? "-" : "+";
-        return FormattableString.Invariant($"{sign}{Math.Abs(valueArcminutes):F1}' ± {sigmaArcminutes:F1}'");
+        double tenths = Math.Round(Math.Abs(arcminutes) * 10.0);
+        long degrees = (long)(tenths / 600.0);
+        double minutes = (tenths - degrees * 600.0) / 10.0;
+        return FormattableString.Invariant($"{degrees}° {minutes:F1}'");
     }
+
+    private static string SignedAngle(double arcminutes) =>
+        (Math.Round(arcminutes * 10.0) < 0.0 ? "-" : "+") + Angle(arcminutes);
 
     /// <summary>
     /// Below this a correction is not worth turning a bolt for: a tenth of the
@@ -69,7 +82,7 @@ public static class AlignmentFormatting
         }
 
         string way = altitudeErrorArcminutes > 0 ? "Lower" : "Raise";
-        return FormattableString.Invariant($"{way} the altitude by {size:F1}'");
+        return $"{way} the altitude by {Angle(size)}";
     }
 
     /// <summary>
@@ -94,13 +107,12 @@ public static class AlignmentFormatting
         bool left = azimuthErrorArcminutes > 0;
         bool north = siteLatitudeDegrees >= 0;
         string compass = left == north ? "west" : "east";
-        return FormattableString.Invariant($"Move the azimuth {(left ? "left" : "right")} ({compass}) by {size:F1}'");
+        return $"Move the azimuth {(left ? "left" : "right")} ({compass}) by {Angle(size)}";
     }
 
     /// <summary>How far the bolts have moved the axis since the sweep, signed as the errors are (D29).</summary>
     public static string AppliedBolts(double altitudeArcminutes, double azimuthArcminutes) =>
-        FormattableString.Invariant(
-            $"Turned since the sweep: altitude {altitudeArcminutes:+0.0;-0.0;0.0}', azimuth {azimuthArcminutes:+0.0;-0.0;0.0}'");
+        $"Turned since the sweep: altitude {SignedAngle(altitudeArcminutes)}, azimuth {SignedAngle(azimuthArcminutes)}";
 
     public static string FormatResidualRms(double residualRmsArcseconds) =>
         FormattableString.Invariant($"{residualRmsArcseconds:F1}\"");

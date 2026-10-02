@@ -101,11 +101,23 @@ public sealed record PlateSolveResult
 
     public string? Message { get; }
 
+    /// <summary>
+    /// Which solver produced this, when something routing between solvers has
+    /// said so; null otherwise, and then the solver called is the one that
+    /// answered. Carried so the session log can say, frame by frame, which
+    /// solver a reading came from.
+    /// </summary>
+    public string? SolverName { get; private init; }
+
     public static PlateSolveResult Succeeded(PlateSolveSolution solution) =>
         new(true, solution, null, null);
 
     public static PlateSolveResult Failed(PlateSolveFailureReason reason, string message) =>
         new(false, null, reason, message);
+
+    /// <summary>This result, attributed to <paramref name="solverName"/>.</summary>
+    public PlateSolveResult From(string solverName) =>
+        new(Success, Solution, FailureReason, Message) { SolverName = solverName };
 }
 
 /// <summary>

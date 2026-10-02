@@ -186,4 +186,21 @@ public class LiveReadingPresentationTests
         Assert.Equal(string.Empty, EngineEventNarrator.Describe(new SolveScheduledEvent(SampleTrigger.Tracking, TimeSpan.Zero)).Message);
         Assert.Equal(LogSeverity.Info, EngineEventNarrator.Describe(new SolveFailedEvent(SampleTrigger.Tracking, "blurred", 3)).Severity);
     }
+
+    /// <summary>
+    /// Each logged solve says which solver it came from, so a reading that
+    /// jumps can be put down to the solver that produced it.
+    /// </summary>
+    [Fact]
+    public void LoggedSolves_NameTheirSolver()
+    {
+        Assert.StartsWith("Live (ASTAP): ", EngineEventNarrator.Describe(
+            new AlignmentTrackedEvent(Estimate(12.0, -9.0, 14.2), -18.0, 16.0, IsReliable: true, Solver: "ASTAP")).Message);
+        Assert.StartsWith("Sample 2, solved by Watney: ", EngineEventNarrator.Describe(
+            new PointCapturedEvent(new CapturePoint(2, 150.0, 68.0, DateTime.UtcNow), SampleTrigger.SlewEnded, "Watney")).Message);
+        Assert.StartsWith("Live reading: solve failed (ASPS, 3 in a row): ", EngineEventNarrator.Describe(
+            new SolveFailedEvent(SampleTrigger.Tracking, "blurred", 3, Solver: "ASPS")).Message);
+        Assert.StartsWith("Solve failed (PlateSolve3, 1 in a row): ", EngineEventNarrator.Describe(
+            new SolveFailedEvent(SampleTrigger.Periodic, "no match", 1, Solver: "PlateSolve3")).Message);
+    }
 }

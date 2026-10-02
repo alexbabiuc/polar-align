@@ -7,8 +7,8 @@ namespace FreePolarAlign.Tests.App;
 
 /// <summary>
 /// The solver choice in the settings window decides which solver a frame goes
-/// to, blind and near separately, and the internal solver still gets whatever
-/// the chosen one cannot solve.
+/// to, blind and near separately, and that solver alone: a frame it cannot
+/// solve is reported unsolved, never quietly handed to another (D31).
 /// </summary>
 public class SelectedSolverTests
 {
@@ -32,14 +32,14 @@ public class SelectedSolverTests
     private static readonly PlateSolveRequest Near = new(MissingFrame(), ApproximateRaDegrees: 10.0, ApproximateDecDegrees: 20.0);
 
     /// <summary>
-    /// A path with nothing at it: ASTAP's adapter fails on it at once with
+    /// A path with nothing at it: every external adapter fails on it at once with
     /// InvalidImage, without starting a process, which is enough to see where
     /// a frame was routed.
     /// </summary>
     private static string MissingFrame() => Path.Combine(Path.GetTempPath(), $"fpa-selected-{Guid.NewGuid():N}.fits");
 
-    private static SelectedSolver Create(CountingSolver inner, List<string>? log = null) =>
-        new(inner, log is null ? null : log.Add, resolveAstap: path => path ?? "astap-not-installed");
+    private static SelectedSolver Create(CountingSolver inner, List<string>? log = null, bool windows = true) =>
+        new(inner, log is null ? null : log.Add, resolveExecutable: (_, path) => path ?? "solver-not-installed", canRunWindowsSolvers: windows);
 
     [Fact]
     public async Task Unconfigured_SendsEverythingToTheInternalSolver()
@@ -53,48 +53,52 @@ public class SelectedSolverTests
         Assert.Equal(2, inner.Requests.Count);
     }
 
+    /// <summary>
+    /// The defect behind this test: with ASTAP chosen, frames ASTAP refused went
+    /// to Watney, and a live reading built from two solvers' answers moved in
+    /// azimuth while only the altitude bolt was turned. The chosen solver's
+    /// failure is now the answer.
+    /// </summary>
     [Fact]
-    public async Task AstapForBlind_TriesAstapFirstThenTheInternalSolver()
+    public async Task AstapForBlind_ItsFailureIsReported_NotHandedToTheInternalSolver()
     {
         var inner = new CountingSolver();
-        var log = new List<string>();
-        var solver = Create(inner, log);
+        var solver = Create(inner);
         solver.Configure(new AppSettings { BlindSolver = SolverKind.Astap });
 
         PlateSolveResult result = await solver.SolveAsync(Blind);
 
-        Assert.True(result.Success);
-        Assert.Single(inner.Requests);
-        Assert.Contains(log, line => line.StartsWith("ASTAP did not solve the frame", StringComparison.Ordinal));
+        Assert.False(result.Success);
+        Assert.Empty(inner.Requests);
+        Assert.Equal("ASTAP", result.SolverName);
     }
 
     [Fact]
     public async Task AstapForBlindOnly_LeavesNearFramesWithTheInternalSolver()
     {
         var inner = new CountingSolver();
-        var log = new List<string>();
-        var solver = Create(inner, log);
+        var solver = Create(inner);
         solver.Configure(new AppSettings { BlindSolver = SolverKind.Astap, NearSolver = SolverKind.Internal });
-        log.Clear();
 
-        await solver.SolveAsync(Near);
+        PlateSolveResult result = await solver.SolveAsync(Near);
 
+        Assert.True(result.Success);
         Assert.Single(inner.Requests);
-        Assert.Empty(log);
+        Assert.Equal("Watney", result.SolverName);
     }
 
     [Fact]
     public async Task AstapForNear_IsUsedForHintedFrames()
     {
         var inner = new CountingSolver();
-        var log = new List<string>();
-        var solver = Create(inner, log);
+        var solver = Create(inner);
         solver.Configure(new AppSettings { NearSolver = SolverKind.Astap });
-        log.Clear();
 
-        await solver.SolveAsync(Near);
+        PlateSolveResult near = await solver.SolveAsync(Near);
+        PlateSolveResult blind = await solver.SolveAsync(Blind);
 
-        Assert.Contains(log, line => line.StartsWith("ASTAP did not solve the frame", StringComparison.Ordinal));
+        Assert.Equal("ASTAP", near.SolverName);
+        Assert.Equal("Watney", blind.SolverName);
     }
 
     [Fact]
@@ -109,20 +113,58 @@ public class SelectedSolverTests
     }
 
     [Theory]
-    [InlineData(SolverKind.Asps)]
-    [InlineData(SolverKind.Ps3)]
-    public async Task SolverWithoutAnAdapter_FallsBackToTheInternalSolver(SolverKind kind)
+    [InlineData(SolverKind.Asps, "ASPS")]
+    [InlineData(SolverKind.Ps3, "PlateSolve3")]
+    public async Task WindowsSolver_IsTheOnlySolverAsked(SolverKind kind, string name)
+    {
+        var inner = new CountingSolver();
+        var solver = Create(inner, windows: true);
+        solver.Configure(new AppSettings { BlindSolver = kind });
+
+        PlateSolveResult result = await solver.SolveAsync(Blind);
+
+        Assert.False(result.Success);
+        Assert.Empty(inner.Requests);
+        Assert.Equal(name, result.SolverName);
+    }
+
+    /// <summary>
+    /// Chosen where it cannot run, a Windows solver is still the one asked --
+    /// substituting another is exactly what was removed -- and the log says once
+    /// why every frame will fail.
+    /// </summary>
+    [Theory]
+    [InlineData(SolverKind.Asps, "ASPS")]
+    [InlineData(SolverKind.Ps3, "PlateSolve3")]
+    public async Task WindowsSolver_Elsewhere_IsStillTheOneAsked_AndTheLogSaysWhy(SolverKind kind, string name)
     {
         var inner = new CountingSolver();
         var log = new List<string>();
-        var solver = Create(inner, log);
+        var solver = Create(inner, log, windows: false);
 
+        solver.Configure(new AppSettings { NearSolver = kind });
+        PlateSolveResult result = await solver.SolveAsync(Near);
+
+        Assert.False(result.Success);
+        Assert.Empty(inner.Requests);
+        Assert.Contains(log, line => line.Contains($"{name}, runs only on Windows"));
+    }
+
+    [Theory]
+    [InlineData(SolverKind.Asps)]
+    [InlineData(SolverKind.Ps3)]
+    public void ChangedSolverPath_IsAppliedAndLogged(SolverKind kind)
+    {
+        var log = new List<string>();
+        var solver = Create(new CountingSolver(), log);
         solver.Configure(new AppSettings { BlindSolver = kind });
-        PlateSolveResult result = await solver.SolveAsync(Blind);
+        log.Clear();
 
-        Assert.True(result.Success);
-        Assert.Single(inner.Requests);
-        Assert.Contains(log, line => line.Contains("not available in this version"));
+        solver.Configure(kind == SolverKind.Asps
+            ? new AppSettings { BlindSolver = kind, AspsPath = @"D:\Tools\PlateSolver.exe" }
+            : new AppSettings { BlindSolver = kind, Ps3Path = @"D:\Tools\PlateSolve3.80.exe" });
+
+        Assert.Contains(log, line => line.Contains(@"D:\Tools\"));
     }
 
     /// <summary>Configure runs on every settings change, including the exposure.</summary>

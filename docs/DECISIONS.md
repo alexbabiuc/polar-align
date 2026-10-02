@@ -81,8 +81,10 @@ controls) in shared code.
   whole" is achievable.
 - **ASTAP** — GPL, invoked as a subprocess so no linking obligation arises. Fast
   and excellent at unknown-scale solving. Offered as an accelerator for users who
-  already have it; never required. Chosen in the settings window, with Watney
-  behind it for every frame it cannot solve (D31).
+  already have it; never required. Chosen in the settings window, and then
+  the only solver for the frames it is chosen for (D31).
+- **ASPS and PlateSolve3** — later additions on the same terms as ASTAP:
+  subprocesses, Windows-only, optional (D32).
 
 **Rejected: astrometry.net.** Robust and the reference implementation, but
 awkward to package on Windows and its blind-solving index sets are large.
@@ -1429,8 +1431,7 @@ a real night, in both hemispheres if possible.
 The settings window (opened from the Settings button at the foot of the left column)
 stores a default capture-point count, a blind solver, a near solver, and the
 paths of ASPS, ASTAP and PS3. Each solver choice is one of Internal (Watney),
-ASPS, ASTAP or PS3. Internal and ASTAP are implemented (D31); ASPS, PS3 and
-their paths are stored and not yet read.
+ASPS, ASTAP or PS3. All four are implemented (D31, D32).
 
 **Why.** Asked for ahead of the adapters, so the settings file and the window
 do not change shape when they arrive, and an installed copy never has to
@@ -1444,27 +1445,44 @@ count below the minimum of 3 (D7), is discarded with a warning and costs only
 that setting. An unknown *name* (a file from a newer version) is a JSON error
 and falls back to the whole defaults, as any unreadable settings file does.
 
-**Cost.** Until their adapters exist, choosing ASPS or PS3 changes nothing:
-Watney solves those frames, and the window and the log both say so.
+**Cost.** Nothing now: the adapters this entry stored choices for have all
+arrived.
 
 ---
 
-## D31 — The chosen solver goes first, and Watney gets every frame it cannot solve
+## D31 — The chosen solver is the only solver, and the log names it
 
 A frame goes to the blind solver when the request carries no position hint and
 to the near solver when it does. The session adds a hint exactly when a mount is
-connected and reporting, so that is the line D30's two settings draw. If the
-chosen solver is not Watney, it runs first. Watney gets the
-frame if it fails for any reason except the user stopping the sequence, along
-with Watney's own second try on a frame redrawn from its detected stars.
+connected and reporting, so that is the line D30's two settings draw. Whichever
+solver is chosen for a frame is the only one asked. A frame it cannot solve is
+reported as unsolved, and every logged sample, live reading and failure names the
+solver it came from.
 
-**Why every failure, a timeout included.** An external solver fails for reasons
-that say nothing about the frame. It can be missing or at a wrong path, or have
-no star database for this field size. It can also be the GUI build stopping at a
-dialog, which is how ASTAP behaves with no database: it waits, and the adapter
-sees a timeout. Watney has its own index and its own way of failing, so its
-attempt is worth having in every case. Only a cancellation is respected, because
-then the user has asked for nothing more.
+**Revised after the first night under the sky.** This entry first put Watney
+behind any chosen solver, for every failure except a cancellation. The reasoning
+was that an external solver fails for reasons that say nothing about the frame,
+and Watney's attempt was worth having. Under the sky, with ASTAP chosen, the live
+reading (D29) moved in azimuth while only the altitude bolt was turned. With
+Watney it did not.
+
+On the simulator, ASTAP alone follows an altitude-only turn of 20′ exactly:
+−20.00′ in altitude and 0.00′ in azimuth, the same as Watney. So the adapter and
+the tracking are not the cause. What only the real sky had was frames ASTAP
+refused while the bolts were turning, which went to Watney. A live reading built
+from two solvers' answers changes solver from frame to frame, and any difference
+between their centres reads as a bolt turn. This is suspected, not shown: the
+night's log was not available, and that log could not have said which solver
+answered each frame anyway.
+
+Both changes follow from that. With one solver per job, a live reading cannot
+mix sources. With the solver named on every line, the next log can confirm or
+rule this out.
+
+**ASPS and PS3 where they cannot run.** Chosen on macOS or Linux they are still
+the solver asked, and every solve fails to start. The log says once, when the
+choice is applied, that they run only on Windows, rather than quietly
+substituting Watney, which is what this revision removed.
 
 **Why it takes effect at once.** The session holds one solver for the life of
 the application. That solver is reconfigured in place on every settings change,
@@ -1499,13 +1517,74 @@ headless:
 | 2.3° diagonal, near (hint 2.9° out, scale given) | 1 s | same |
 | 7.4° diagonal, Phase 2's whole-pipeline test, six captures | 35 s for all six | injected axis recovered within 1′, as with Watney |
 
-**Cost.** A frame both solvers refuse costs two timeouts before it is reported,
-up to four minutes at the session's two-minute limit. The case that reaches the
-first timeout, ASTAP without a database, is a configuration problem the log names
-on every frame. With no ASTAP path set, the platform's usual install location is
-tried (on macOS `/Applications/ASTAP.app`). A folder or a `.app` bundle is
+**Cost.** A frame the chosen solver refuses is lost, even when Watney could have
+solved it. A misconfigured external solver fails every frame, and the log says
+so on every frame, naming the solver. ASTAP without a database is the worst
+case: it waits at a dialog, so each frame costs the session's full two-minute
+timeout. With no ASTAP path set, the platform's usual install location is tried
+(on macOS `/Applications/ASTAP.app`). A folder or a `.app` bundle is
 accepted in place of the executable, and in a folder `astap_cli` is preferred
 over the GUI build, since it cannot stop at a dialog.
+
+---
+
+## D32 — ASPS and PlateSolve3, from their documentation and untested
+
+All Sky Plate Solver (ASPS) and PlaneWave's PlateSolve3 (3.80) are run as
+subprocesses, like ASTAP, on a shared base that stages a copy of the frame in a
+folder of its own and deletes the folder afterwards. Each is chosen in the
+settings window and is then the only solver for its frames (D31). Both exist
+only for Windows. Chosen anywhere else, every solve fails to start, and the log
+says why when the choice is applied.
+
+**Neither has been run.** The development machine is a Mac. Everything here is
+from documentation and from other programs that call them, and the first night
+under the sky is the test. The sources:
+
+- **ASPS** — the vendor's own command-line document (astrogb.com,
+  `ASPS_CmdLine.pdf`), checked against N.I.N.A.'s adapter. The call is
+  `PlateSolver.exe /solvefile image result focal pixel ra dec radius`: focal
+  length in mm and pixel size in microns, used only as their ratio, and J2000
+  degrees. Zeros for the position ask for a blind solve. The result is eight
+  lines: `OK` or `ERROR`, then RA, Dec, field width and height (arcmin), scale
+  (″/px), CROTA2 and focal length. The image path is passed with forward slashes
+  because N.I.N.A. does; neither source says why.
+- **PlateSolve3** — PlaneWave documents no command line. N.I.N.A.'s adapter
+  (whose comments record PlaneWave's description) and CCDciel's agree on it:
+  `PlateSolve3.80 image [ra dec width height]`, all four in **radians**, and the
+  image alone for a blind solve. The result goes beside the image as
+  `<name>_PS3.txt`. It holds `True`/`False`, RA and Dec in radians, the scale in
+  **pixels per radian** with a rotation, and the plate transform's A–D. CCDciel
+  reads parity from the signs of A–D and CROTA2 as 180° minus the rotation, and
+  found the file written with decimal commas on some locales. All three are
+  followed.
+
+**Parity.** PlateSolve3 reports it, through A–D. ASPS does not, so its CD matrix
+assumes an unmirrored frame. Nothing reads the CD matrix today: the session
+uses the solved centre and scale, which both report directly. D12's correction
+directions will need the sign, and when they arrive an ASPS solve through a
+star diagonal will be wrong. That has to be settled then, from the WCS file ASPS
+may leave beside the image, or by not using its CD matrix.
+
+**What is pinned down instead.** The rebuild of a CD matrix from a scale and a
+CROTA2 is checked against the matrix real ASTAP wrote for a frame of known
+pointing (D31). They agree to 1e-6°, the residual being a slight skew in ASTAP's
+own matrix. The ASPS tests use the vendor document's example output line for
+line. The PlateSolve3 result files are constructed to N.I.N.A.'s and CCDciel's
+reading of the format, and say so.
+
+**Defaults.** ASPS is looked for in `Program Files (x86)\PlateSolver`, the
+location in its document's examples. PlateSolve3 is distributed as a folder to
+unzip, so it has no install location. The default is
+`Documents\PlateSolve3\PlateSolve3.80`, where N.I.N.A.'s documentation shows
+it. In a folder, the first `PlateSolve3*.exe` is used, the pattern N.I.N.A.
+browses for. Setting the path is the reliable route for both.
+
+**Time.** The session allows each solve two minutes. N.I.N.A. allows its
+command-line solvers ten. An ASPS blind solve, which is astrometry.net
+underneath, may need more than two, and then times out unsolved. If
+that happens under the sky, the limit should be the solver's own and not the
+session's.
 
 ---
 

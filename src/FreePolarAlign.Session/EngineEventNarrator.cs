@@ -115,10 +115,10 @@ public static class EngineEventNarrator
             // While the bolts are being turned most frames fail, and that is the
             // user's pace rather than anything to warn about (D26, D29).
             SolveFailedEvent { Trigger: SampleTrigger.Tracking } e => Info(
-                $"Live reading: solve failed ({e.ConsecutiveFailures} in a row): {e.Reason}"),
+                $"Live reading: solve failed ({InARow(e)}): {e.Reason}"),
 
             SolveFailedEvent e => new NarratedEvent(LogSeverity.Warning, Inv(
-                $"Solve failed ({e.ConsecutiveFailures} in a row): {e.Reason}",
+                $"Solve failed ({InARow(e)}): {e.Reason}",
                 $"{(e.KeptFramePath is { } kept ? $" Frame kept as {kept}." : string.Empty)}")),
 
             SampleSkippedEvent e => Info($"Not a sample: {e.Reason}"),
@@ -130,7 +130,7 @@ public static class EngineEventNarrator
                 : $"Readout mode set to '{e.Name}'. The driver does not report a bit depth."),
 
             PointCapturedEvent e => Info(Inv(
-                $"Sample {e.Point.Index}{(e.Trigger == SampleTrigger.Forced ? " (recorded on request)" : string.Empty)}: RA {CoordinateText.FormatRightAscension(e.Point.RaDegrees)}, ",
+                $"Sample {e.Point.Index}{(e.Trigger == SampleTrigger.Forced ? " (recorded on request)" : string.Empty)}{SolvedBy(e.Solver)}: RA {CoordinateText.FormatRightAscension(e.Point.RaDegrees)}, ",
                 $"Dec {CoordinateText.FormatDeclination(e.Point.DecDegrees)}, ",
                 $"exposure midpoint {e.Point.ExposureMidpointUtc:yyyy-MM-dd HH:mm:ss}Z.")),
 
@@ -149,7 +149,7 @@ public static class EngineEventNarrator
             // One line a frame, which is what a session log is for: the morning
             // after, it is the record of what each bolt turn actually did.
             AlignmentTrackedEvent { IsReliable: true } e => Info(Inv(
-                $"Live: total {e.Estimate.TotalErrorArcminutes:F2}' ",
+                $"Live{(e.Solver is { } solver ? $" ({solver})" : string.Empty)}: total {e.Estimate.TotalErrorArcminutes:F2}' ",
                 $"(altitude {e.Estimate.AltitudeErrorArcminutes:+0.00;-0.00}', azimuth {e.Estimate.AzimuthErrorArcminutes:+0.00;-0.00}'); ",
                 $"bolts turned so far: altitude {e.AppliedAltitudeArcminutes:+0.00;-0.00}', ",
                 $"azimuth {e.AppliedAzimuthArcminutes:+0.00;-0.00}'.")),
@@ -222,6 +222,12 @@ public static class EngineEventNarrator
     private static string Kind(DeviceKind kind) => kind == DeviceKind.Camera ? "Camera" : "Mount";
 
     private static NarratedEvent Info(string message) => new(LogSeverity.Info, message);
+
+    private static string InARow(SolveFailedEvent e) => e.Solver is null
+        ? Inv($"{e.ConsecutiveFailures} in a row")
+        : Inv($"{e.Solver}, {e.ConsecutiveFailures} in a row");
+
+    private static string SolvedBy(string? solver) => solver is null ? string.Empty : $", solved by {solver}";
 
     /// <summary>Not worth a line: the reducer and the log file both skip an empty message.</summary>
     private static NarratedEvent Quiet { get; } = new(LogSeverity.Info, string.Empty);

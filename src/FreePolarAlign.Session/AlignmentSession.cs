@@ -258,7 +258,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
     private sealed record Sample(double RotationDegrees, double RaDegrees, double DecDegrees, DateTime MidpointUtc);
 
-    private sealed record SolvedPosition(double RaDegrees, double DecDegrees, HorizontalCoordinates Direction, DateTime MidpointUtc);
+    /// <param name="Solver">Which solver produced the position, carried through to the events the log narrates.</param>
+    private sealed record SolvedPosition(double RaDegrees, double DecDegrees, HorizontalCoordinates Direction, DateTime MidpointUtc, string Solver);
 
     /// <param name="Mount">What the mount reported when the sample was taken; null without a mount.</param>
     private sealed record TrackingReference(SolvedPosition Solved, MountPosition? Mount);
@@ -2233,7 +2234,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 solution.CenterRaDegrees, solution.CenterDecDegrees, frame.ExposureMidpointUtc,
                 observer, _options.EffectiveAtmosphere);
             var solved = new SolvedPosition(
-                solution.CenterRaDegrees, solution.CenterDecDegrees, direction, frame.ExposureMidpointUtc);
+                solution.CenterRaDegrees, solution.CenterDecDegrees, direction, frame.ExposureMidpointUtc, SolverOf(result));
 
             if (_tracking is { } live)
             {
@@ -2256,6 +2257,12 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         }
     }
 
+    /// <summary>
+    /// The solver a result came from: the one a routing solver names, or else
+    /// the one this session called.
+    /// </summary>
+    private string SolverOf(PlateSolveResult result) => result.SolverName ?? _solver.Name;
+
     private void OnSolveFailed(SampleTrigger trigger, CapturedImage frame, PlateSolveResult result)
     {
         _consecutiveSolveFailures++;
@@ -2265,7 +2272,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             trigger,
             $"Could not solve ({result.FailureReason}): {result.Message}",
             _consecutiveSolveFailures,
-            kept));
+            kept,
+            SolverOf(result)));
 
         if (_tracking is not null)
         {
@@ -2418,7 +2426,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         _events.Publish(new PointCapturedEvent(
             new CapturePoint(_samples.Count, solved.RaDegrees, solved.DecDegrees, frame.ExposureMidpointUtc),
-            trigger));
+            trigger,
+            solved.Solver));
 
         if (_observations.Count >= SmallCircleFitter.MinimumObservations)
         {
@@ -2651,7 +2660,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 update.AppliedAltitudeArcminutes,
                 update.AppliedAzimuthArcminutes,
                 update.IsReliable,
-                update.UnreliableReason));
+                update.UnreliableReason,
+                solved.Solver));
         }
         finally
         {

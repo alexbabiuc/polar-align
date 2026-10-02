@@ -81,7 +81,7 @@ and INDI will.
 |---|---|---|
 | `FreePolarAlign.Core` | `net10.0` | Coordinate transforms, circle fit, error model, correction vectors. Pure functions, no I/O. |
 | `FreePolarAlign.Imaging` | `net10.0` | FITS read/write, TAN WCS parsing, star detection. |
-| `FreePolarAlign.Solving` | `net10.0` | `ISolver`, Watney adapter, ASTAP subprocess adapter, and the fallback that puts Watney behind a chosen solver (D31). |
+| `FreePolarAlign.Solving` | `net10.0` | `ISolver`, the Watney adapter, and subprocess adapters for ASTAP, ASPS and PlateSolve3 (D31, D32). |
 | `FreePolarAlign.Devices` | `net10.0` | `ICamera`, `IMount`, `IDeviceProvider` contracts only. |
 | `FreePolarAlign.Devices.Simulated` | `net10.0` | Virtual observatory. See below. |
 | `FreePolarAlign.Devices.Ascom` | `net10.0-windows` | ASCOM COM provider. Windows build only. |

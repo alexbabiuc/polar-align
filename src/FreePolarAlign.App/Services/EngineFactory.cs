@@ -47,8 +47,8 @@ public sealed record EngineStartupResult(
 /// <summary>
 /// Assembles the application: the device catalogue (the virtual observatory
 /// always, plus whatever plugins are installed -- D4), the solvers (D3: the
-/// embedded Watney, and whichever external one the settings chose in front of
-/// it), the settings file, and the session log.
+/// embedded Watney, or whichever external one the settings chose instead), the
+/// settings file, and the session log.
 ///
 /// Nothing is connected here and no site is assumed. Both are the user's
 /// explicit acts once the window is up (D18, D19), which is also what makes the

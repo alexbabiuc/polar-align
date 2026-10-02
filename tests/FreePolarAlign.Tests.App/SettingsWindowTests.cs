@@ -42,6 +42,40 @@ public class SettingsWindowTests
         Assert.Equal(SolverKind.Internal, window.BlindSolver.Kind);
         Assert.Equal(SolverKind.Internal, window.NearSolver.Kind);
         Assert.Equal(string.Empty, window.AstapPath);
+        Assert.Equal("20", window.BlindTimeoutText);
+        Assert.Equal("5", window.NearTimeoutText);
+    }
+
+    [Fact]
+    public void SolveTimeoutsAreSaved_WithADecimalPointOrComma()
+    {
+        (SettingsViewModel window, List<AppSettings> saved, _) = Build();
+
+        window.BlindTimeoutText = "30";
+        window.NearTimeoutText = "2,5";
+        window.SaveCommand.Execute(null);
+
+        AppSettings result = Assert.Single(saved);
+        Assert.Equal(30.0, result.BlindSolveTimeoutSeconds);
+        Assert.Equal(2.5, result.NearSolveTimeoutSeconds);
+    }
+
+    [Theory]
+    [InlineData("0", "5")]
+    [InlineData("20", "601")]
+    [InlineData("soon", "5")]
+    [InlineData("20", "")]
+    public void AnUnusableTimeout_IsRefusedAndNothingIsSaved(string blind, string near)
+    {
+        (SettingsViewModel window, List<AppSettings> saved, Func<int> closed) = Build();
+
+        window.BlindTimeoutText = blind;
+        window.NearTimeoutText = near;
+        window.SaveCommand.Execute(null);
+
+        Assert.Empty(saved);
+        Assert.Equal(0, closed());
+        Assert.Contains("between 1 and 600 seconds", window.Error);
     }
 
     [Fact]

@@ -45,6 +45,18 @@
     </StackPanel>
 
     <StackPanel Spacing="4">
+      <TextBlock FontWeight="Bold" Text="Solve timeouts (seconds)" />
+      <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="4">
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="Blind solve" VerticalAlignment="Center" />
+        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding BlindTimeoutText, Mode=TwoWay}" />
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="Near solve" VerticalAlignment="Center" />
+        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NearTimeoutText, Mode=TwoWay}" />
+      </Grid>
+      <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
+                 Text="How long a frame may take to solve before it is given up as unsolved, whichever solver is chosen. Between 1 and 600 seconds." />
+    </StackPanel>
+
+    <StackPanel Spacing="4">
       <TextBlock FontWeight="Bold" Text="Solver programs" />
       <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="4">
         <TextBlock Grid.Row="0" Grid.Column="0" Text="ASPS" VerticalAlignment="Center" />

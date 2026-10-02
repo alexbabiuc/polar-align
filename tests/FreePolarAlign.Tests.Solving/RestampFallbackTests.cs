@@ -26,12 +26,23 @@ public class RestampFallbackTests
 
         public List<string> Paths { get; } = new();
 
+        public List<TimeSpan?> Timeouts { get; } = new();
+
+        /// <summary>How long the first call takes, standing in for a slow solve.</summary>
+        public TimeSpan FirstCallTakes { get; init; }
+
         public int Calls => Paths.Count;
 
-        public Task<PlateSolveResult> SolveAsync(PlateSolveRequest request, CancellationToken cancellationToken = default)
+        public async Task<PlateSolveResult> SolveAsync(PlateSolveRequest request, CancellationToken cancellationToken = default)
         {
             Paths.Add(request.ImagePath);
-            return Task.FromResult(_results.Count > 0 ? _results.Dequeue() : Failure(PlateSolveFailureReason.NoMatchFound));
+            Timeouts.Add(request.Timeout);
+            if (Calls == 1 && FirstCallTakes > TimeSpan.Zero)
+            {
+                await Task.Delay(FirstCallTakes, cancellationToken);
+            }
+
+            return _results.Count > 0 ? _results.Dequeue() : Failure(PlateSolveFailureReason.NoMatchFound);
         }
     }
 
@@ -89,6 +100,61 @@ public class RestampFallbackTests
 
     private static string TempDirectory() =>
         Path.Combine(Path.GetTempPath(), $"fpa-restamp-tests-{Guid.NewGuid():N}");
+
+    /// <summary>
+    /// The timeout is the frame's, not each attempt's: the redraw is solved in
+    /// what the first attempt left, so a near solve given five seconds does not
+    /// take ten.
+    /// </summary>
+    [Fact]
+    public async Task TheRetryGetsOnlyWhatTheFirstAttemptLeft()
+    {
+        string directory = TempDirectory();
+        try
+        {
+            var inner = new ScriptedSolver(Failure(PlateSolveFailureReason.NoMatchFound), Success())
+            {
+                FirstCallTakes = TimeSpan.FromMilliseconds(400),
+            };
+            using var solver = new RestampFallbackSolver(inner, directory);
+
+            await solver.SolveAsync(new PlateSolveRequest(WriteFrameWithStars(directory), Timeout: TimeSpan.FromSeconds(5)));
+
+            Assert.Equal(2, inner.Calls);
+            Assert.Equal(TimeSpan.FromSeconds(5), inner.Timeouts[0]);
+            Assert.InRange(inner.Timeouts[1]!.Value, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(4.6));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AFirstAttemptThatUsedTheWholeTimeout_IsNotRetried()
+    {
+        string directory = TempDirectory();
+        try
+        {
+            var inner = new ScriptedSolver(Failure(PlateSolveFailureReason.NoMatchFound), Success())
+            {
+                FirstCallTakes = TimeSpan.FromMilliseconds(300),
+            };
+            var log = new List<string>();
+            using var solver = new RestampFallbackSolver(inner, directory, log.Add);
+
+            PlateSolveResult result = await solver.SolveAsync(
+                new PlateSolveRequest(WriteFrameWithStars(directory), Timeout: TimeSpan.FromMilliseconds(100)));
+
+            Assert.False(result.Success);
+            Assert.Equal(1, inner.Calls);
+            Assert.Contains(log, line => line.Contains("No time left"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 
     [Fact]
     public async Task ASolveThatSucceedsIsNotRedrawn()

@@ -91,6 +91,7 @@ public sealed class RestampFallbackSolver : ISolver, IDisposable
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         PlateSolveResult direct = await _inner.SolveAsync(request, cancellationToken).ConfigureAwait(false);
         if (direct.Success || !IsWorthRedrawing(direct.FailureReason))
         {
@@ -98,6 +99,16 @@ public sealed class RestampFallbackSolver : ISolver, IDisposable
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+
+        // The request's timeout is for the frame, not for each attempt at it:
+        // the retry gets what the first attempt left, and none if it used it
+        // all. Otherwise a near solve given five seconds could take ten.
+        TimeSpan? remaining = request.Timeout - stopwatch.Elapsed;
+        if (remaining is { } left && left <= TimeSpan.Zero)
+        {
+            _log?.Invoke($"Solve failed ({direct.FailureReason}): {direct.Message} No time left in the solve timeout to retry on a redrawn frame.");
+            return direct;
+        }
 
         _log?.Invoke(
             $"Solve failed ({direct.FailureReason}): {direct.Message} " +
@@ -114,7 +125,7 @@ public sealed class RestampFallbackSolver : ISolver, IDisposable
             }
 
             PlateSolveResult retry = await _inner
-                .SolveAsync(request with { ImagePath = redrawnPath }, cancellationToken)
+                .SolveAsync(request with { ImagePath = redrawnPath, Timeout = remaining }, cancellationToken)
                 .ConfigureAwait(false);
 
             if (retry.Success)

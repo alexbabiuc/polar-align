@@ -573,7 +573,7 @@
       the file itself; it was 170, taken from the frame view, which needed it
       more on a window at the 720px minimum.
     -->
-    <Grid Grid.Row="2" RowDefinitions="Auto,Auto,120" RowSpacing="6">
+    <Grid Grid.Row="2" RowDefinitions="Auto,120" RowSpacing="6">
       <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
         <Button Content="Start sequence" Command="{Binding StartCommand}"
                 ToolTip.Tip="Needs a camera and a confirmed site. With no mount connected, positions come from blind solves and you move the telescope by hand." />
@@ -583,10 +583,7 @@
         <Button Content="Abort" Command="{Binding AbortCommand}" Background="#5A1E1E" />
       </StackPanel>
 
-      <TextBlock Grid.Row="1" Classes="label" Text="{Binding LogPath, StringFormat='Full session log: {0}'}"
-                 IsVisible="{Binding LogPath, Converter={x:Static ObjectConverters.IsNotNull}}" />
-
-      <Border Grid.Row="2" BorderBrush="#4A4A4A" BorderThickness="1" CornerRadius="4">
+      <Border Grid.Row="1" BorderBrush="#4A4A4A" BorderThickness="1" CornerRadius="4">
         <ListBox x:Name="LogList" Classes="log" ItemsSource="{Binding Log}" Background="#101010" FontFamily="monospace" FontSize="12">
           <ListBox.ItemTemplate>
             <DataTemplate x:DataType="vm:LogEntry">

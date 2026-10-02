@@ -152,11 +152,19 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         // Startup problems open the log rather than a banner across the top of
         // the window. A banner that is always up is one nobody reads, and most
         // of what used to fill it described a normal installation.
+        //
+        // Where the full log is written is the log's first line rather than a row
+        // of its own under the buttons: that row cost the frame view a line of
+        // height on every screen to say something read once.
         DateTimeOffset startedAt = DateTimeOffset.UtcNow;
-        _state = UiState.Initial() with
+        var startupLog = new List<LogEntry>();
+        if (LogPath is not null)
         {
-            Log = startupWarnings.Select(w => new LogEntry(startedAt, LogSeverity.Warning, w)).ToArray(),
-        };
+            startupLog.Add(new LogEntry(startedAt, LogSeverity.Info, $"Full session log: {LogPath}"));
+        }
+
+        startupLog.AddRange(startupWarnings.Select(w => new LogEntry(startedAt, LogSeverity.Warning, w)));
+        _state = UiState.Initial() with { Log = startupLog };
         if (engine is null)
         {
             _state = _state with { StatusMessage = "No engine available. See the warnings in the log below." };

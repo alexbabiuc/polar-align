@@ -97,6 +97,18 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnSettingsClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        var window = new SettingsWindow();
+        window.DataContext = viewModel.CreateSettingsViewModel(window.Close);
+        _ = window.ShowDialog(this);
+    }
+
     private void OnStatusTick(object? sender, EventArgs e)
     {
         if (DataContext is MainWindowViewModel viewModel)

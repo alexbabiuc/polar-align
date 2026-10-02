@@ -1302,6 +1302,27 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         Remember(updated);
     }
 
+    /// <summary>The state for a settings window opened now; <paramref name="close"/> closes that window.</summary>
+    public SettingsViewModel CreateSettingsViewModel(Action close) =>
+        new(_settings, DefaultConfiguration.CapturePoints, ApplySettings, close);
+
+    /// <summary>
+    /// Takes what the settings window saved. A changed capture-point default
+    /// replaces the figure in the sequence panel too -- the user has just said
+    /// what they want it to be -- but never mid-sequence, when it is the count
+    /// the running sequence was started with.
+    /// </summary>
+    private void ApplySettings(AppSettings updated)
+    {
+        bool pointsChanged = updated.DefaultCapturePoints != _settings.DefaultCapturePoints;
+        Remember(updated);
+
+        if (pointsChanged && updated.DefaultCapturePoints is { } points && !State.SessionActive)
+        {
+            CapturePointsText = points.ToString(CultureInfo.InvariantCulture);
+        }
+    }
+
     /// <summary>
     /// Stores a settings change and writes it out.
     ///

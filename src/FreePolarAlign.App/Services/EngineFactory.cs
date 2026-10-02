@@ -119,7 +119,7 @@ public static class EngineFactory
         var session = new AlignmentSession(catalog, solver, options);
 
         var configuration = new SessionConfiguration(
-            CapturePoints: options.CaptureCount,
+            CapturePoints: loaded.Settings.DefaultCapturePoints ?? options.CaptureCount,
             RequestedSweepDegrees: options.SweepDegrees);
 
         return new EngineStartupResult(

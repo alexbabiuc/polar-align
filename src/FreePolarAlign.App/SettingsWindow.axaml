@@ -1,0 +1,67 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FreePolarAlign.App.ViewModels"
+        x:Class="FreePolarAlign.App.SettingsWindow"
+        x:DataType="vm:SettingsViewModel"
+        Title="Settings"
+        Width="560" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+
+  <StackPanel Margin="16" Spacing="12">
+
+    <StackPanel Spacing="4">
+      <TextBlock FontWeight="Bold" Text="Capture points" />
+      <TextBox Text="{Binding CapturePointsText, Mode=TwoWay}" />
+      <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
+                 Text="How many points a new sequence starts with. It can still be changed for one run in the main window." />
+    </StackPanel>
+
+    <StackPanel Spacing="4">
+      <TextBlock FontWeight="Bold" Text="Solvers" />
+      <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="4">
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="Blind solver" VerticalAlignment="Center" />
+        <ComboBox Grid.Row="0" Grid.Column="1" HorizontalAlignment="Stretch"
+                  ItemsSource="{x:Static vm:SettingsViewModel.SolverOptions}"
+                  SelectedItem="{Binding BlindSolver, Mode=TwoWay}">
+          <ComboBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:SolverOption">
+              <TextBlock Text="{Binding Label}" />
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="Near solver" VerticalAlignment="Center" />
+        <ComboBox Grid.Row="1" Grid.Column="1" HorizontalAlignment="Stretch"
+                  ItemsSource="{x:Static vm:SettingsViewModel.SolverOptions}"
+                  SelectedItem="{Binding NearSolver, Mode=TwoWay}">
+          <ComboBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:SolverOption">
+              <TextBlock Text="{Binding Label}" />
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+      </Grid>
+      <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
+                 Text="Blind is for frames where the pointing is unknown, near for frames where it is roughly known. Only the internal solver is implemented so far; the others are remembered for when they are." />
+    </StackPanel>
+
+    <StackPanel Spacing="4">
+      <TextBlock FontWeight="Bold" Text="Solver programs" />
+      <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="4">
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="ASPS" VerticalAlignment="Center" />
+        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding AspsPath, Mode=TwoWay}" />
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="ASTAP" VerticalAlignment="Center" />
+        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding AstapPath, Mode=TwoWay}" />
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="PS3" VerticalAlignment="Center" />
+        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Ps3Path, Mode=TwoWay}" />
+      </Grid>
+    </StackPanel>
+
+    <TextBlock Text="{Binding Error}" Foreground="#E07070" TextWrapping="Wrap"
+               IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+      <Button Content="Save" Command="{Binding SaveCommand}" IsDefault="True" />
+      <Button Content="Cancel" Command="{Binding CancelCommand}" IsCancel="True" />
+    </StackPanel>
+  </StackPanel>
+</Window>

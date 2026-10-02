@@ -24,6 +24,10 @@ namespace FreePolarAlign.App.Services;
 /// of them a reason to fail to start -- a window that explains itself is far
 /// more use than an application that will not open.
 /// </param>
+/// <param name="Solver">
+/// The session's solver, kept so a solver choice saved in the settings window
+/// can be applied to it while the application runs.
+/// </param>
 /// <param name="OwnedDisposables">
 /// Everything created here that owns a resource, in an order safe to dispose
 /// in sequence. The caller (the App class) is responsible for disposing these
@@ -36,13 +40,15 @@ public sealed record EngineStartupResult(
     AppSettings Settings,
     SessionLog Log,
     SessionConfiguration DefaultConfiguration,
+    SelectedSolver Solver,
     IReadOnlyList<string> Warnings,
     IReadOnlyList<IDisposable> OwnedDisposables);
 
 /// <summary>
 /// Assembles the application: the device catalogue (the virtual observatory
-/// always, plus whatever plugins are installed -- D4), the embedded Watney
-/// solver (D3), the settings file, and the session log.
+/// always, plus whatever plugins are installed -- D4), the solvers (D3: the
+/// embedded Watney, and whichever external one the settings chose in front of
+/// it), the settings file, and the session log.
 ///
 /// Nothing is connected here and no site is assumed. Both are the user's
 /// explicit acts once the window is up (D18, D19), which is also what makes the
@@ -94,10 +100,13 @@ public static class EngineFactory
         // session log: "could not solve" is a great deal easier to act on when
         // it says what was tried.
         var watney = new WatneyPlateSolver(quadDatabaseDirectory);
-        var solver = new RestampFallbackSolver(
+        var internalSolver = new RestampFallbackSolver(
             watney,
             Path.Combine(Path.GetTempPath(), "FreePolarAlign", "restamped"),
             message => log.Write(LogSeverity.Info, message));
+
+        var solver = new SelectedSolver(internalSolver, message => log.Write(LogSeverity.Info, message));
+        solver.Configure(loaded.Settings);
 
         // The focal length is carried forward but not its measured status: a
         // remembered figure is a good hint and a poor measurement, and the
@@ -129,6 +138,7 @@ public static class EngineFactory
             loaded.Settings,
             log,
             configuration,
+            solver,
             warnings,
             new IDisposable[] { session, solver, log });
     }

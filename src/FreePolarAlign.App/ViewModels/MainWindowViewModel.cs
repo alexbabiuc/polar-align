@@ -69,6 +69,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
     private readonly IFrameSaveTarget? _saveTarget;
     private readonly Func<Imaging.Fits.FitsImage, double, Services.FramePreview> _renderPreview;
+    private readonly Action<AppSettings>? _settingsChanged;
     private readonly LatestOnlyRunner<PreviewJob> _preview;
 
     /// <param name="saveTarget">Where Save frame asks for a file. Null disables it.</param>
@@ -76,6 +77,10 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     /// Turns a frame into a bitmap. Replaceable so that the preview pipeline --
     /// which frame is shown, which are dropped -- can be tested without a
     /// renderer; defaults to <see cref="FramePreviewLoader.Render"/>.
+    /// </param>
+    /// <param name="settingsChanged">
+    /// Told every settings change as it is taken, for the parts of the
+    /// application that act on a setting while running -- the solver choice.
     /// </param>
     public MainWindowViewModel(
         IAlignmentEngine? engine,
@@ -87,7 +92,8 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         SessionConfiguration defaultConfiguration,
         Action<Action>? postToUiThread = null,
         IFrameSaveTarget? saveTarget = null,
-        Func<Imaging.Fits.FitsImage, double, Services.FramePreview>? renderPreview = null)
+        Func<Imaging.Fits.FitsImage, double, Services.FramePreview>? renderPreview = null,
+        Action<AppSettings>? settingsChanged = null)
     {
         _engine = engine;
         _catalog = catalog;
@@ -97,6 +103,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         _postToUiThread = postToUiThread ?? (action => action());
         _saveTarget = saveTarget;
         _renderPreview = renderPreview ?? FramePreviewLoader.Render;
+        _settingsChanged = settingsChanged;
 
         // A re-stretch never displaces a frame waiting to be shown: that frame
         // is rendered at the current stretch anyway, and dropping it would hold
@@ -1338,6 +1345,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         }
 
         _settings = updated;
+        _settingsChanged?.Invoke(_settings);
 
         string? problem = _settingsStore.Save(_settings);
         if (problem is not null)

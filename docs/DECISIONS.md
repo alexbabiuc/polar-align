@@ -81,7 +81,8 @@ controls) in shared code.
   whole" is achievable.
 - **ASTAP** — GPL, invoked as a subprocess so no linking obligation arises. Fast
   and excellent at unknown-scale solving. Offered as an accelerator for users who
-  already have it; never required.
+  already have it; never required. Chosen in the settings window, with Watney
+  behind it for every frame it cannot solve (D31).
 
 **Rejected: astrometry.net.** Robust and the reference implementation, but
 awkward to package on Windows and its blind-solving index sets are large.
@@ -848,7 +849,9 @@ field built from catalogue stars at that exact position solves in 561 ms. The
 two that fail are the two sparsest fields (12 and 18 stars/deg², against 24 and
 33 for the two that solve). Binning, blurring, cropping, exact position hints
 and wider density passes were all tried and none changed the outcome. D3's
-optional ASTAP is the obvious fallback.
+optional ASTAP is the obvious fallback. It can now be chosen to solve first
+(D31); whether it solves these two frames has not been tried, as they are not on
+the machine ASTAP was tested on.
 
 ---
 
@@ -1426,8 +1429,8 @@ a real night, in both hemispheres if possible.
 The settings window (opened from the Settings button at the foot of the left column)
 stores a default capture-point count, a blind solver, a near solver, and the
 paths of ASPS, ASTAP and PS3. Each solver choice is one of Internal (Watney),
-ASPS, ASTAP or PS3. Only Internal is implemented; nothing yet reads the other
-three choices or the paths.
+ASPS, ASTAP or PS3. Internal and ASTAP are implemented (D31); ASPS, PS3 and
+their paths are stored and not yet read.
 
 **Why.** Asked for ahead of the adapters, so the settings file and the window
 do not change shape when they arrive, and an installed copy never has to
@@ -1441,8 +1444,68 @@ count below the minimum of 3 (D7), is discarded with a warning and costs only
 that setting. An unknown *name* (a file from a newer version) is a JSON error
 and falls back to the whole defaults, as any unreadable settings file does.
 
-**Cost.** Until the adapters exist, choosing ASPS, ASTAP or PS3 changes
-nothing, and the window says so.
+**Cost.** Until their adapters exist, choosing ASPS or PS3 changes nothing:
+Watney solves those frames, and the window and the log both say so.
+
+---
+
+## D31 — The chosen solver goes first, and Watney gets every frame it cannot solve
+
+A frame goes to the blind solver when the request carries no position hint and
+to the near solver when it does. The session adds a hint exactly when a mount is
+connected and reporting, so that is the line D30's two settings draw. If the
+chosen solver is not Watney, it runs first. Watney gets the
+frame if it fails for any reason except the user stopping the sequence, along
+with Watney's own second try on a frame redrawn from its detected stars.
+
+**Why every failure, a timeout included.** An external solver fails for reasons
+that say nothing about the frame. It can be missing or at a wrong path, or have
+no star database for this field size. It can also be the GUI build stopping at a
+dialog, which is how ASTAP behaves with no database: it waits, and the adapter
+sees a timeout. Watney has its own index and its own way of failing, so its
+attempt is worth having in every case. Only a cancellation is respected, because
+then the user has asked for nothing more.
+
+**Why it takes effect at once.** The session holds one solver for the life of
+the application. That solver is reconfigured in place on every settings change,
+so a choice saved in the window applies from the next frame. A change that
+leaves the solvers and the ASTAP path alone rebuilds and logs nothing.
+
+**The ASTAP adapter, checked against the real thing.** The adapter was written
+before any ASTAP was installed. Run against ASTAP v2026.09.15 on macOS arm64 with
+the D05 database, it would never have returned a solve. Three things were wrong,
+each confirmed on the binary:
+
+- `-fov` is the field *height*, not the diagonal. Given the diagonal for a
+  1684 × 1263 frame at 3.919″/px, ASTAP solved but warned "inexact scale! Set
+  FOV=1.37d", and 1263 × 3.919″ is 1.37°.
+- The answer goes into a `.ini` file beside the input and never into the FITS
+  header. The adapter read the header back and would have reported every solve as
+  a solver error. The `.ini` is written on failure too, with an `ERROR=` line.
+- The exit code is the reliable failure signal: 0 solved, 1 no match, 2 too few
+  stars, 16 unreadable image, 32/33 no database. Pure noise gave exit 2 and
+  "Not enough stars."
+
+A blind request now passes `-fov 0 -r 180` explicitly, so it does not inherit a
+field size or search radius left in ASTAP's own settings by its GUI.
+
+**Measured** on simulator frames with the WCS stripped, using the GUI build
+headless:
+
+| Frame | Solve | Result |
+|---|---|---|
+| 2.3° diagonal, blind, rich/medium/sparse fields | 5–6 s each | centre within 10″, CD matrix within 1e-5° |
+| 2.3° diagonal, blind, Dec 70 band (VTmag < 11) | 12 s | same |
+| 2.3° diagonal, near (hint 2.9° out, scale given) | 1 s | same |
+| 7.4° diagonal, Phase 2's whole-pipeline test, six captures | 35 s for all six | injected axis recovered within 1′, as with Watney |
+
+**Cost.** A frame both solvers refuse costs two timeouts before it is reported,
+up to four minutes at the session's two-minute limit. The case that reaches the
+first timeout, ASTAP without a database, is a configuration problem the log names
+on every frame. With no ASTAP path set, the platform's usual install location is
+tried (on macOS `/Applications/ASTAP.app`). A folder or a `.app` bundle is
+accepted in place of the executable, and in a folder `astap_cli` is preferred
+over the GUI build, since it cannot stop at a dialog.
 
 ---
 

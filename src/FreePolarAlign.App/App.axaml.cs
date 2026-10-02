@@ -37,7 +37,8 @@ public sealed partial class App : Application
                 _startup.Warnings,
                 _startup.DefaultConfiguration,
                 postToUiThread: action => Dispatcher.UIThread.Post(action),
-                saveTarget: new StorageProviderFrameSaveTarget(window));
+                saveTarget: new StorageProviderFrameSaveTarget(window),
+                settingsChanged: _startup.Solver.Configure);
 
             window.DataContext = _viewModel;
             desktop.MainWindow = window;

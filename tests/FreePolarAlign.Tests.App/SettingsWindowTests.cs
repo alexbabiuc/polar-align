@@ -122,4 +122,21 @@ public class SettingsWindowTests
         Assert.Equal(11, store.Saved.DefaultCapturePoints);
         Assert.Equal("11", viewModel.CapturePointsText);
     }
+
+    /// <summary>A solver chosen here is used from the next frame, not the next launch.</summary>
+    [Fact]
+    public void SavedSolverChoiceReachesTheRunningApplication()
+    {
+        var changes = new List<AppSettings>();
+        var viewModel = new MainWindowViewModel(
+            engine: null, catalog: null, settingsStore: new InMemorySettingsStore(), settings: null, log: null, warnings: null,
+            new FreePolarAlign.Core.Engine.SessionConfiguration(6, 70.0),
+            settingsChanged: changes.Add);
+
+        SettingsViewModel window = viewModel.CreateSettingsViewModel(() => { });
+        window.BlindSolver = SettingsViewModel.SolverOptions.Single(o => o.Kind == SolverKind.Astap);
+        window.SaveCommand.Execute(null);
+
+        Assert.Equal(SolverKind.Astap, changes.Single().BlindSolver);
+    }
 }

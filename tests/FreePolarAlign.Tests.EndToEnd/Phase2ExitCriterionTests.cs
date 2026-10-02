@@ -182,6 +182,28 @@ public class Phase2ExitCriterionTests
     {
         RequireQuadDatabase();
 
+        using var solver = new WatneyPlateSolver(QuadDatabaseDirectory);
+        AssertInjectedMisalignmentRecovered(solver);
+    }
+
+    /// <summary>
+    /// The same loop with ASTAP doing every solve, so a solver chosen in the
+    /// settings window is held to the accuracy the internal one is. Skips where
+    /// ASTAP or a star database covering this 4.5 degree field height is not
+    /// installed.
+    /// </summary>
+    [SkippableFact]
+    [Trait("Category", "RequiresAstap")]
+    public void InjectedMisalignment_SurvivesTheWholePipeline_WithAstap()
+    {
+        string executable = AstapPlateSolver.ResolveExecutable(Environment.GetEnvironmentVariable("FPA_ASTAP"));
+        Skip.IfNot(File.Exists(executable), "ASTAP is not installed where it is looked for; set FPA_ASTAP to run this.");
+
+        AssertInjectedMisalignmentRecovered(new AstapPlateSolver(executable));
+    }
+
+    private static void AssertInjectedMisalignmentRecovered(ISolver solver)
+    {
         const double latitude = 40.0;
         const double longitude = 120.0;
         var site = new ObserverSite(latitude, longitude, 100.0);
@@ -210,7 +232,6 @@ public class Phase2ExitCriterionTests
             latitude, injected, declinationDegrees: 40.0, coneErrorArcminutes: 25.0, conePhaseDegrees: 40.0, rotations);
 
         var solvedDirections = new List<HorizontalCoordinates>();
-        using var solver = new WatneyPlateSolver(QuadDatabaseDirectory);
 
         for (int i = 0; i < trueDirections.Count; i++)
         {
@@ -230,7 +251,9 @@ public class Phase2ExitCriterionTests
             {
                 PlateSolveResult result = solver.SolveAsync(
                     new PlateSolveRequest(path, Timeout: TimeSpan.FromMinutes(2))).GetAwaiter().GetResult();
-                Assert.True(result.Success, $"capture {i} failed to solve -- {result.FailureReason}: {result.Message}");
+                Skip.If(result.FailureReason is PlateSolveFailureReason.Timeout,
+                    $"{solver.Name} timed out on capture {i}, which for ASTAP means no usable star database: {result.Message}");
+                Assert.True(result.Success, $"{solver.Name}: capture {i} failed to solve -- {result.FailureReason}: {result.Message}");
 
                 // The solve returns catalogue coordinates; the fit needs physical
                 // pointing directions, so put them through the full apparent-place

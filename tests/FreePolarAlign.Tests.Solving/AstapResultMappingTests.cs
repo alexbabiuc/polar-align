@@ -1,4 +1,3 @@
-using FreePolarAlign.Imaging.Fits;
 using FreePolarAlign.Imaging.Wcs;
 using FreePolarAlign.Solving;
 using Xunit;
@@ -6,10 +5,10 @@ using Xunit;
 namespace FreePolarAlign.Tests.Solving;
 
 /// <summary>
-/// ASTAP's exit code and stdout/stderr text are the only signal this adapter
-/// gets about what happened, so the mapping from that text (and from its
-/// written-back WCS) to <see cref="PlateSolveResult"/> is tested directly,
-/// without starting any process.
+/// ASTAP's exit code, its .ini result file and its console text are the only
+/// signals this adapter gets about what happened, so the mapping from them to
+/// <see cref="PlateSolveResult"/> is tested directly, without starting any
+/// process.
 /// </summary>
 public class AstapResultMappingTests
 {
@@ -31,12 +30,104 @@ public class AstapResultMappingTests
     [Fact]
     public void NonZeroExitCode_NeverThrowsAndAlwaysCarriesAMessage()
     {
-        var outcome = new AstapPlateSolver.ProcessOutcome(1, "", "unexpected internal error 0xdeadbeef");
+        var outcome = new AstapPlateSolver.ProcessOutcome(99, "", "unexpected internal error 0xdeadbeef");
 
-        PlateSolveResult result = AstapPlateSolver.MapProcessOutcome(outcome, "irrelevant.fits", TimeSpan.FromSeconds(1));
+        PlateSolveResult result = AstapPlateSolver.MapProcessOutcome(outcome, NoSuchIni(), 1000, 800, TimeSpan.FromSeconds(1));
 
         Assert.False(result.Success);
         Assert.False(string.IsNullOrWhiteSpace(result.Message));
+    }
+
+    /// <summary>ASTAP's documented exit codes, which say more than its wording does.</summary>
+    [Theory]
+    [InlineData(1, PlateSolveFailureReason.NoMatchFound)]
+    [InlineData(2, PlateSolveFailureReason.NoStarsDetected)]
+    [InlineData(16, PlateSolveFailureReason.InvalidImage)]
+    [InlineData(32, PlateSolveFailureReason.SolverError)]
+    [InlineData(33, PlateSolveFailureReason.SolverError)]
+    public void ExitCode_MapsToFailureReason(int exitCode, PlateSolveFailureReason expected)
+    {
+        PlateSolveResult result = AstapPlateSolver.ClassifyExitCode(exitCode, "");
+
+        Assert.Equal(expected, result.FailureReason);
+    }
+
+    /// <summary>
+    /// The defect this adapter shipped with: it read the solution back from the
+    /// FITS header, where ASTAP never writes it. The .ini below is what ASTAP
+    /// v2026.09.15 wrote for a simulator frame centred at RA 83.6, Dec 22.0,
+    /// 1684 x 1263 pixels at 3.919 arcsec/pixel, rotated 23 degrees.
+    /// </summary>
+    [Fact]
+    public void SolvedIni_IsReadBackAsTheSolution()
+    {
+        string ini = WriteIni(
+            "PLTSOLVD=T",
+            "CRPIX1= 8.4250000000000000E+002",
+            "CRPIX2= 6.3200000000000000E+002",
+            "CRVAL1= 8.3600020957526084E+001",
+            "CRVAL2= 2.1999990194922525E+001",
+            "CDELT1=-1.0886414003428448E-003",
+            "CDELT2= 1.0886514229114042E-003",
+            "CROTA1=-2.3002385773952547E+001",
+            "CROTA2=-2.2997436661759306E+001",
+            "CD1_1=-1.0020819797380185E-003",
+            "CD1_2= 4.2540780954839516E-004",
+            "CD2_1= 4.2532516553754347E-004",
+            "CD2_2= 1.0021279480023927E-003",
+            "DIMENSIONS=1684 x 1263");
+        try
+        {
+            var outcome = new AstapPlateSolver.ProcessOutcome(0, "Solution found:  5: 34  24.01\t+22° 00  00.0", "");
+
+            PlateSolveResult result = AstapPlateSolver.MapProcessOutcome(outcome, ini, 1684, 1263, TimeSpan.FromSeconds(4.3));
+
+            Assert.True(result.Success, result.Message);
+            Assert.Equal(83.6, result.Solution!.CenterRaDegrees, precision: 3);
+            Assert.Equal(22.0, result.Solution.CenterDecDegrees, precision: 3);
+            Assert.Equal(3.919, result.Solution.PixelScaleArcsecPerPixel, precision: 2);
+        }
+        finally
+        {
+            File.Delete(ini);
+        }
+    }
+
+    /// <summary>What ASTAP wrote for a frame of pure noise, exiting with 2.</summary>
+    [Fact]
+    public void FailedIni_CarriesAstapsOwnExplanation()
+    {
+        string ini = WriteIni("PLTSOLVD=F", "DIMENSIONS=800 x 600", "ERROR=Not enough stars.", "WARNING=Warning, small image dimensions! ");
+        try
+        {
+            var outcome = new AstapPlateSolver.ProcessOutcome(2, "Only 0 stars found in image. Abort\nNo solution found!  :(", "");
+
+            PlateSolveResult result = AstapPlateSolver.MapProcessOutcome(outcome, ini, 800, 600, TimeSpan.FromSeconds(1));
+
+            Assert.Equal(PlateSolveFailureReason.NoStarsDetected, result.FailureReason);
+            Assert.Contains("Not enough stars", result.Message);
+        }
+        finally
+        {
+            File.Delete(ini);
+        }
+    }
+
+    [Fact]
+    public void SolvedIni_MissingCdMatrix_MapsToSolverError()
+    {
+        string ini = WriteIni("PLTSOLVD=T", "CRPIX1=1", "CRPIX2=1", "CRVAL1=10", "CRVAL2=20");
+        try
+        {
+            PlateSolveResult result = AstapPlateSolver.MapProcessOutcome(
+                new AstapPlateSolver.ProcessOutcome(0, "", ""), ini, 100, 100, TimeSpan.Zero);
+
+            Assert.Equal(PlateSolveFailureReason.SolverError, result.FailureReason);
+        }
+        finally
+        {
+            File.Delete(ini);
+        }
     }
 
     [Fact]
@@ -110,23 +201,22 @@ public class AstapResultMappingTests
     }
 
     [Fact]
-    public void SuccessfulExitCode_ButNoWcsWrittenBack_MapsToSolverError()
+    public void SuccessfulExitCode_ButNoResultFile_MapsToSolverError()
     {
-        string path = Path.Combine(Path.GetTempPath(), $"fpa-astap-nowcs-{Guid.NewGuid():N}.fits");
-        var image = new FitsImage(10, 10, FitsBitPix.Int16, bzero: 0.0, bscale: 1.0, new double[10, 10]);
-        try
-        {
-            FitsFile.Write(path, image);
+        var outcome = new AstapPlateSolver.ProcessOutcome(0, "Solved !", "");
 
-            var outcome = new AstapPlateSolver.ProcessOutcome(0, "Solved !", "");
-            PlateSolveResult result = AstapPlateSolver.MapProcessOutcome(outcome, path, TimeSpan.FromSeconds(1));
+        PlateSolveResult result = AstapPlateSolver.MapProcessOutcome(outcome, NoSuchIni(), 10, 10, TimeSpan.FromSeconds(1));
 
-            Assert.False(result.Success);
-            Assert.Equal(PlateSolveFailureReason.SolverError, result.FailureReason);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
+        Assert.False(result.Success);
+        Assert.Equal(PlateSolveFailureReason.SolverError, result.FailureReason);
+    }
+
+    private static string NoSuchIni() => Path.Combine(Path.GetTempPath(), $"fpa-astap-none-{Guid.NewGuid():N}.ini");
+
+    private static string WriteIni(params string[] lines)
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"fpa-astap-ini-{Guid.NewGuid():N}.ini");
+        File.WriteAllLines(path, lines);
+        return path;
     }
 }

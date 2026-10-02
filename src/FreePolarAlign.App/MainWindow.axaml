@@ -429,7 +429,7 @@
               <Border Background="#28304A" CornerRadius="4" Padding="10">
                 <StackPanel Spacing="4">
                   <TextBlock Classes="label" TextWrapping="Wrap"
-                             Text="Total error (success is judged on this figure alone)" />
+                             Text="Total error on the sky (success is judged on this figure alone)" />
                   <TextBlock Text="{Binding TotalErrorText}" FontSize="34" FontWeight="Bold" />
                   <Border Background="#1F6F3F" CornerRadius="3" Padding="6,3" HorizontalAlignment="Left"
                           IsVisible="{Binding IsGoodEnoughToStop}">
@@ -439,11 +439,19 @@
               </Border>
 
               <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="2">
-                <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="Altitude error" />
-                <TextBlock Grid.Row="0" Grid.Column="1" Classes="label" Text="Azimuth error" />
+                <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="Altitude error (mount angle)" />
+                <TextBlock Grid.Row="0" Grid.Column="1" Classes="label" Text="Azimuth error (mount angle)" />
                 <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding AltitudeErrorText}" FontSize="20" />
                 <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding AzimuthErrorText}" FontSize="20" />
               </Grid>
+              <!--
+                The total is an angle on the sky and these are the mount's own,
+                which is what a knob turns. An azimuth turn moves the axis only
+                cos(altitude) as far on the sky, so the total can be smaller
+                than the azimuth figure; said here so it is not taken for a bug.
+              -->
+              <TextBlock Classes="label" TextWrapping="Wrap"
+                         Text="Turn the mount by these angles. The total can be smaller than the azimuth figure: turning in azimuth moves the axis less far on the sky, by the cosine of its altitude." />
 
               <!--
                 The signs above, turned into what to do with the knobs. Left and

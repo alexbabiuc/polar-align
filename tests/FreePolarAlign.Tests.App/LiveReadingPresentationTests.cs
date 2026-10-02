@@ -40,8 +40,8 @@ public class LiveReadingPresentationTests
     /// left to the sign.
     /// </summary>
     [Theory]
-    [InlineData(12.34, "Lower the altitude by 12.3'")]
-    [InlineData(-7.0, "Raise the altitude by 7.0'")]
+    [InlineData(12.34, "Lower the altitude by 0° 12.3'")]
+    [InlineData(-7.0, "Raise the altitude by 0° 7.0'")]
     [InlineData(0.01, "Altitude: leave it where it is")]
     public void TheAltitudeCorrection_IsTheOppositeOfTheError(double error, string expected) =>
         Assert.Equal(expected, AlignmentFormatting.AltitudeCorrection(error));
@@ -53,13 +53,35 @@ public class LiveReadingPresentationTests
     /// word changes: west in the north, east in the south.
     /// </summary>
     [Theory]
-    [InlineData(8.1, 45.0, "Move the azimuth left (west) by 8.1'")]
-    [InlineData(-8.1, 45.0, "Move the azimuth right (east) by 8.1'")]
-    [InlineData(8.1, -33.0, "Move the azimuth left (east) by 8.1'")]
-    [InlineData(-8.1, -33.0, "Move the azimuth right (west) by 8.1'")]
+    [InlineData(8.1, 45.0, "Move the azimuth left (west) by 0° 8.1'")]
+    [InlineData(-8.1, 45.0, "Move the azimuth right (east) by 0° 8.1'")]
+    [InlineData(8.1, -33.0, "Move the azimuth left (east) by 0° 8.1'")]
+    [InlineData(-8.1, -33.0, "Move the azimuth right (west) by 0° 8.1'")]
     [InlineData(0.0, 45.0, "Azimuth: leave it where it is")]
     public void TheAzimuthCorrection_IsLeftOrRightFacingThePole(double error, double latitude, string expected) =>
         Assert.Equal(expected, AlignmentFormatting.AzimuthCorrection(error, latitude));
+
+    /// <summary>
+    /// Turns are given as the mount angle in degrees and arcminutes, so a
+    /// figure of 84.9 arcminutes cannot be read as degrees, and the carry past
+    /// 59.95 arcminutes lands on the next whole degree rather than on 60.0'.
+    /// </summary>
+    [Theory]
+    [InlineData(84.94, "1° 24.9'")]
+    [InlineData(-84.94, "1° 24.9'")]
+    [InlineData(42.4, "0° 42.4'")]
+    [InlineData(59.96, "1° 0.0'")]
+    [InlineData(125.0, "2° 5.0'")]
+    [InlineData(0.0, "0° 0.0'")]
+    public void TurnsAreGivenInDegreesAndArcminutes(double arcminutes, string expected) =>
+        Assert.Equal(expected, AlignmentFormatting.Angle(arcminutes));
+
+    [Fact]
+    public void AnAzimuthTurnOfMoreThanADegree_ReadsInDegrees()
+    {
+        Assert.Equal("Move the azimuth right (east) by 1° 24.9'", AlignmentFormatting.AzimuthCorrection(-84.94, 45.0));
+        Assert.Equal("Turned since the sweep: altitude -0° 18.0', azimuth +1° 2.5'", AlignmentFormatting.AppliedBolts(-18.0, 62.5));
+    }
 
     // ---- The hand-over, and readings ----
 

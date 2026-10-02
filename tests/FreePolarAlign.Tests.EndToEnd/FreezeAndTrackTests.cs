@@ -126,6 +126,21 @@ public class FreezeAndTrackTests
     }
 
     /// <summary>
+    /// Every sample and reading names the solver it came from, so a session
+    /// log read the morning after can tell one solver's answers from another's.
+    /// </summary>
+    [Fact]
+    public async Task SamplesAndReadings_NameTheSolverThatProducedThem()
+    {
+        using var harness = new SessionHarness();
+        await CompleteConnectedSweepAsync(harness);
+        AlignmentTrackedEvent reading = await NextReadingAsync(harness, DateTimeOffset.UtcNow);
+
+        Assert.All(harness.Recorder.All<PointCapturedEvent>(), e => Assert.Equal(harness.Solver.Name, e.Solver));
+        Assert.Equal(harness.Solver.Name, reading.Solver);
+    }
+
+    /// <summary>
     /// The feature itself: turn the bolts by what the reading says, and the
     /// reading follows them down to nothing -- checked against the simulated
     /// mount's true axis, not against the reading's own arithmetic.

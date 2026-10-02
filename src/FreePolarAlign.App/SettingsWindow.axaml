@@ -41,7 +41,7 @@
         </ComboBox>
       </Grid>
       <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
-                 Text="Blind is for frames where the pointing is unknown, near for frames where it is roughly known. Any frame the chosen solver cannot solve is handed to the internal one. ASPS and PS3 are not implemented yet; choosing them is remembered, and the internal solver is used meanwhile." />
+                 Text="Blind is for frames where the pointing is unknown, near for frames where it is roughly known. Only the chosen solver is used: a frame it cannot solve is reported as unsolved. ASPS and PS3 run only on Windows." />
     </StackPanel>
 
     <StackPanel Spacing="4">
@@ -55,7 +55,7 @@
         <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Ps3Path, Mode=TwoWay}" />
       </Grid>
       <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
-                 Text="The executable, its folder, or on macOS the .app. Left empty, ASTAP is looked for where its installer puts it." />
+                 Text="The executable or its folder (for ASTAP on macOS, the .app). Left empty, each is looked for where it usually installs: ASTAP and ASPS where their installers put them, PS3 in Documents\PlateSolve3." />
     </StackPanel>
 
     <TextBlock Text="{Binding Error}" Foreground="#E07070" TextWrapping="Wrap"

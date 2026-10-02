@@ -33,10 +33,8 @@ public sealed record StoredSite(
 public sealed record CameraSettings(int? ReadoutModeIndex = null, int? GainPercent = null);
 
 /// <summary>
-/// Which plate solver does a job. <see cref="Internal"/> and <see cref="Astap"/>
-/// have adapters; the others are choosable so the choice is already stored when
-/// theirs arrive, and no stored setting has to be migrated then. Whatever is
-/// chosen, the internal solver gets the frames it cannot solve.
+/// Which plate solver does a job. Only the chosen one is used (D31). ASPS and
+/// PS3 exist only for Windows.
 /// </summary>
 public enum SolverKind
 {

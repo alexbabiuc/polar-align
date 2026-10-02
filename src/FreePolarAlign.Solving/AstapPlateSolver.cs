@@ -1,7 +1,4 @@
-using System.ComponentModel;
-using System.Diagnostics;
 using System.Globalization;
-using System.Text;
 using System.Text.RegularExpressions;
 using FreePolarAlign.Imaging.Fits;
 using FreePolarAlign.Imaging.Wcs;
@@ -36,104 +33,26 @@ namespace FreePolarAlign.Solving;
 /// With no usable star database the GUI build shows a dialog and waits rather
 /// than exiting, so that case surfaces as a timeout, not a readable error.
 /// </remarks>
-public sealed class AstapPlateSolver : ISolver
+public sealed class AstapPlateSolver : ExternalProcessSolver
 {
-    private readonly string _executablePath;
-
     /// <param name="executablePath">
     /// Path to the ASTAP executable, either the GUI build or <c>astap_cli</c>:
-    /// both take the same arguments. <see cref="ResolveExecutable"/> turns what
-    /// a user is likely to type into one. Defaults to <c>"astap"</c>, which
-    /// relies on PATH, since .NET's <see cref="Process"/> searches PATH for a
-    /// bare filename on every supported platform.
+    /// both take the same arguments. <see cref="ResolveExecutable(string?)"/>
+    /// turns what a user is likely to type into one. Defaults to
+    /// <c>"astap"</c>, which relies on PATH.
     /// </param>
     public AstapPlateSolver(string executablePath = "astap")
+        : base(executablePath)
     {
-        if (string.IsNullOrWhiteSpace(executablePath))
-        {
-            throw new ArgumentException("ASTAP executable path must be provided.", nameof(executablePath));
-        }
-
-        _executablePath = executablePath;
     }
 
-    public string Name => "ASTAP";
+    public override string Name => "ASTAP";
 
-    public async Task<PlateSolveResult> SolveAsync(PlateSolveRequest request, CancellationToken cancellationToken = default)
-    {
-        FitsImage image;
-        try
-        {
-            image = FitsFile.Read(request.ImagePath);
-        }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or KeyNotFoundException or FormatException)
-        {
-            return PlateSolveResult.Failed(PlateSolveFailureReason.InvalidImage, $"Could not read '{request.ImagePath}' as FITS: {ex.Message}");
-        }
+    private protected override IReadOnlyList<string> BuildArguments(PlateSolveRequest request, StagedFrame frame) =>
+        BuildArguments(request, frame.Path, frame.Width, frame.Height);
 
-        // ASTAP's -wcs flag rewrites the input file's header in place. Solve
-        // a disposable copy so a caller's original image is never mutated as
-        // a side effect of plate solving.
-        string workingCopyPath = Path.Combine(Path.GetTempPath(), $"fpa-astap-{Guid.NewGuid():N}.fits");
-        try
-        {
-            File.Copy(request.ImagePath, workingCopyPath, overwrite: true);
-        }
-        catch (IOException ex)
-        {
-            return PlateSolveResult.Failed(PlateSolveFailureReason.InvalidImage, $"Could not stage '{request.ImagePath}' for ASTAP: {ex.Message}");
-        }
-
-        try
-        {
-            var psi = new ProcessStartInfo(_executablePath)
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
-            foreach (string argument in BuildArguments(request, workingCopyPath, image.Width, image.Height))
-            {
-                psi.ArgumentList.Add(argument);
-            }
-
-            using var timeoutCts = new CancellationTokenSource();
-            if (request.Timeout is { } timeout)
-            {
-                timeoutCts.CancelAfter(timeout);
-            }
-
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
-
-            var stopwatch = Stopwatch.StartNew();
-            ProcessOutcome outcome;
-            try
-            {
-                outcome = await RunAsync(psi, linkedCts.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                PlateSolveFailureReason reason = CancellationClassification.Classify(cancellationToken, timeoutCts);
-                return PlateSolveResult.Failed(reason, CancellationClassification.Message(reason, Name));
-            }
-            catch (Win32Exception ex)
-            {
-                return PlateSolveResult.Failed(PlateSolveFailureReason.SolverError,
-                    $"Could not start ASTAP at '{_executablePath}': {ex.Message}. Install ASTAP or configure its executable path.");
-            }
-
-            stopwatch.Stop();
-            return MapProcessOutcome(outcome, Path.ChangeExtension(workingCopyPath, ".ini"), image.Width, image.Height, stopwatch.Elapsed);
-        }
-        finally
-        {
-            TryDelete(workingCopyPath);
-            TryDelete(workingCopyPath + ".bak");
-            TryDelete(Path.ChangeExtension(workingCopyPath, ".wcs"));
-            TryDelete(Path.ChangeExtension(workingCopyPath, ".ini"));
-        }
-    }
+    private protected override PlateSolveResult ReadResult(ProcessOutcome outcome, StagedFrame frame, TimeSpan elapsed) =>
+        MapProcessOutcome(outcome, Path.ChangeExtension(frame.Path, ".ini"), frame.Width, frame.Height, elapsed);
 
     /// <summary>
     /// Pure translation from the solver-agnostic request to ASTAP's CLI
@@ -173,41 +92,6 @@ public sealed class AstapPlateSolver : ISolver
         }
 
         return args.ToArray();
-    }
-
-    internal readonly record struct ProcessOutcome(int ExitCode, string StandardOutput, string StandardError);
-
-    private static async Task<ProcessOutcome> RunAsync(ProcessStartInfo psi, CancellationToken cancellationToken)
-    {
-        using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        var stdout = new StringBuilder();
-        var stderr = new StringBuilder();
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) stderr.AppendLine(e.Data); };
-
-        process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        try
-        {
-            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            try
-            {
-                process.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-                // Best-effort cleanup; the process may have already exited.
-            }
-
-            throw;
-        }
-
-        return new ProcessOutcome(process.ExitCode, stdout.ToString(), stderr.ToString());
     }
 
     /// <summary>
@@ -337,41 +221,12 @@ public sealed class AstapPlateSolver : ISolver
     /// </summary>
     internal static PlateSolveSolution BuildSolution(TanWcsSolution wcs, int imageWidth, int imageHeight, string diagnosticOutput, TimeSpan elapsed)
     {
-        // The image center, not CRVAL, is the reported center: ASTAP is not
-        // guaranteed to anchor CRPIX at the image's midpoint, and re-using
-        // the existing Imaging WCS math here is exact regardless of where it did.
-        (double centerRa, double centerDec) = wcs.PixelToWorld(imageWidth / 2.0 + 0.5, imageHeight / 2.0 + 0.5);
-
-        double scaleXArcsecPerPixel = 3600.0 * Math.Sqrt(wcs.Cd1_1 * wcs.Cd1_1 + wcs.Cd2_1 * wcs.Cd2_1);
-        double scaleYArcsecPerPixel = 3600.0 * Math.Sqrt(wcs.Cd1_2 * wcs.Cd1_2 + wcs.Cd2_2 * wcs.Cd2_2);
-        double pixelScale = 0.5 * (scaleXArcsecPerPixel + scaleYArcsecPerPixel);
-
         // ASTAP's CLI does not print a stable, version-independent matched-star
         // count, unlike Watney's SolveResult.StarsUsedInSolve. This is a
         // best-effort scrape of its stdout; 0 means "not reported", not
         // necessarily "zero stars matched" -- callers should treat this
         // adapter's MatchedStarCount as advisory only.
-        int matchedStarCount = TryParseMatchedStarCount(diagnosticOutput);
-
-        // Likewise, rotation is not reported directly; derive it from the CD
-        // matrix rather than invent a number, the same source D12 uses for
-        // parity. For the standard CD <-> CDELT/CROTA2 relation (FITS paper
-        // II, Calabretta & Greisen: CD1_2 = -CDELT2*sin(CROTA2), CD2_2 =
-        // CDELT2*cos(CROTA2), CDELT2 > 0 by convention), atan2(-CD1_2, CD2_2)
-        // recovers CROTA2 exactly, including the unrotated case (0 degrees).
-        double rotationDegrees = Math.Atan2(-wcs.Cd1_2, wcs.Cd2_2) * (180.0 / Math.PI);
-
-        return new PlateSolveSolution(
-            CenterRaDegrees: centerRa,
-            CenterDecDegrees: centerDec,
-            PixelScaleArcsecPerPixel: pixelScale,
-            RotationDegrees: rotationDegrees,
-            Cd1_1: wcs.Cd1_1,
-            Cd1_2: wcs.Cd1_2,
-            Cd2_1: wcs.Cd2_1,
-            Cd2_2: wcs.Cd2_2,
-            MatchedStarCount: matchedStarCount,
-            SolveDuration: elapsed);
+        return SolutionGeometry.FromWcs(wcs, imageWidth, imageHeight, TryParseMatchedStarCount(diagnosticOutput), elapsed);
     }
 
     private static int TryParseMatchedStarCount(string output)
@@ -381,14 +236,9 @@ public sealed class AstapPlateSolver : ISolver
     }
 
     /// <summary>
-    /// Turns what a user is likely to type into the settings window -- nothing,
-    /// a macOS app bundle, an install folder, or the executable itself -- into
-    /// an executable to run.
-    ///
-    /// Left empty, the platform's usual install location is tried, so a stock
-    /// ASTAP install works without anything typed. The check is only that a
-    /// file is there: whether it runs is learned from the first solve, which
-    /// falls back to the internal solver when it does not.
+    /// The ASTAP to run for what was typed in the settings window: nothing (the
+    /// usual install location), a macOS app bundle, an install folder, or the
+    /// executable itself.
     /// </summary>
     public static string ResolveExecutable(string? configured) =>
         ResolveExecutable(configured, File.Exists, Directory.Exists, DefaultInstallLocations());
@@ -399,27 +249,21 @@ public sealed class AstapPlateSolver : ISolver
         Func<string, bool> directoryExists,
         IEnumerable<string> defaultLocations)
     {
-        if (string.IsNullOrWhiteSpace(configured))
-        {
-            return defaultLocations.FirstOrDefault(fileExists) ?? "astap";
-        }
+        return ExternalProcessSolver.ResolveExecutable(
+            configured, defaultLocations, InFolder, "astap", fileExists, directoryExists);
 
-        string path = configured.Trim();
-        if (!directoryExists(path))
+        string? InFolder(string folder)
         {
-            return path;
-        }
+            if (folder.TrimEnd('/').EndsWith(".app", StringComparison.OrdinalIgnoreCase))
+            {
+                return Path.Combine(folder, "Contents", "MacOS", "astap");
+            }
 
-        if (path.TrimEnd('/').EndsWith(".app", StringComparison.OrdinalIgnoreCase))
-        {
-            return Path.Combine(path, "Contents", "MacOS", "astap");
+            // The command-line build first where both are installed: it is the
+            // one that cannot stop to show a dialog.
+            string[] names = { "astap_cli", "astap_cli.exe", "astap", "astap.exe" };
+            return names.Select(name => Path.Combine(folder, name)).FirstOrDefault(fileExists);
         }
-
-        // The command-line build first where both are installed: it is the
-        // one that cannot stop to show a dialog.
-        string[] names = { "astap_cli", "astap_cli.exe", "astap", "astap.exe" };
-        return names.Select(name => Path.Combine(path, name)).FirstOrDefault(fileExists)
-            ?? Path.Combine(path, OperatingSystem.IsWindows() ? "astap.exe" : "astap");
     }
 
     private static IEnumerable<string> DefaultInstallLocations()
@@ -436,20 +280,5 @@ public sealed class AstapPlateSolver : ISolver
         }
 
         return new[] { "/opt/astap/astap_cli", "/opt/astap/astap", "/usr/local/bin/astap_cli", "/usr/local/bin/astap" };
-    }
-
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch
-        {
-            // Best-effort temp-file cleanup; not worth failing the solve over.
-        }
     }
 }

@@ -521,11 +521,13 @@ public sealed record SolveStartedEvent(SampleTrigger Trigger, string FitsPath) :
 /// fault (D26).
 /// </summary>
 /// <param name="KeptFramePath">Where the frame was kept for diagnosis (D26: the last 20), or null if it could not be.</param>
+/// <param name="Solver">Which solver tried, for the log.</param>
 public sealed record SolveFailedEvent(
     SampleTrigger Trigger,
     string Reason,
     int ConsecutiveFailures,
-    string? KeptFramePath = null) : EngineEvent;
+    string? KeptFramePath = null,
+    string? Solver = null) : EngineEvent;
 
 /// <summary>
 /// A solve succeeded but did not become a sample: the mount has not turned far
@@ -545,7 +547,8 @@ public sealed record SequenceRestartedEvent(string Reason) : EngineEvent;
 
 public sealed record ReadoutModeChangedEvent(int Index, string Name, int? BitDepth) : EngineEvent;
 
-public sealed record PointCapturedEvent(CapturePoint Point, SampleTrigger Trigger = SampleTrigger.SlewEnded) : EngineEvent;
+/// <param name="Solver">Which solver placed the point, for the log.</param>
+public sealed record PointCapturedEvent(CapturePoint Point, SampleTrigger Trigger = SampleTrigger.SlewEnded, string? Solver = null) : EngineEvent;
 
 /// <summary>
 /// Emitted after every capture point once >= 3 points are available (D7). The
@@ -585,12 +588,17 @@ public sealed record TrackingStartedEvent(string Instruction, bool IsUsableGeome
 /// False when the geometry cannot separate the two bolts. The estimate is then
 /// not to be shown: a live figure that is wrong is acted on continuously.
 /// </param>
+/// <param name="Solver">
+/// Which solver this frame's reading came from, for the log: a reading that
+/// jumps is read the morning after against the solver that produced it.
+/// </param>
 public sealed record AlignmentTrackedEvent(
     AlignmentEstimate Estimate,
     double AppliedAltitudeArcminutes,
     double AppliedAzimuthArcminutes,
     bool IsReliable,
-    string? UnreliableReason = null) : EngineEvent;
+    string? UnreliableReason = null,
+    string? Solver = null) : EngineEvent;
 
 /// <summary>
 /// A likely declination drift or meridian flip was detected from fit residuals

@@ -73,6 +73,9 @@ internal static unsafe class ToupcamNative
     public static extern int Toupcam_put_ExpoTime(IntPtr handle, uint microseconds);
 
     [DllImport(LibraryName)]
+    public static extern int Toupcam_get_ExpTimeRange(IntPtr handle, uint* minimum, uint* maximum, uint* defaultValue);
+
+    [DllImport(LibraryName)]
     public static extern int Toupcam_put_AutoExpoEnable(IntPtr handle, int mode);
 
     [DllImport(LibraryName)]

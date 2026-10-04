@@ -29,6 +29,7 @@ public sealed class ToupTekCamera : ICamera
     private int _maxBitDepth = 8;
     private int _modeIndex;
     private CameraGainRange? _gainRange;
+    private (uint Minimum, uint Maximum)? _exposureRange;
     private bool _disposed;
 
     internal ToupTekCamera(string cameraId, string displayName, string workingDirectory)
@@ -117,6 +118,7 @@ public sealed class ToupTekCamera : ICamera
                 : pixelX;
 
             _gainRange = ReadGainRange(handle);
+            _exposureRange = ReadExposureRange(handle);
             UniqueId = ReadSerialNumber(handle);
 
             _self = GCHandle.Alloc(this);
@@ -180,7 +182,10 @@ public sealed class ToupTekCamera : ICamera
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        Check(ToupcamNative.Toupcam_put_ExpoTime(_handle, ToupTekMapping.ExposureMicroseconds(duration)), "set the exposure");
+        uint microseconds = _exposureRange is { } range
+            ? ToupTekMapping.ExposureMicroseconds(duration, range.Minimum, range.Maximum)
+            : ToupTekMapping.ExposureMicroseconds(duration);
+        Check(ToupcamNative.Toupcam_put_ExpoTime(_handle, microseconds), "set the exposure");
 
         var frame = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (_gate)
@@ -319,6 +324,17 @@ public sealed class ToupTekCamera : ICamera
         }
 
         return maximum > minimum ? new CameraGainRange(minimum, maximum) : null;
+    }
+
+    /// <summary>The exposures the camera accepts, in microseconds, or null when it does not say.</summary>
+    private static unsafe (uint Minimum, uint Maximum)? ReadExposureRange(IntPtr handle)
+    {
+        uint minimum;
+        uint maximum;
+        uint defaultValue;
+        return ToupcamNative.Failed(ToupcamNative.Toupcam_get_ExpTimeRange(handle, &minimum, &maximum, &defaultValue))
+            ? null
+            : (minimum, maximum);
     }
 
     private static unsafe string? ReadSerialNumber(IntPtr handle)

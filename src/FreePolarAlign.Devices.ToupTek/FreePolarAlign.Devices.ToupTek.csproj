@@ -24,6 +24,38 @@
                       Private="false" ExcludeAssets="runtime" />
   </ItemGroup>
 
+  <!--
+    ToupTek's native library, from resources/touptek/camera, copied into the
+    plugin's output by architecture, exactly as the ZWO plugin does with its
+    own: with a runtime identifier only the matching DLL, beside the plugin;
+    with none, both, in the runtimes/<rid>/native layout NativeLibraryLocator
+    probes. These are the Windows x64 and x86 builds of SDK 60.32549.20260908.
+
+    No notice is copied with them because the SDK carries none: no licence
+    file, and no terms in its documentation or header. Bundling them was the
+    user's decision with that known (D25).
+  -->
+  <PropertyGroup>
+    <ToupTekNativeRoot>$(MSBuildThisFileDirectory)..\..\resources\touptek\camera\</ToupTekNativeRoot>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <None Include="$(ToupTekNativeRoot)x64\toupcam.dll" Link="toupcam.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x86'">
+    <None Include="$(ToupTekNativeRoot)x86\toupcam.dll" Link="toupcam.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == ''">
+    <None Include="$(ToupTekNativeRoot)x64\toupcam.dll" Link="runtimes\win-x64\native\toupcam.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="$(ToupTekNativeRoot)x86\toupcam.dll" Link="runtimes\win-x86\native\toupcam.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- The struct layouts are the thing most worth testing, and they are internal. -->
   <ItemGroup>
     <InternalsVisibleTo Include="FreePolarAlign.Tests.Devices" />

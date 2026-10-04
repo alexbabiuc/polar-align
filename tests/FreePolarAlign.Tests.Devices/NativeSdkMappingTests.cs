@@ -113,4 +113,20 @@ public class NativeSdkMappingTests
     [Fact]
     public void ToupTekExposureIsNeverZero() =>
         Assert.Equal(1u, ToupTekMapping.ExposureMicroseconds(TimeSpan.Zero));
+
+    /// <summary>
+    /// Kept within what the camera reports it accepts, because the SDK refuses
+    /// anything outside it and the exposure list is the same for every camera.
+    /// </summary>
+    [Theory]
+    [InlineData(2.0, 100u, 5_000_000u, 2_000_000u)]
+    [InlineData(10.0, 100u, 5_000_000u, 5_000_000u)]
+    [InlineData(0.00001, 100u, 5_000_000u, 100u)]
+    public void ToupTekExposure_IsKeptInTheCamerasRange(double seconds, uint minimum, uint maximum, uint expected) =>
+        Assert.Equal(expected, ToupTekMapping.ExposureMicroseconds(TimeSpan.FromSeconds(seconds), minimum, maximum));
+
+    /// <summary>A range that makes no sense is ignored rather than trusted.</summary>
+    [Fact]
+    public void ToupTekExposure_IgnoresAnInvertedRange() =>
+        Assert.Equal(2_000_000u, ToupTekMapping.ExposureMicroseconds(TimeSpan.FromSeconds(2), 5_000_000u, 100u));
 }

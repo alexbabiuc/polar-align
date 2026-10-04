@@ -1139,8 +1139,14 @@ for a runtime identifier; both, in the `runtimes/<rid>/native` layout, when not.
 A test reads the PE header of each copied DLL, because an x86 and an x64 build
 swapped in `resources/` would pass every build and fail only at the telescope.
 The ToupTek library as redistributed by INDI is LGPL-2.1, but those are its Linux
-and macOS builds, and no terms were found for the Windows `toupcam.dll`, so it
-is not in the repository and the user supplies it. Either way, each plugin looks
+and macOS builds. ToupTek's own SDK (60.32549.20260908) carries no licence file
+and states no terms in its documentation or header, so redistribution of the
+Windows `toupcam.dll` is neither granted nor forbidden in writing. It was first
+left out for that reason. It is now in `resources/touptek/camera/` (x64 and x86,
+byte-identical to that SDK's `win/` builds) and copied exactly as ZWO's is, with
+no notice since there is none to copy (*revised 2026-10-04*). That was the
+user's decision, made with the gap known; the terms should be confirmed with
+ToupTek before the repository goes public. Either way, each plugin looks
 for its library beside itself, then in `runtimes/<rid>/native` under the running
 process's own architecture, then on the system path. Absent everywhere is
 reported as `ProviderUnavailableException`, which the catalogue logs as
@@ -1155,7 +1161,25 @@ a wrong layout does not fail loudly: the SDK writes past the end of the struct.
 Every size and offset used was checked against the real headers with the C
 compiler for both the Windows x64 and the macOS/Linux ABI, using compile-time
 assertions confirmed to fail on a wrong value, and tests pin the managed
-declarations to those numbers. Neither plugin has run against a real camera.
+declarations to those numbers. A test reads each shipped DLL's export table and
+fails if any function a plugin declares is missing from it, for both
+architectures. A missing export otherwise loads cleanly and fails only on first
+call, with a camera attached. Neither plugin has run against a real camera.
+
+**ToupTek, against SDK 60.32549.20260908.** Every function, constant and struct
+the plugin uses was checked against that SDK's `toupcam.h`. That covers the
+`ToupcamDeviceV2` layout (264 bytes with the id at 128 on Windows, 136 and 64
+elsewhere) and `ToupcamFrameInfoV2`. It also covers the usage rules the header
+states in comments. In RAW mode the `bits` argument to a pull is ignored. The
+default row pitch is exactly the width times one or two bytes, so the frame
+buffer needs no padding. Software triggering is option 1 and delivers frames as
+image events in pull mode. Cancelling a trigger produces no frame by default.
+
+One gap was found: the plugin set exposures without asking the camera what it
+accepts, and `Toupcam_put_ExpoTime` refuses anything outside its range. Since
+the exposure list is the same for every camera, a model with a shorter maximum
+would have failed every frame at the long settings. Exposures are now kept
+within `Toupcam_get_ExpTimeRange`.
 
 ---
 

@@ -60,6 +60,16 @@ public static class ToupTekMapping
     public static uint ExposureMicroseconds(TimeSpan duration) =>
         (uint)Math.Clamp(Math.Round(duration.TotalMilliseconds * 1000.0), 1.0, uint.MaxValue);
 
+    /// <summary>
+    /// Microseconds, kept within the range the camera reports
+    /// (<c>Toupcam_get_ExpTimeRange</c>). <c>Toupcam_put_ExpoTime</c> refuses a
+    /// value outside it, and the exposure list in the main window is the same
+    /// for every camera, so without this a camera with a shorter maximum would
+    /// fail every frame at the longest settings rather than take its longest.
+    /// </summary>
+    public static uint ExposureMicroseconds(TimeSpan duration, uint minimum, uint maximum) =>
+        maximum >= minimum ? Math.Clamp(ExposureMicroseconds(duration), minimum, maximum) : ExposureMicroseconds(duration);
+
     private static string ReadString(ReadOnlySpan<byte> field, bool wide)
     {
         if (wide)

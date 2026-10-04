@@ -149,8 +149,9 @@ library.
   and `runtimes/win-x86/native/`, and the plugin loads whichever matches the
   running process. The `.lib` import libraries beside them are for C code
   linking at build time and are not copied.
-- **ToupTek** — not in the repository. Drop the 64-bit `toupcam.dll` from
-  ToupTek's SDK into `plugins/ToupTek/`.
+- **ToupTek** — `toupcam.dll`, x64 and x86 from ToupTek's SDK
+  60.32549.20260908, is in `resources/touptek/camera/`, and the build copies it
+  the same way as ZWO's. The SDK states no redistribution terms (D25).
 
 A plugin whose library is missing lists no cameras and says so in the log as
 information: for anyone without that brand of camera it is the normal state. A

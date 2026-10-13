@@ -14,8 +14,8 @@ namespace FreePolarAlign.App.Services;
 /// because which device to open is the user's decision and not startup's.
 /// </param>
 /// <param name="Settings">
-/// What was remembered from last time. The site in it is a suggestion to
-/// prefill, never an input -- see <see cref="AppSettings.SiteNeedsConfirmation"/>.
+/// What was remembered from last time. The view model applies the site in it
+/// at startup and the focal length when a camera connects (D19 as revised).
 /// </param>
 /// <param name="Warnings">
 /// Everything the user needs to be told before relying on the application:
@@ -129,7 +129,7 @@ public static class EngineFactory
 
         var configuration = new SessionConfiguration(
             CapturePoints: loaded.Settings.DefaultCapturePoints ?? options.CaptureCount,
-            RequestedSweepDegrees: options.SweepDegrees);
+            RequestedSweepDegrees: loaded.Settings.SweepDegrees ?? options.SweepDegrees);
 
         return new EngineStartupResult(
             session,

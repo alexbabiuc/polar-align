@@ -51,10 +51,10 @@ public static class EngineEventNarrator
             // re-examine when a result looks wrong.
             SiteConfiguredEvent e => e.MountReportedDisagreement is null
                 ? Info(Inv(
-                    $"Site confirmed: latitude {e.LatitudeDegrees:F5}°, longitude {e.LongitudeDegrees:F5}°, ",
+                    $"Site set: latitude {e.LatitudeDegrees:F5}°, longitude {e.LongitudeDegrees:F5}°, ",
                     $"height {e.HeightMeters:F0} m."))
                 : new NarratedEvent(LogSeverity.Warning, Inv(
-                    $"Site confirmed: latitude {e.LatitudeDegrees:F5}°, longitude {e.LongitudeDegrees:F5}°, ",
+                    $"Site set: latitude {e.LatitudeDegrees:F5}°, longitude {e.LongitudeDegrees:F5}°, ",
                     $"height {e.HeightMeters:F0} m. {e.MountReportedDisagreement}")),
 
             EquipmentConfiguredEvent e => Info(DescribeEquipment(e)),

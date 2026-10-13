@@ -275,13 +275,14 @@ inherited a site, and slewed the moment it was started.
   failing.
 - **Displayed:** camera and mount names with their drivers, pixel pitch and
   sensor size, focal length with its provenance, plate scale and field radius,
-  the mount's reported RA and Dec, tracking state, pier side, and the confirmed
-  site to five decimal places.
+  the mount's reported RA and Dec, tracking state, pier side, and the site in
+  use to five decimal places.
 - **Nothing moves without confirmation (D18).** The first capture is taken where
   the telescope already points; every later point is proposed with editable
   coordinates and waits.
-- **The site is reloaded, confirmed, then stored (D19),** and a mount reporting a
-  different site is reported rather than obeyed.
+- **The site is entered once, then stored and applied at startup (D19 as
+  revised),** and a mount reporting a different site is reported rather than
+  obeyed.
 - **A full session log** is written to `~/.free-polar-align/logs/`, narrated by
   the same function that writes the on-screen log so the two cannot drift apart,
   flushed per line because the usual way a session ends is not a clean shutdown.

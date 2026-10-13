@@ -100,8 +100,6 @@ public class CameraSetupUiTests
         (nameof(vm.OpenCameraSetupCommand), vm.OpenCameraSetupCommand),
         (nameof(vm.ConnectMountCommand), vm.ConnectMountCommand),
         (nameof(vm.DisconnectMountCommand), vm.DisconnectMountCommand),
-        (nameof(vm.ConfirmSiteCommand), vm.ConfirmSiteCommand),
-        (nameof(vm.ApplyFocalLengthCommand), vm.ApplyFocalLengthCommand),
         (nameof(vm.StartCommand), vm.StartCommand),
         (nameof(vm.RecordSampleCommand), vm.RecordSampleCommand),
         (nameof(vm.SaveFrameCommand), vm.SaveFrameCommand),

@@ -751,11 +751,17 @@ than one that explains itself.
 
 ---
 
-## D19 — The site is confirmed by the user, then remembered
+## D19 — The site is entered once by the user, then remembered and applied
 
-The observing site is stored between sessions and reloaded, but a stored site
-takes effect only when the user explicitly confirms it. It prefills the fields;
-it is never an input on its own.
+The observing site is stored between sessions and applied at startup without
+asking. It is entered in the settings window; Save puts it in use, and from then
+on it is in use every time the application starts, until it is changed there.
+
+**Revised (0.0.24).** This entry first required the stored site to be confirmed
+by a button press every session, and only prefilled the fields. The user asked
+for the site and the focal length to need confirming only the first time, and
+the reasoning below is why that was the rule: what it costs is now accepted, not
+removed.
 
 This is the one number the software cannot check. **A latitude error appears
 one-for-one in the reported altitude misalignment**, because the fit recovers
@@ -764,25 +770,28 @@ One hundredth of a degree is 0.6 arcminutes of pure bias — six times the
 measurement's own target of about 0.1 arcminutes. A latitude good to six
 arcseconds needs a position good to roughly 185 metres north–south.
 
-So a stored latitude that silently follows someone to a different site would
-bias every altitude figure they see, by an amount nothing in the software can
-detect, in a quantity they are about to turn bolts to correct. Asking once per
-session costs a glance; getting it wrong costs the night and gives no clue why.
+**Cost.** A stored latitude now follows someone to a different site silently,
+and biases every altitude figure by the difference, in a quantity they are about
+to turn bolts to correct. The site in use is shown in the main window's left
+column, the log names it at startup, and the mount's disagreement (below) is
+still reported. Those are the only guards left.
 
-**Where the driver disagrees, the user's confirmed figure wins and the
-disagreement is reported.** D14 prefers the mount driver as a source, and that
-remains the right default for *populating* the field — but a driver's site is
+**Where the driver disagrees, the user's figure wins and the disagreement is
+reported.** D14 prefers the mount driver as a source, but a driver's site is
 very often a factory default or a leftover from wherever the mount was last set
-up, and the user has just been asked to look at theirs. A difference beyond 0.01°
+up, and the user typed theirs on purpose. A difference beyond 0.01°
 of latitude, 0.05° of longitude or 200 m of height is surfaced with the
 latitude's consequence spelled out, because a disagreement is usually the first
 sign that one of the two figures is simply wrong.
 
 Also remembered: the focal length, and which devices were last used. The focal
 length is worth carrying because the first solve of a session is the expensive
-one and it measures the value — but it is reloaded as *entered*, not as
-*measured*, since the distinction decides how tightly the solver may bound its
-search. Devices are preselected but never opened on startup: connecting would
+one and it measures the value. It is applied when a camera connects, the
+earliest the engine will take one, since the plate scale needs the pixel size
+too. It is applied as *entered*, not as *measured*, since the distinction decides
+how tightly the solver may bound its search. A camera reports no focal length
+when it connects, and that report is not remembered: only the settings window
+clears a stored focal length. Devices are preselected but never opened on startup: connecting would
 move nothing, but it would talk to hardware the user has not yet said is
 tonight's hardware.
 
@@ -1452,8 +1461,8 @@ a real night, in both hemispheres if possible.
 
 ## D30 — The solver choice is stored before the solvers exist
 
-The settings window (opened from the Settings button at the foot of the left column)
-stores a default capture-point count, a blind solver, a near solver, and the
+The settings window (opened from the Settings button in the left column)
+stores a capture-point count, a blind solver, a near solver, and the
 paths of ASPS, ASTAP and PS3. Each solver choice is one of Internal (Watney),
 ASPS, ASTAP or PS3. All four are implemented (D31, D32).
 
@@ -1668,3 +1677,36 @@ verification. Covering the stated 0.6°–7.6° diagonal envelope offline costs 
 3.1 GB, against a "low hundreds of MB" target and Phase 5's "installer, offline
 in full".~~
 **Resolved:** bundle `00-07` + `08-09`, about 759 MB. See D13.
+
+---
+
+## D34 — Site, optics and sequence are set in the settings window
+
+The site, focal length, capture points and sweep are stored settings, edited in
+the settings window with everything else and put in use by its Save. The main
+window's left column shows only what is in use: the site, the focal length with
+its plate scale, the next sequence's points and sweep, and the warning when the
+mount disagrees with the site (D19).
+
+**Why.** They are set once and then rarely touched, and their fields took most
+of the left column, which holds the camera and mount panels used all night. The
+summary stays because Start waits on a site, and a disabled button whose reason
+is behind a dialog explains nothing.
+
+**Save applies; there are no separate buttons.** The site is sent to the engine
+whenever the saved one differs from the one in use, which is also how the first
+one entered takes effect. A changed focal length is sent at once if a camera is
+connected, and otherwise waits for one (D19). While a sequence runs the site
+fields are disabled: the engine refuses a new site then, since every capture
+already taken was reduced with the old one. An unedited measured focal length
+stays marked as measured when Save is pressed for some other change.
+
+**One capture-point count, one sweep.** The dialog's count used to be a
+remembered default, with a separate count in the main window for one run. Now
+there is one field each for the count and the sweep, both remembered and both
+used by the next sequence. A running sequence is unaffected, since they are read
+only when a sequence starts.
+
+**Cost.** Changing any of them takes one more click than before. The dialog is
+1000px wide to keep its height at 497px, below the main window's 720px minimum,
+and the layout test holds it there.

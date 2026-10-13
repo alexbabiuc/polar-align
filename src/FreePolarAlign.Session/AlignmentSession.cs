@@ -759,12 +759,12 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     }
 
     /// <summary>
-    /// Compares the confirmed site against the mount's own, and describes the
+    /// Compares the user's site against the mount's own, and describes the
     /// difference if there is one worth describing.
     ///
-    /// The confirmed figure wins regardless (D19). A driver's site is very often
+    /// The user's figure wins regardless (D19). A driver's site is very often
     /// a factory default or a leftover from wherever the mount was last set up,
-    /// and the user has just been asked to look at theirs -- but a disagreement
+    /// and the user typed theirs on purpose -- but a disagreement
     /// is also the clearest early sign that one of the two is wrong, so it is
     /// reported rather than resolved.
     /// </summary>
@@ -798,7 +798,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         string message =
             $"The mount reports its site as {reported.LatitudeDegrees:F4}°, {reported.LongitudeDegrees:F4}°, " +
-            $"{reported.HeightMeters:F0} m, which differs from the site you confirmed. Yours is being used.";
+            $"{reported.HeightMeters:F0} m, which differs from the site you entered. Yours is being used.";
 
         if (latitudeDifference > SiteLatitudeDisagreementDegrees)
         {
@@ -1334,8 +1334,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         if (_site is null)
         {
             _events.Publish(new CommandRejectedEvent(
-                "Confirm the observing site before starting a sequence. The latitude in particular goes straight " +
-                "into the answer (D19), so it is not something to be inherited silently."));
+                "Set the observing site in Settings before starting a sequence. The latitude in particular goes " +
+                "straight into the answer (D19)."));
             return;
         }
 

@@ -60,8 +60,8 @@ public static class EngineEventReducer
                 SiteDisagreement = e.MountReportedDisagreement,
                 RejectionReason = null,
                 StatusMessage = e.MountReportedDisagreement is null
-                    ? "Site confirmed."
-                    : "Site confirmed, but the mount disagrees -- see the note beside it.",
+                    ? "Site set."
+                    : "Site set, but the mount disagrees -- see the note under it.",
             },
 
             EquipmentConfiguredEvent e => withLog with

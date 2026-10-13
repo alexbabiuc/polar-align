@@ -42,10 +42,6 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
     private DeviceOption? _selectedCamera;
     private DeviceOption? _selectedMount;
-    private string _latitudeText = string.Empty;
-    private string _longitudeText = string.Empty;
-    private string _heightText = string.Empty;
-    private string _focalLengthText = string.Empty;
     private string _capturePointsText;
     private string _sweepText;
     private string _proposalRaText = string.Empty;
@@ -129,7 +125,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
                          ?? MountOptions.FirstOrDefault();
 
         _capturePointsText = defaultConfiguration.CapturePoints.ToString(CultureInfo.InvariantCulture);
-        _sweepText = defaultConfiguration.RequestedSweepDegrees.ToString("F0", CultureInfo.InvariantCulture);
+        _sweepText = defaultConfiguration.RequestedSweepDegrees.ToString("G", CultureInfo.InvariantCulture);
 
         // The remembered exposure wins over the built-in default, which is the
         // point of remembering it. Falling back to the nearest listed value to
@@ -139,22 +135,6 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         _selectedExposure = ExposureOption.Nearest(_settings.ExposureSeconds)
                             ?? ExposureOption.Nearest(new AlignmentSessionOptions().EffectiveExposure.TotalSeconds)
                             ?? ExposureOption.All[^1];
-
-        // The stored site prefills the fields and nothing more. It takes effect
-        // only when the user presses the button, because a latitude that
-        // silently follows someone to a new site biases every altitude figure
-        // the software reports by the difference (D19).
-        if (_settings.Site is { } site)
-        {
-            _latitudeText = site.LatitudeDegrees.ToString("F5", CultureInfo.InvariantCulture);
-            _longitudeText = site.LongitudeDegrees.ToString("F5", CultureInfo.InvariantCulture);
-            _heightText = site.HeightMeters.ToString("F0", CultureInfo.InvariantCulture);
-        }
-
-        if (_settings.FocalLengthMillimetres is { } focalLength)
-        {
-            _focalLengthText = focalLength.ToString("F1", CultureInfo.InvariantCulture);
-        }
 
         // Startup problems open the log rather than a banner across the top of
         // the window. A banner that is always up is one nobody reads, and most
@@ -201,12 +181,6 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             () => SendAsync(new DisconnectDeviceCommand(DeviceKind.Mount)),
             () => Ready && State.Mount.IsConnected && !State.SessionActive);
 
-        ConfirmSiteCommand = new RelayCommand(ConfirmSiteAsync, () => Ready && !State.SessionActive);
-
-        ApplyFocalLengthCommand = new RelayCommand(
-            ApplyFocalLengthAsync,
-            () => Ready && State.Camera.IsConnected);
-
         // No mount is an ordinary mode, not a missing device (D10 as revised):
         // positions then come from blind solves. Allowed during the live
         // reading too, because a fresh sweep is how its result is checked (D29).
@@ -248,6 +222,13 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             () => Ready && State.SessionActive);
 
         _subscription = _engine?.Events.Subscribe(new DelegateObserver<EngineEvent>(OnEngineEvent));
+
+        // Applied without asking (D19 as revised): the site is entered once, in
+        // the settings window, and from then on it is simply in use.
+        if (_settings.Site is { } site)
+        {
+            _ = SendAsync(new ConfigureSiteCommand(site.LatitudeDegrees, site.LongitudeDegrees, site.HeightMeters));
+        }
     }
 
     /// <summary>
@@ -276,10 +257,6 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     public RelayCommand ConnectMountCommand { get; }
 
     public RelayCommand DisconnectMountCommand { get; }
-
-    public RelayCommand ConfirmSiteCommand { get; }
-
-    public RelayCommand ApplyFocalLengthCommand { get; }
 
     /// <summary>
     /// Opens the camera driver's own settings window. Everything this project
@@ -359,41 +336,33 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
-    public string LatitudeText
-    {
-        get => _latitudeText;
-        set => SetField(ref _latitudeText, value);
-    }
-
-    public string LongitudeText
-    {
-        get => _longitudeText;
-        set => SetField(ref _longitudeText, value);
-    }
-
-    public string HeightText
-    {
-        get => _heightText;
-        set => SetField(ref _heightText, value);
-    }
-
-    public string FocalLengthText
-    {
-        get => _focalLengthText;
-        set => SetField(ref _focalLengthText, value);
-    }
-
+    /// <summary>The count the next sequence takes. Set only from the settings window (D34).</summary>
     public string CapturePointsText
     {
         get => _capturePointsText;
-        set => SetField(ref _capturePointsText, value);
+        private set
+        {
+            if (SetField(ref _capturePointsText, value))
+            {
+                OnPropertyChanged(nameof(SequenceText));
+            }
+        }
     }
 
     public string SweepText
     {
         get => _sweepText;
-        set => SetField(ref _sweepText, value);
+        private set
+        {
+            if (SetField(ref _sweepText, value))
+            {
+                OnPropertyChanged(nameof(SequenceText));
+            }
+        }
     }
+
+    /// <summary>What the next sequence will be, for the main window.</summary>
+    public string SequenceText => $"{CapturePointsText} capture points over {SweepText}°";
 
     /// <summary>
     /// The right ascension the mount will be sent to, editable. Seeded from the
@@ -707,8 +676,16 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
     public string? SiteDisagreement => State.SiteDisagreement;
 
+    /// <summary>
+    /// The engine's focal length, or failing that the remembered one. The
+    /// engine takes a focal length only once a camera is connected, so until
+    /// then a figure saved in the settings window is waiting rather than absent,
+    /// and "solves will be blind" would be untrue.
+    /// </summary>
     public string FocalLengthSummary =>
-        AlignmentFormatting.FocalLength(State.FocalLengthMillimetres, State.IsFocalLengthSolved);
+        State.FocalLengthMillimetres is null && _settings.FocalLengthMillimetres is { } waiting
+            ? AlignmentFormatting.PendingFocalLength(waiting)
+            : AlignmentFormatting.FocalLength(State.FocalLengthMillimetres, State.IsFocalLengthSolved);
 
     public string PlateScaleText =>
         AlignmentFormatting.PlateScale(State.ScaleArcsecondsPerPixel, State.FieldRadiusDegrees);
@@ -757,7 +734,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
     public string HemisphereText => State.SiteLatitudeDegrees is { } latitude
         ? $"{AlignmentFormatting.Hemisphere(latitude)} hemisphere site"
-        : "Site not confirmed";
+        : "No site set";
 
     public string ProgressText =>
         $"{State.CapturedPointCount} / {(State.PlannedPointCount > 0 ? State.PlannedPointCount.ToString(CultureInfo.InvariantCulture) : "?")} points captured";
@@ -890,51 +867,6 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         await SendAsync(new ConnectDeviceCommand(kind, option.ProviderName, option.DeviceId)).ConfigureAwait(true);
     }
 
-    private async Task ConfirmSiteAsync()
-    {
-        if (!TryParseDouble(LatitudeText, out double latitude) || Math.Abs(latitude) > 90.0)
-        {
-            EntryError = "Latitude must be a number of degrees between -90 and 90. North is positive.";
-            return;
-        }
-
-        if (!TryParseDouble(LongitudeText, out double longitude) || Math.Abs(longitude) > 180.0)
-        {
-            EntryError = "Longitude must be a number of degrees between -180 and 180. East is positive.";
-            return;
-        }
-
-        // Height is genuinely optional: it enters only through refraction and
-        // some very small terms, so a blank field is treated as sea level rather
-        // than blocking the one field that actually matters.
-        if (!TryParseDouble(HeightText, out double height))
-        {
-            height = 0.0;
-        }
-
-        EntryError = null;
-        await SendAsync(new ConfigureSiteCommand(latitude, longitude, height)).ConfigureAwait(true);
-    }
-
-    private async Task ApplyFocalLengthAsync()
-    {
-        if (string.IsNullOrWhiteSpace(FocalLengthText))
-        {
-            EntryError = null;
-            await SendAsync(new ConfigureFocalLengthCommand(null)).ConfigureAwait(true);
-            return;
-        }
-
-        if (!TryParseDouble(FocalLengthText, out double focalLength) || focalLength <= 0.0)
-        {
-            EntryError = "Focal length must be a positive number of millimetres.";
-            return;
-        }
-
-        EntryError = null;
-        await SendAsync(new ConfigureFocalLengthCommand(focalLength)).ConfigureAwait(true);
-    }
-
     private async Task StartAsync()
     {
         if (!int.TryParse(CapturePointsText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int points) || points < 3)
@@ -1052,6 +984,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
                 if (engineEvent is DeviceConnectedEvent connected)
                 {
                     ApplyRememberedCameraSettings(connected, next);
+                    ApplyRememberedFocalLength(next);
                 }
             }
 
@@ -1200,7 +1133,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Persists the things worth carrying to the next session: the confirmed
+    /// Persists the things worth carrying to the next session: the
     /// site, the focal length, and which devices were used. Written when they
     /// change rather than at shutdown, because the way an observing session
     /// usually ends is not a clean shutdown.
@@ -1242,6 +1175,20 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
+    /// Hands the engine the remembered focal length once a camera is connected,
+    /// which is the earliest it will take one: the plate scale needs the pixel
+    /// size as well. A focal length already in the engine is left alone, since
+    /// it is either this one or a better one measured since.
+    /// </summary>
+    private void ApplyRememberedFocalLength(UiState next)
+    {
+        if (_settings.FocalLengthMillimetres is { } focalLength && next.FocalLengthMillimetres is null)
+        {
+            _ = SendAsync(new ConfigureFocalLengthCommand(focalLength));
+        }
+    }
+
+    /// <summary>
     /// A readout mode stored before settings were kept per camera, applied only
     /// to the camera it was chosen on -- the one that was connected last time.
     /// Index 1 on that camera is not index 1 on another.
@@ -1266,6 +1213,11 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 Site = new StoredSite(e.LatitudeDegrees, e.LongitudeDegrees, e.HeightMeters),
             },
+
+            // A connected camera reports no focal length until it is given one,
+            // and that is not the user clearing it: only the settings window does
+            // that. Remembering it would lose the figure before it was applied.
+            EquipmentConfiguredEvent { FocalLengthMillimetres: null } => _settings,
 
             EquipmentConfiguredEvent e => _settings with
             {
@@ -1299,34 +1251,48 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        // A measured focal length is worth showing back in the field, since it
-        // is now a better number than the one the user typed.
-        if (engineEvent is EquipmentConfiguredEvent { IsFocalLengthSolved: true, FocalLengthMillimetres: { } solved })
-        {
-            FocalLengthText = solved.ToString("F1", CultureInfo.InvariantCulture);
-        }
-
         Remember(updated);
     }
 
     /// <summary>The state for a settings window opened now; <paramref name="close"/> closes that window.</summary>
     public SettingsViewModel CreateSettingsViewModel(Action close) =>
-        new(_settings, DefaultConfiguration.CapturePoints, ApplySettings, close);
+        new(_settings, DefaultConfiguration, ApplySettings, close, canChangeSite: !State.SessionActive);
 
     /// <summary>
-    /// Takes what the settings window saved. A changed capture-point default
-    /// replaces the figure in the sequence panel too -- the user has just said
-    /// what they want it to be -- but never mid-sequence, when it is the count
-    /// the running sequence was started with.
+    /// Takes what the settings window saved, remembers it, and puts it in use.
+    ///
+    /// The site is sent whenever it differs from the one in use, including when
+    /// none is: that is how the first one entered takes effect. The focal length
+    /// is sent only when it was changed, and only to a connected camera; without
+    /// one it waits, and is applied when a camera connects. A running sequence
+    /// keeps its count and sweep, which are read only when a sequence starts.
     /// </summary>
     private void ApplySettings(AppSettings updated)
     {
-        bool pointsChanged = updated.DefaultCapturePoints != _settings.DefaultCapturePoints;
+        bool focalLengthChanged = updated.FocalLengthMillimetres != _settings.FocalLengthMillimetres;
         Remember(updated);
 
-        if (pointsChanged && updated.DefaultCapturePoints is { } points && !State.SessionActive)
+        if (updated.DefaultCapturePoints is { } points)
         {
             CapturePointsText = points.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (updated.SweepDegrees is { } sweep)
+        {
+            SweepText = sweep.ToString("G", CultureInfo.InvariantCulture);
+        }
+
+        if (updated.Site is { } site && !State.SessionActive &&
+            (State.SiteLatitudeDegrees != site.LatitudeDegrees ||
+             State.SiteLongitudeDegrees != site.LongitudeDegrees ||
+             State.SiteHeightMeters != site.HeightMeters))
+        {
+            _ = SendAsync(new ConfigureSiteCommand(site.LatitudeDegrees, site.LongitudeDegrees, site.HeightMeters));
+        }
+
+        if (focalLengthChanged && State.Camera.IsConnected)
+        {
+            _ = SendAsync(new ConfigureFocalLengthCommand(updated.FocalLengthMillimetres));
         }
     }
 
@@ -1346,6 +1312,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
         _settings = updated;
         _settingsChanged?.Invoke(_settings);
+        OnPropertyChanged(nameof(FocalLengthSummary));
 
         string? problem = _settingsStore.Save(_settings);
         if (problem is not null)
@@ -1380,8 +1347,6 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         OpenCameraSetupCommand.RaiseCanExecuteChanged();
         ConnectMountCommand.RaiseCanExecuteChanged();
         DisconnectMountCommand.RaiseCanExecuteChanged();
-        ConfirmSiteCommand.RaiseCanExecuteChanged();
-        ApplyFocalLengthCommand.RaiseCanExecuteChanged();
         StartCommand.RaiseCanExecuteChanged();
         RecordSampleCommand.RaiseCanExecuteChanged();
         SaveFrameCommand.RaiseCanExecuteChanged();

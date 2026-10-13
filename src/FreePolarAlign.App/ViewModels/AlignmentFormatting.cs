@@ -168,6 +168,9 @@ public static class AlignmentFormatting
             ? FormattableString.Invariant($"{value:F1} mm ({(isSolved ? "measured from a solve" : "as entered")})")
             : "not set -- solves will be blind";
 
+    public static string PendingFocalLength(double millimetres) =>
+        FormattableString.Invariant($"{millimetres:F1} mm (applied when a camera connects)");
+
     public static string PlateScale(double? arcsecondsPerPixel, double? fieldRadiusDegrees)
     {
         if (arcsecondsPerPixel is not { } scale)
@@ -186,7 +189,7 @@ public static class AlignmentFormatting
             : "--";
 
     /// <summary>
-    /// The site, once confirmed. Shown to five decimal places because a
+    /// The site in use. Shown to five decimal places because a
     /// latitude error appears one-for-one in the reported altitude misalignment
     /// (D19): a hundredth of a degree is already six tenths of an arcminute of
     /// pure bias, so rounding the display to two places would hide a difference
@@ -196,7 +199,7 @@ public static class AlignmentFormatting
     {
         if (latitude is not { } lat || longitude is not { } lon)
         {
-            return "not confirmed";
+            return "not set -- enter it in Settings";
         }
 
         string northSouth = lat >= 0 ? "N" : "S";

@@ -210,23 +210,22 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     /// <summary>
-    /// Reloading a site is a convenience for whoever is typing, not evidence that
-    /// the tripod is where it was last night. A store that reported the reloaded
-    /// site as already confirmed would let a stored latitude follow a user to a
-    /// different site and bias every figure by the difference, so the flag stays
-    /// set even on settings that were just written by this same application.
+    /// A sweep that cannot be asked for costs only itself: the sequence then
+    /// uses the built-in default.
     /// </summary>
-    [Fact]
-    public void ReloadedSite_StillNeedsConfirmation()
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(-30.0)]
+    public void AnUnusableSweep_IsDiscarded_AndTheRestKept(double sweep)
     {
         string path = PathIn("settings.json");
-        var store = new JsonFileSettingsStore(path);
-        store.Save(FullSettings());
+        new JsonFileSettingsStore(path).Save(FullSettings() with { SweepDegrees = sweep });
 
-        SettingsLoadResult result = store.Load();
+        SettingsLoadResult result = new JsonFileSettingsStore(path).Load();
 
+        Assert.Null(result.Settings.SweepDegrees);
         Assert.NotNull(result.Settings.Site);
-        Assert.True(result.Settings.SiteNeedsConfirmation);
+        Assert.NotNull(result.Warning);
     }
 
     // ---- Per-camera settings ----
@@ -302,6 +301,7 @@ public sealed class SettingsStoreTests : IDisposable
         var settings = new AppSettings
         {
             DefaultCapturePoints = 8,
+            SweepDegrees = 92.5,
             BlindSolver = SolverKind.Astap,
             NearSolver = SolverKind.Internal,
             AspsPath = "/opt/asps",

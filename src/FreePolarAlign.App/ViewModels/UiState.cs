@@ -122,7 +122,7 @@ public sealed record UiState
     public bool SessionActive { get; init; }
 
     public string StatusMessage { get; init; } =
-        "Idle. Connect a camera, confirm your site, then start a sequence. A mount is optional.";
+        "Idle. Connect a camera, enter your site in Settings, then start a sequence. A mount is optional.";
 
     /// <summary>
     /// How the running sequence reaches its samples. Meaningful only while
@@ -226,7 +226,7 @@ public sealed record UiState
     // ---- Site and equipment ----
 
     /// <summary>
-    /// Null until the site has been explicitly confirmed. Null is the honest
+    /// Null until a site has been set. Null is the honest
     /// value: a session cannot start without it, and defaulting it to zero would
     /// put the Gulf of Guinea into the arithmetic (D19).
     /// </summary>
@@ -238,7 +238,7 @@ public sealed record UiState
 
     public bool IsSiteConfigured => SiteLatitudeDegrees is not null;
 
-    /// <summary>Non-null when the mount's own site disagrees with the confirmed one by enough to matter.</summary>
+    /// <summary>Non-null when the mount's own site disagrees with the user's one by enough to matter.</summary>
     public string? SiteDisagreement { get; init; }
 
     public double? FocalLengthMillimetres { get; init; }

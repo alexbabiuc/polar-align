@@ -54,9 +54,8 @@ public enum SolverKind
 /// blind search into a bounded one -- and the site is here because typing a
 /// latitude accurately is tedious enough that a user asked to do it nightly will
 /// eventually stop being careful, which is the failure this file exists to
-/// prevent.
-///
-/// Storing it is not the same as trusting it: see <see cref="SiteNeedsConfirmation"/>.
+/// prevent. A stored site is applied at startup without asking (D19 as
+/// revised).
 /// </summary>
 public sealed record AppSettings
 {
@@ -101,11 +100,19 @@ public sealed record AppSettings
     public double? ExposureSeconds { get; init; }
 
     /// <summary>
-    /// The number of capture points a sequence starts with, or null for the
-    /// built-in default. A starting value, not a limit: the sequence panel can
-    /// still be edited for one run.
+    /// The number of capture points a sequence takes, or null for the built-in
+    /// default. Set in the settings window, which is the only place it is
+    /// edited (D34).
     /// </summary>
     public int? DefaultCapturePoints { get; init; }
+
+    /// <summary>
+    /// The sweep a sequence asks for, in degrees, or null for the built-in
+    /// default. A request: the planner may shrink it.
+    /// </summary>
+    public double? SweepDegrees { get; init; }
+
+    public static bool IsValidSweep(double degrees) => double.IsFinite(degrees) && degrees > 0.0;
 
     /// <summary>
     /// The solver for frames where the pointing is unknown, or null for
@@ -213,20 +220,6 @@ public sealed record AppSettings
         cameras[key] = next;
         return this with { Cameras = cameras };
     }
-
-    /// <summary>
-    /// Always true. Reloading the site is a convenience for the person typing;
-    /// it is not evidence that the telescope is still where it was last night,
-    /// and a stored latitude that silently follows a user to a different site
-    /// would bias every altitude figure the software reports by the difference
-    /// (D19). So a stored site is offered as a prefilled suggestion and takes
-    /// effect only once explicitly confirmed.
-    ///
-    /// Expressed as a property rather than a comment so the intent is visible at
-    /// the call site.
-    /// </summary>
-    [JsonIgnore]
-    public bool SiteNeedsConfirmation => true;
 }
 
 /// <param name="Warning">
@@ -371,6 +364,12 @@ public sealed class JsonFileSettingsStore : ISettingsStore
         {
             complaints.Add("the stored default capture-point count was below the minimum of 3 and has been discarded");
             result = result with { DefaultCapturePoints = null };
+        }
+
+        if (result.SweepDegrees is { } sweep && !AppSettings.IsValidSweep(sweep))
+        {
+            complaints.Add("the stored sweep was not a positive number of degrees and has been discarded");
+            result = result with { SweepDegrees = null };
         }
 
         if (result.BlindSolver is { } blind && !Enum.IsDefined(blind))

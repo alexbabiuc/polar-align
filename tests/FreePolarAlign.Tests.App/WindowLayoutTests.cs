@@ -290,4 +290,43 @@ public class WindowLayoutTests
                 $"in a panel {panel.Bounds.Height:F0} tall");
         });
     }
+
+    /// <summary>
+    /// The settings window took the site, optics and sequence fields from the
+    /// main window's left column, and sizes itself to its content. It has to
+    /// stay shorter than the main window's own 720px minimum, or on the
+    /// smallest screen the main window supports its Save button is off the
+    /// bottom.
+    /// </summary>
+    [Fact]
+    public void TheSettingsWindowFitsInTheMainWindowsMinimumHeight()
+    {
+        OnUiThread(() =>
+        {
+            var viewModel = new MainWindowViewModel(
+                new SilentEngine(),
+                catalog: null,
+                settingsStore: null,
+                settings: null,
+                log: null,
+                warnings: null,
+                new SessionConfiguration(6, 70.0),
+                postToUiThread: action => action());
+
+            var window = new FreePolarAlign.App.SettingsWindow();
+            window.DataContext = viewModel.CreateSettingsViewModel(window.Close);
+
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                Assert.True(window.Bounds.Height < 720.0, $"The settings window is {window.Bounds.Height}px tall.");
+            }
+            finally
+            {
+                window.Close();
+                viewModel.Dispose();
+            }
+        });
+    }
 }

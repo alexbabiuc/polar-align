@@ -40,7 +40,7 @@ public enum MeridianSide
 /// engine boundary as part of a command without aliasing concerns (D6).
 ///
 /// The observing site is deliberately *not* here. It arrives by its own
-/// <see cref="ConfigureSiteCommand"/> and is confirmed once per session rather
+/// <see cref="ConfigureSiteCommand"/> once per session rather
 /// than being restated with every start, so there is exactly one authoritative
 /// copy of the most safety-critical number in the system (D19: a latitude error
 /// transfers one-for-one into the reported altitude error).
@@ -214,9 +214,8 @@ public sealed record ConnectDeviceCommand(DeviceKind Kind, string ProviderName, 
 public sealed record DisconnectDeviceCommand(DeviceKind Kind) : EngineCommand;
 
 /// <summary>
-/// Set the observing site. Required before a session can start, and required to
-/// be an explicit act rather than something inherited silently from a stored
-/// file or a driver default -- see D19.
+/// Set the observing site. Required before a session can start, and never taken
+/// from a driver default -- see D19.
 /// </summary>
 public sealed record ConfigureSiteCommand(
     double LatitudeDegrees,
@@ -381,7 +380,7 @@ public sealed record CameraGainChangedEvent(CameraGainDescription Gain) : Engine
 public sealed record DeviceDisconnectedEvent(DeviceKind Kind, string? Reason = null) : EngineEvent;
 
 /// <param name="MountReportedDisagreement">
-/// Non-null when the mount's own site differs from the confirmed one by enough
+/// Non-null when the mount's own site differs from the user's by enough
 /// to matter. Not an error and not overridden -- the user's confirmed figure
 /// wins (D19) -- but it is very often the first sign that one of the two is a
 /// leftover from somewhere else entirely, so it is surfaced rather than

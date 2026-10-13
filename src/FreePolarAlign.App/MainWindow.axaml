@@ -202,64 +202,34 @@
             </StackPanel>
           </Border>
 
-          <!-- Site -->
+          <!--
+            Site, optics and sequence are edited in the settings window and only
+            summarised here. They are set once a night, and their fields took
+            most of this column's height from the panels used throughout it.
+            The summary stays because Start waits on a site, and a disabled
+            button with the reason behind a dialog explains nothing.
+          -->
           <Border Classes="panel">
             <StackPanel Spacing="6">
-              <TextBlock Classes="h" Text="Observing site" />
-              <TextBlock Classes="label" TextWrapping="Wrap"
-                         Text="Reloaded from last time if it was stored, but it takes effect only when you confirm it. A latitude error appears one-for-one in the altitude figure below: 0.01° is already 0.6'." />
-              <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="4">
-                <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="Latitude °N" VerticalAlignment="Center" />
-                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding LatitudeText, Mode=TwoWay}" />
-                <TextBlock Grid.Row="1" Grid.Column="0" Classes="label" Text="Longitude °E" VerticalAlignment="Center" />
-                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding LongitudeText, Mode=TwoWay}" />
-                <TextBlock Grid.Row="2" Grid.Column="0" Classes="label" Text="Altitude m" VerticalAlignment="Center" />
-                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding HeightText, Mode=TwoWay}" />
-              </Grid>
-              <Button Content="Confirm site" Command="{Binding ConfirmSiteCommand}" HorizontalAlignment="Left" />
-              <TextBlock Classes="label" Text="In use" />
+              <TextBlock Classes="h" Text="Site, optics and sequence" />
+              <TextBlock Classes="label" Text="Site in use" />
               <TextBlock Classes="value" FontFamily="monospace" Text="{Binding SiteText}" />
 
               <Border Background="#5A4A1E" BorderBrush="#B3943A" BorderThickness="1" CornerRadius="3" Padding="8"
                       IsVisible="{Binding HasSiteDisagreement}">
                 <TextBlock Text="{Binding SiteDisagreement}" TextWrapping="Wrap" Foreground="#FFEFCB" FontSize="12" />
               </Border>
-            </StackPanel>
-          </Border>
 
-          <!-- Optics -->
-          <Border Classes="panel">
-            <StackPanel Spacing="6">
-              <TextBlock Classes="h" Text="Optics" />
-              <TextBlock Classes="label" TextWrapping="Wrap"
-                         Text="Enter what you believe the focal length to be. The first solve measures it and replaces this figure." />
-              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
-                <TextBlock Grid.Column="0" Classes="label" Text="Focal length mm" VerticalAlignment="Center" />
-                <TextBox Grid.Column="1" Text="{Binding FocalLengthText, Mode=TwoWay}" />
-              </Grid>
-              <Button Content="Apply focal length" Command="{Binding ApplyFocalLengthCommand}" HorizontalAlignment="Left" />
+              <TextBlock Classes="label" Text="Focal length" />
               <TextBlock Classes="value" Text="{Binding FocalLengthSummary}" />
               <TextBlock Classes="label" Text="{Binding PlateScaleText}" />
+              <TextBlock Classes="label" Text="Next sequence" />
+              <TextBlock Classes="value" Text="{Binding SequenceText}" />
+
+              <Button Content="Settings..." HorizontalAlignment="Left" Click="OnSettingsClick"
+                      ToolTip.Tip="Site, focal length, capture points and sweep, plate solvers and where their programs are." />
             </StackPanel>
           </Border>
-
-          <!-- Sequence parameters -->
-          <Border Classes="panel">
-            <StackPanel Spacing="6">
-              <TextBlock Classes="h" Text="Sequence" />
-              <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="4">
-                <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="Capture points" VerticalAlignment="Center" />
-                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding CapturePointsText, Mode=TwoWay}" />
-                <TextBlock Grid.Row="1" Grid.Column="0" Classes="label" Text="Sweep °" VerticalAlignment="Center" />
-                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding SweepText, Mode=TwoWay}" />
-              </Grid>
-              <TextBlock Classes="label" TextWrapping="Wrap"
-                         Text="Uncertainty falls as the square of the sweep but only as the square root of the number of points, so spend on sweep first." />
-            </StackPanel>
-          </Border>
-
-          <Button Content="Settings..." HorizontalAlignment="Left" Click="OnSettingsClick"
-                  ToolTip.Tip="Default capture points, plate solvers and where their programs are. Remembered between runs." />
         </StackPanel>
       </ScrollViewer>
 
@@ -587,7 +557,7 @@
     <Grid Grid.Row="2" RowDefinitions="Auto,120" RowSpacing="6">
       <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
         <Button Content="Start sequence" Command="{Binding StartCommand}"
-                ToolTip.Tip="Needs a camera and a confirmed site. With no mount connected, positions come from blind solves and you move the telescope by hand." />
+                ToolTip.Tip="Needs a camera and a site, which is entered in Settings. With no mount connected, positions come from blind solves and you move the telescope by hand." />
         <Button Content="Record sample" Command="{Binding RecordSampleCommand}"
                 ToolTip.Tip="Uses the next frame to start as a sample now, whatever the spacing and settling checks say. The frame on screen is never used: it may have been exposed while the telescope was moving." />
         <Button Content="Stop sequence" Command="{Binding CancelCommand}" />

@@ -4,71 +4,121 @@
         x:Class="FreePolarAlign.App.SettingsWindow"
         x:DataType="vm:SettingsViewModel"
         Title="Settings"
-        Width="560" SizeToContent="Height" CanResize="False"
+        Width="1000" SizeToContent="Height" CanResize="False"
         WindowStartupLocation="CenterOwner">
 
+  <!--
+    Two columns, because the window sizes itself to its height and has to fit
+    the main window's 720px minimum: laid out like this it measures 497px, and
+    WindowLayoutTests holds it under 720. The left column is tonight's setup,
+    the right how frames are solved.
+  -->
   <StackPanel Margin="16" Spacing="12">
+    <Grid ColumnDefinitions="*,*" ColumnSpacing="24">
 
-    <StackPanel Spacing="4">
-      <TextBlock FontWeight="Bold" Text="Capture points" />
-      <TextBox Text="{Binding CapturePointsText, Mode=TwoWay}" />
-      <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
-                 Text="How many points a new sequence starts with. It can still be changed for one run in the main window." />
-    </StackPanel>
+      <StackPanel Grid.Column="0" Spacing="12">
 
-    <StackPanel Spacing="4">
-      <TextBlock FontWeight="Bold" Text="Solvers" />
-      <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="4">
-        <TextBlock Grid.Row="0" Grid.Column="0" Text="Blind solver" VerticalAlignment="Center" />
-        <ComboBox Grid.Row="0" Grid.Column="1" HorizontalAlignment="Stretch"
-                  ItemsSource="{x:Static vm:SettingsViewModel.SolverOptions}"
-                  SelectedItem="{Binding BlindSolver, Mode=TwoWay}">
-          <ComboBox.ItemTemplate>
-            <DataTemplate x:DataType="vm:SolverOption">
-              <TextBlock Text="{Binding Label}" />
-            </DataTemplate>
-          </ComboBox.ItemTemplate>
-        </ComboBox>
-        <TextBlock Grid.Row="1" Grid.Column="0" Text="Near solver" VerticalAlignment="Center" />
-        <ComboBox Grid.Row="1" Grid.Column="1" HorizontalAlignment="Stretch"
-                  ItemsSource="{x:Static vm:SettingsViewModel.SolverOptions}"
-                  SelectedItem="{Binding NearSolver, Mode=TwoWay}">
-          <ComboBox.ItemTemplate>
-            <DataTemplate x:DataType="vm:SolverOption">
-              <TextBlock Text="{Binding Label}" />
-            </DataTemplate>
-          </ComboBox.ItemTemplate>
-        </ComboBox>
-      </Grid>
-      <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
-                 Text="Blind is for frames where the pointing is unknown, near for frames where it is roughly known. Only the chosen solver is used: a frame it cannot solve is reported as unsolved. ASPS and PS3 run only on Windows." />
-    </StackPanel>
+        <StackPanel Spacing="4">
+          <TextBlock FontWeight="Bold" Text="Observing site" />
+          <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
+                     Text="Entered once and used from then on. A latitude error appears one-for-one in the altitude figure: 0.01° is already 0.6'." />
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="4"
+                IsEnabled="{Binding CanChangeSite}">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Latitude °N" VerticalAlignment="Center" />
+            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding LatitudeText, Mode=TwoWay}" />
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Longitude °E" VerticalAlignment="Center" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding LongitudeText, Mode=TwoWay}" />
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Altitude m" VerticalAlignment="Center" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding HeightText, Mode=TwoWay}" />
+          </Grid>
+          <TextBlock FontSize="12" Foreground="#E0C070" TextWrapping="Wrap"
+                     IsVisible="{Binding !CanChangeSite}"
+                     Text="The site cannot change while a sequence is running: every capture already taken was reduced with it." />
+        </StackPanel>
 
-    <StackPanel Spacing="4">
-      <TextBlock FontWeight="Bold" Text="Solve timeouts (seconds)" />
-      <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="4">
-        <TextBlock Grid.Row="0" Grid.Column="0" Text="Blind solve" VerticalAlignment="Center" />
-        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding BlindTimeoutText, Mode=TwoWay}" />
-        <TextBlock Grid.Row="1" Grid.Column="0" Text="Near solve" VerticalAlignment="Center" />
-        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NearTimeoutText, Mode=TwoWay}" />
-      </Grid>
-      <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
-                 Text="How long a frame may take to solve before it is given up as unsolved, whichever solver is chosen. Between 1 and 600 seconds." />
-    </StackPanel>
+        <StackPanel Spacing="4">
+          <TextBlock FontWeight="Bold" Text="Optics" />
+          <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
+                     Text="What you believe the focal length to be. The first solve measures it and replaces this figure. Applied when a camera connects; empty for fully blind solves." />
+          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+            <TextBlock Grid.Column="0" Text="Focal length mm" VerticalAlignment="Center" />
+            <TextBox Grid.Column="1" Text="{Binding FocalLengthText, Mode=TwoWay}" />
+          </Grid>
+          <TextBlock FontSize="12" Foreground="#A8A8A8" Text="Measured from a solve."
+                     IsVisible="{Binding IsFocalLengthMeasured}" />
+        </StackPanel>
 
-    <StackPanel Spacing="4">
-      <TextBlock FontWeight="Bold" Text="Solver programs" />
-      <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="4">
-        <TextBlock Grid.Row="0" Grid.Column="0" Text="ASPS" VerticalAlignment="Center" />
-        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding AspsPath, Mode=TwoWay}" />
-        <TextBlock Grid.Row="1" Grid.Column="0" Text="ASTAP" VerticalAlignment="Center" />
-        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding AstapPath, Mode=TwoWay}" />
-        <TextBlock Grid.Row="2" Grid.Column="0" Text="PS3" VerticalAlignment="Center" />
-        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Ps3Path, Mode=TwoWay}" />
-      </Grid>
-      <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
-                 Text="The executable or its folder (for ASTAP on macOS, the .app). Left empty, each is looked for where it usually installs: ASTAP and ASPS where their installers put them, PS3 in Documents\PlateSolve3." />
-    </StackPanel>
+        <StackPanel Spacing="4">
+          <TextBlock FontWeight="Bold" Text="Sequence" />
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="4">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Capture points" VerticalAlignment="Center" />
+            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding CapturePointsText, Mode=TwoWay}" />
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Sweep °" VerticalAlignment="Center" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding SweepText, Mode=TwoWay}" />
+          </Grid>
+          <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
+                     Text="Used from the next sequence. Uncertainty falls as the square of the sweep but only as the square root of the number of points, so spend on sweep first." />
+        </StackPanel>
+      </StackPanel>
+
+      <StackPanel Grid.Column="1" Spacing="12">
+
+        <StackPanel Spacing="4">
+          <TextBlock FontWeight="Bold" Text="Solvers" />
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="4">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Blind solver" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="0" Grid.Column="1" HorizontalAlignment="Stretch"
+                      ItemsSource="{x:Static vm:SettingsViewModel.SolverOptions}"
+                      SelectedItem="{Binding BlindSolver, Mode=TwoWay}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:SolverOption">
+                  <TextBlock Text="{Binding Label}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Near solver" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="1" Grid.Column="1" HorizontalAlignment="Stretch"
+                      ItemsSource="{x:Static vm:SettingsViewModel.SolverOptions}"
+                      SelectedItem="{Binding NearSolver, Mode=TwoWay}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:SolverOption">
+                  <TextBlock Text="{Binding Label}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </Grid>
+          <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
+                     Text="Blind is for frames where the pointing is unknown, near for frames where it is roughly known. Only the chosen solver is used: a frame it cannot solve is reported as unsolved. ASPS and PS3 run only on Windows." />
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+          <TextBlock FontWeight="Bold" Text="Solve timeouts (seconds)" />
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="4">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Blind solve" VerticalAlignment="Center" />
+            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding BlindTimeoutText, Mode=TwoWay}" />
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Near solve" VerticalAlignment="Center" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NearTimeoutText, Mode=TwoWay}" />
+          </Grid>
+          <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
+                     Text="How long a frame may take to solve before it is given up as unsolved, whichever solver is chosen. Between 1 and 600 seconds." />
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+          <TextBlock FontWeight="Bold" Text="Solver programs" />
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="4">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="ASPS" VerticalAlignment="Center" />
+            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding AspsPath, Mode=TwoWay}" />
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="ASTAP" VerticalAlignment="Center" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding AstapPath, Mode=TwoWay}" />
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="PS3" VerticalAlignment="Center" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Ps3Path, Mode=TwoWay}" />
+          </Grid>
+          <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
+                     Text="The executable or its folder (for ASTAP on macOS, the .app). Left empty, each is looked for where it usually installs: ASTAP and ASPS where their installers put them, PS3 in Documents\PlateSolve3." />
+        </StackPanel>
+
+      </StackPanel>
+    </Grid>
 
     <TextBlock Text="{Binding Error}" Foreground="#E07070" TextWrapping="Wrap"
                IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}" />

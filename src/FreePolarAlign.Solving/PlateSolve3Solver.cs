@@ -40,7 +40,7 @@ public sealed class PlateSolve3Solver : ExternalProcessSolver
     public override string Name => "PlateSolve3";
 
     private protected override IReadOnlyList<string> BuildArguments(PlateSolveRequest request, StagedFrame frame) =>
-        BuildArguments(request, frame.Path, frame.Width, frame.Height, frame.Header);
+        BuildArguments(request, frame.Path, frame.Width, frame.Height);
 
     private protected override PlateSolveResult ReadResult(ProcessOutcome outcome, StagedFrame frame, TimeSpan elapsed)
     {
@@ -72,14 +72,16 @@ public sealed class PlateSolve3Solver : ExternalProcessSolver
 
     /// <summary>
     /// A near solve needs both a centre and a field size. The size comes from
-    /// a measured scale, or failing that from the frame's own FOCALLEN and
-    /// XPIXSZ; with neither, the solve is blind even when the mount's pointing
-    /// is known, since PlateSolve3 cannot be told one without the other.
+    /// the request's scale alone, not the frame's FOCALLEN, which holds the
+    /// same typed figure and would stop a retry without a scale (D41) from
+    /// being one. Without a scale the solve is blind even when the mount's
+    /// pointing is known, since PlateSolve3 cannot be told one without the
+    /// other.
     /// </summary>
-    internal static string[] BuildArguments(PlateSolveRequest request, string imagePath, int imageWidth, int imageHeight, FitsHeader header)
+    internal static string[] BuildArguments(PlateSolveRequest request, string imagePath, int imageWidth, int imageHeight)
     {
         bool hasPositionHint = request.ApproximateRaDegrees is not null && request.ApproximateDecDegrees is not null;
-        double? scale = request.ApproximateScaleArcsecPerPixel is > 0.0 ? request.ApproximateScaleArcsecPerPixel : ScaleFromHeader(header);
+        double? scale = request.ApproximateScaleArcsecPerPixel is > 0.0 ? request.ApproximateScaleArcsecPerPixel : null;
 
         if (!hasPositionHint || scale is null)
         {
@@ -95,20 +97,6 @@ public sealed class PlateSolve3Solver : ExternalProcessSolver
             Format(imageWidth * scale.Value / ArcsecPerRadian),
             Format(imageHeight * scale.Value / ArcsecPerRadian),
         };
-    }
-
-    private static double? ScaleFromHeader(FitsHeader header)
-    {
-        try
-        {
-            double focalLength = header.GetDouble("FOCALLEN", double.NaN);
-            double pixelSize = header.GetDouble("XPIXSZ", double.NaN);
-            return focalLength > 0.0 && pixelSize > 0.0 ? 206.264806 * pixelSize / focalLength : null;
-        }
-        catch (Exception ex) when (ex is FormatException or InvalidCastException)
-        {
-            return null;
-        }
     }
 
     internal static PlateSolveResult ParseResult(IReadOnlyList<string> lines, int imageWidth, int imageHeight, TimeSpan elapsed)

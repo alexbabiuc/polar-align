@@ -140,10 +140,15 @@ it is the single largest cause of otherwise inexplicable failures.
 22.5° down to 0.703°, and 0.703 is exactly 22.5/2⁵. A fractional scale tolerance
 therefore cannot be expressed as a range: handing it a ±25% band collapses the
 ladder to a single radius that may sit 25% off the truth, and measurably turned
-*succeeding* solves into `NoMatchFound`. So a tolerance tight enough to be a
-measurement pins the radius exactly; a looser one is treated as a claim and
-ignored in favour of the blind ladder, whose floor also has to be lowered below
+*succeeding* solves into `NoMatchFound`. So a scale pins the radius exactly.
+With no scale the blind ladder is used, and its floor has to be lowered below
 Watney's 0.703° or no frame under about 1.4° can match at all.
+
+*Revised by D41.* A looser tolerance was at first treated as a claim and ignored
+in favour of the blind ladder. That made a narrow field impossible to solve
+before it had been solved, because the blind ladder over the bundled packs never
+reaches it. A claimed scale is now pinned like a measured one, and the cost
+measured above is answered by a second try without a scale.
 
 **Measured coverage with the bundled `00-07` pack**, fully blind, no hints:
 
@@ -2165,3 +2170,76 @@ in the repository (D25). ToupTek users copy their own into `plugins\ToupTek`,
 and the release notes say so. ZWO's library is included with its notice. The
 installer is not code-signed, so SmartScreen warns about an unknown publisher.
 Signing costs money every year and waits until there are users to justify it.
+
+---
+
+## D41 — A typed focal length is tried first, and no scale after it
+
+*Decided 2026-10-17.*
+
+Every solve request carries the scale implied by the focal length the session
+holds, whether it was typed in, restored from settings or measured. A typed one
+goes with a 25% tolerance and a measured one with 5%
+(`EquipmentProfile.ScaleToleranceFraction`). Every solver uses it, Watney
+included. When a scale with more than 10% tolerance finds no match, the same
+solver tries again with no scale at all, inside the time left in the job's
+timeout (D33). The second try's verdict is reported, and a failure names both.
+This happens in `ClaimedScaleFallbackSolver`, which `SelectedSolver` puts around
+whichever solver the settings chose, so it applies to all four alike. The first
+success measures the focal length, its tolerance drops to 5%, and the retry
+stops. Through 0.0.29 the scale was withheld until a solve had measured it.
+
+**Why the scale goes first.** Withholding it meant a narrow field could never be
+solved for the first time. On 2026-10-05 (0.0.22, ZWO ASI290MM at 800 mm: 1936 ×
+1096 at 0.75″/px, a 0.40° × 0.23° frame) every ASTAP solve failed. ASTAP was
+given `-fov 0`, and its automatic search tries field heights 9.5, 6.3, 4.2, 2.8,
+1.9, 1.25, 0.83, 0.56 and 0.37° and then stops. The frame's 0.23° height was
+never tried. Three frames kept from that session and the next, run through ASTAP
+v2026.09.15 with D05 on macOS:
+
+| Frame | `-fov 0` | `-fov 0.2276` (from 800 mm) |
+|---|---|---|
+| 2026-10-05 18:05:37 | no match | solved, 0.3 s, 2.8° from the mount's position |
+| 2026-10-06 18:13:29 | no match | solved, 1.5 s, 8.2° from the mount's position |
+| 2026-10-05 18:01:24 | no match | no match, even searching the whole sky |
+
+The third frame has round stars and plenty of them. ASTAP reported "Database
+limit for this FOV is 46 stars", so it is probably D05 being too sparse at this
+field size. The machine in the field has D50, and the frame is untested there.
+Both solves measure about 814 mm, within 2% of what was typed. The first frame
+is kept as `docs/fixtures/asi290mm_800mm_20261005T180537.fits`, and
+`AstapRealSolveTests` solves it as the session now asks.
+
+**Why there is a retry.** A typed scale can be wrong by more than a solver
+forgives. Measured on the two frames that solve, with ASTAP field heights from
+0.7 to 1.5 times the true one: both solved at every height from 0.9 to 1.1
+times, and at neither 1.2 nor 1.5. One also solved at 0.7 and 0.8 times, and the
+other did not. A forgotten 0.8× reducer is already 25% out. For Watney it is
+worse: its radius ladder cannot express a tolerance, so a claimed scale is
+pinned exactly, and D3 measured a pinned claim turning succeeding solves into
+failures. Without a scale each solver searches as it would knowing nothing, so
+whatever could be solved before a focal length was typed still solves, and
+that first success measures the real value. 10% is the line between a
+measurement and a claim because it is the band ASTAP was seen to forgive.
+
+**What is retried.** Only "no match". Too few stars, a timeout or a solver error
+did not fail for the scale. A measured scale is never retried, since a frame
+that fails with one did not fail for its scale. The retry keeps the position
+hint, because only the scale was in doubt.
+
+**ASPS and PlateSolve3 no longer read FOCALLEN.** They took a typed focal length
+from the frame's header when the request had no scale, which was how a typed
+figure reached them while the session withheld it. The header holds the same
+figure the request now carries, and reading it would make the retry without a
+scale no different from the first try. With no scale ASPS gets zeros, which
+means its own settings window, and PlateSolve3 solves blind.
+
+**Watney and this frame.** Watney gets the scale now but still cannot solve this
+frame. Its 0.23° field radius is covered only by the `14-20` pack, which D39
+does not offer, and the 0.0.22 bundle (`00-07` with `08-09`) stops at 0.6°.
+Untested with `14-20`.
+
+**Cost.** Before the focal length has been measured, a frame that fails for some
+other reason, such as cloud, can take up to twice as long to fail, within the
+same job timeout. Under Watney the internal solver's redrawn-frame retry (D33)
+runs inside each of the two tries, so up to four attempts share that timeout.

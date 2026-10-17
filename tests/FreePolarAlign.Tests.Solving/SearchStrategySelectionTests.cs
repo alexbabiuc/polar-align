@@ -10,7 +10,7 @@ namespace FreePolarAlign.Tests.Solving;
 /// The rule is not simply "position hint means nearby search". A nearby search
 /// is only usable when the field radius can also be pinned, because Watney
 /// defaults that range to 0-2 degrees and searches only its endpoints -- so a
-/// position hint without a trustworthy scale would silently exclude any wider
+/// position hint without a scale would silently exclude any wider
 /// frame. See D3's tuning section.
 /// </summary>
 public class SearchStrategySelectionTests
@@ -135,21 +135,43 @@ public class SearchStrategySelectionTests
     }
 
     /// <summary>
-    /// A loosely-toleranced hint is a claim, not a measurement -- a user's
-    /// stated focal length is routinely several percent out -- and Watney's
-    /// discrete radius ladder cannot express a range. So it is ignored in favour
-    /// of the blind ladder, which does cover a spread of radii.
+    /// A claimed scale -- a typed focal length -- is pinned like a measured one.
+    /// Until 0.0.30 it was ignored in favour of the blind ladder, which made a
+    /// narrow field impossible to solve before it had been solved; a claim that
+    /// is wrong is now answered by the retry without a scale (D41).
     /// </summary>
     [Fact]
-    public void BlindSearch_WithLooselyTolerancedScaleHint_FallsBackToTheBlindLadder()
+    public void BlindSearch_WithClaimedScaleHint_SearchesExactlyThatRadius()
     {
         var request = NoHints with { ApproximateScaleArcsecPerPixel = 4.0, ScaleToleranceFraction = 0.25 };
+
+        double expected = WatneyPlateSolver.ComputeFieldRadiusDegrees(4.0, 1600, 1200);
 
         var blind = Assert.IsType<BlindSearchStrategy>(
             WatneyPlateSolver.BuildStrategy(request, imageWidth: 1600, imageHeight: 1200));
 
-        Assert.Equal(new BlindSearchStrategyOptions().StartRadiusDegrees, blind.Options.StartRadiusDegrees, precision: 9);
-        Assert.Equal(WatneyPlateSolver.BlindMinimumRadiusDegrees, blind.Options.MinRadiusDegrees, precision: 9);
+        Assert.Equal(expected, blind.Options.StartRadiusDegrees, precision: 9);
+    }
+
+    [Fact]
+    public void NearbySearch_WithClaimedScaleHint_PinsTheRadiusAroundThePosition()
+    {
+        var request = NoHints with
+        {
+            ApproximateScaleArcsecPerPixel = 0.7477,
+            ScaleToleranceFraction = 0.25,
+            ApproximateRaDegrees = 37.96,
+            ApproximateDecDegrees = 63.84,
+            SearchRadiusDegrees = 10.0,
+        };
+
+        double expected = WatneyPlateSolver.ComputeFieldRadiusDegrees(0.7477, 1936, 1096);
+
+        var nearby = Assert.IsType<NearbySearchStrategy>(
+            WatneyPlateSolver.BuildStrategy(request, imageWidth: 1936, imageHeight: 1096));
+
+        Assert.Equal(expected, nearby.Options.MinFieldRadiusDegrees, precision: 9);
+        Assert.Equal(expected, nearby.Options.MaxFieldRadiusDegrees, precision: 9);
     }
 
     /// <summary>

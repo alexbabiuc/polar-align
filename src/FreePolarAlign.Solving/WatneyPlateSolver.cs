@@ -163,32 +163,20 @@ public sealed class WatneyPlateSolver : ISolver, IDisposable
     /// </summary>
     internal const uint DensityOffsetPasses = 2;
 
-    /// <summary>
-    /// Above this fractional scale tolerance the hint is treated as a claim
-    /// rather than a measurement, and ignored in favour of a blind ladder.
-    ///
-    /// This is not timidity about the hint: Watney searches a *discrete*
-    /// sequence of field radii, halving from a start value, so a fractional
-    /// tolerance cannot be expressed as a range the way it can with other
-    /// solvers. Handing it a band collapses the ladder to a single radius, which
-    /// is right when the scale is known and wrong when it is merely guessed --
-    /// and a user's stated focal length is routinely several percent out (see
-    /// EquipmentProfile).
-    /// </summary>
-    internal const double TrustedScaleToleranceFraction = 0.15;
-
     internal static ISearchStrategy BuildStrategy(PlateSolveRequest request, int imageWidth, int imageHeight)
     {
         bool hasPositionHint = request.ApproximateRaDegrees is not null && request.ApproximateDecDegrees is not null;
 
-        double? trustedRadius = null;
-        if (request.ApproximateScaleArcsecPerPixel is { } scale
-            && (request.ScaleToleranceFraction ?? 0.0) <= TrustedScaleToleranceFraction)
-        {
-            trustedRadius = ComputeFieldRadiusDegrees(scale, imageWidth, imageHeight);
-        }
+        // Any scale is pinned, a claimed one included. Watney searches a
+        // discrete sequence of radii halving from a start value, so a
+        // tolerance cannot be expressed as a range, and pinning a claim that is
+        // well out does turn solves into failures (D3). That is answered by the
+        // retry without a scale that follows a claimed one (D41), not here.
+        double? hintedRadius = request.ApproximateScaleArcsecPerPixel is { } scale
+            ? ComputeFieldRadiusDegrees(scale, imageWidth, imageHeight)
+            : null;
 
-        // A position hint is only usable when the field radius can be pinned as
+        // A position hint is only usable when the field radius is known as
         // well, which is why this needs both and not either.
         //
         // Watney's nearby search defaults its field radius range to 0-2
@@ -198,11 +186,11 @@ public sealed class WatneyPlateSolver : ISolver, IDisposable
         // the range instead means laddering through candidate radii inside a
         // search area, which is far slower than a blind solve of the same frame.
         //
-        // So with no trustworthy scale the position is deliberately discarded
+        // So with no scale the position is deliberately discarded
         // and the blind ladder used, which handles unknown scale in well under a
         // second. That is also the flow the roadmap intends: solve blind once,
         // learn the focal length from it, and hint thereafter.
-        if (hasPositionHint && trustedRadius is { } pinnedRadius)
+        if (hasPositionHint && hintedRadius is { } pinnedRadius)
         {
             var options = new NearbySearchStrategyOptions
             {
@@ -231,7 +219,7 @@ public sealed class WatneyPlateSolver : ISolver, IDisposable
             MaxPositiveDensityOffset = DensityOffsetPasses,
         };
 
-        if (trustedRadius is { } blindRadius)
+        if (hintedRadius is { } blindRadius)
         {
             blindOptions.StartRadiusDegrees = blindRadius;
 

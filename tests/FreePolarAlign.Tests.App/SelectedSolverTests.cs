@@ -42,6 +42,41 @@ public class SelectedSolverTests
     private static SelectedSolver Create(CountingSolver inner, List<string>? log = null, bool windows = true) =>
         new(inner, new TestClock(), log is null ? null : log.Add, resolveExecutable: (_, path) => path ?? "solver-not-installed", canRunWindowsSolvers: windows);
 
+    /// <summary>Finds no match whenever it is given a scale: a focal length typed wrong.</summary>
+    private sealed class WrongScaleSolver : ISolver
+    {
+        public string Name => "Watney";
+
+        public List<PlateSolveRequest> Requests { get; } = new();
+
+        public Task<PlateSolveResult> SolveAsync(PlateSolveRequest request, CancellationToken cancellationToken = default)
+        {
+            Requests.Add(request);
+            return Task.FromResult(request.ApproximateScaleArcsecPerPixel is null
+                ? PlateSolveResult.Succeeded(Solution)
+                : PlateSolveResult.Failed(PlateSolveFailureReason.NoMatchFound, "No index match found."));
+        }
+    }
+
+    /// <summary>
+    /// Every solver the settings can choose gets the retry without a claimed
+    /// scale, inside the job's own timeout (D41).
+    /// </summary>
+    [Fact]
+    public async Task ClaimedScale_ThatFindsNoMatch_IsTriedAgainWithoutIt()
+    {
+        var inner = new WrongScaleSolver();
+        var solver = new SelectedSolver(inner, new TestClock());
+
+        PlateSolveResult result = await solver.SolveAsync(
+            Blind with { ApproximateScaleArcsecPerPixel = 3.9, ScaleToleranceFraction = 0.25 });
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(2, inner.Requests.Count);
+        Assert.Null(inner.Requests[1].ApproximateScaleArcsecPerPixel);
+        Assert.Equal("Watney", result.SolverName);
+    }
+
     [Fact]
     public async Task Unconfigured_SendsEverythingToTheInternalSolver()
     {

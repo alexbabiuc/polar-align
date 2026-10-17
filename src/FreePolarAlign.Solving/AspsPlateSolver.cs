@@ -96,11 +96,10 @@ public sealed class AspsPlateSolver : ExternalProcessSolver
     /// <summary>
     /// The focal length and pixel size to pass, which ASPS uses only as a scale.
     ///
-    /// A measured scale from the request comes first. Without one, the frame's
-    /// own FOCALLEN and XPIXSZ, which the capture writes whenever a focal length
-    /// was entered: a claimed figure, but a far better start than whatever the
-    /// ASPS settings window last held. With neither, zeros, which tell ASPS to
-    /// use that window.
+    /// Only the request's scale counts, whether measured or from a typed focal
+    /// length. The frame's FOCALLEN holds the same typed figure, so reading it
+    /// here would only stop a retry without a scale (D41) from being one.
+    /// With no scale, zeros, which tell ASPS to use its own settings window.
     /// </summary>
     private static (double FocalLengthMm, double PixelSizeMicrons) Optics(PlateSolveRequest request, FitsHeader header)
     {
@@ -112,11 +111,6 @@ public sealed class AspsPlateSolver : ExternalProcessSolver
             // length ASPS reports back meaningful.
             double microns = pixelSize ?? 1.0;
             return (206.264806 * microns / scale, microns);
-        }
-
-        if (pixelSize is { } known && Positive(header, "FOCALLEN") is { } focalLength)
-        {
-            return (focalLength, known);
         }
 
         return (0.0, 0.0);

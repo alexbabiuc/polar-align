@@ -25,18 +25,22 @@ public class PlateSolve3SolverTests
     public void NoPositionHint_PassesOnlyTheImage()
     {
         string[] args = PlateSolve3Solver.BuildArguments(
-            new PlateSolveRequest("in.fits", ApproximateScaleArcsecPerPixel: 3.9), Image, 1684, 1263, new FitsHeader());
+            new PlateSolveRequest("in.fits", ApproximateScaleArcsecPerPixel: 3.9), Image, 1684, 1263);
 
         Assert.Equal(new[] { Image }, args);
     }
 
-    /// <summary>PlateSolve3 cannot be given a centre without a field size.</summary>
+    /// <summary>
+    /// PlateSolve3 cannot be given a centre without a field size. The frame's
+    /// FOCALLEN is not read for one: it is the typed figure, and reading it
+    /// would make the retry without a scale (D41) no different from the first.
+    /// </summary>
     [Fact]
     public void PositionHintWithoutAnyScale_IsBlind()
     {
         var request = new PlateSolveRequest("in.fits", ApproximateRaDegrees: 56.75, ApproximateDecDegrees: 24.1);
 
-        string[] args = PlateSolve3Solver.BuildArguments(request, Image, 1684, 1263, new FitsHeader());
+        string[] args = PlateSolve3Solver.BuildArguments(request, Image, 1684, 1263);
 
         Assert.Equal(new[] { Image }, args);
     }
@@ -47,27 +51,13 @@ public class PlateSolve3SolverTests
         var request = new PlateSolveRequest(
             "in.fits", ApproximateScaleArcsecPerPixel: 3.919, ApproximateRaDegrees: 56.75, ApproximateDecDegrees: 24.1);
 
-        string[] args = PlateSolve3Solver.BuildArguments(request, Image, 1684, 1263, new FitsHeader());
+        string[] args = PlateSolve3Solver.BuildArguments(request, Image, 1684, 1263);
 
         Assert.Equal(5, args.Length);
         Assert.Equal(56.75 * Math.PI / 180.0, Arg(args, 1), precision: 9);
         Assert.Equal(24.1 * Math.PI / 180.0, Arg(args, 2), precision: 9);
         Assert.Equal(1684 * 3.919 / 206264.806, Arg(args, 3), precision: 9);
         Assert.Equal(1263 * 3.919 / 206264.806, Arg(args, 4), precision: 9);
-    }
-
-    [Fact]
-    public void PositionHintWithFrameOptics_UsesThemForTheFieldSize()
-    {
-        var header = new FitsHeader();
-        header.Set("FOCALLEN", 200);
-        header.Set("XPIXSZ", 3.8);
-        var request = new PlateSolveRequest("in.fits", ApproximateRaDegrees: 56.75, ApproximateDecDegrees: 24.1);
-
-        string[] args = PlateSolve3Solver.BuildArguments(request, Image, 1684, 1263, header);
-
-        double scale = 206.264806 * 3.8 / 200.0;
-        Assert.Equal(1263 * scale / 206264.806, Arg(args, 4), precision: 9);
     }
 
     [Fact]

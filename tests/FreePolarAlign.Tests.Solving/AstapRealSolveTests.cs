@@ -101,6 +101,46 @@ public class AstapRealSolveTests
     }
 
     /// <summary>
+    /// A real frame that failed in the field (D41): ZWO ASI290MM at a typed
+    /// 808 mm, 0.40° × 0.23°, from 2026-10-05. ASTAP was given no field size,
+    /// and its own search stops at a 0.37° height. Solved as the session now
+    /// asks: the typed focal length's scale, as a claim, and the mount's
+    /// position from the frame's header, 2.8° out.
+    ///
+    /// The expected centre is ASTAP's own solve of this frame with D05, 12 of
+    /// 21 quads matched; the scale is the one 814 mm gives, which is within 2%
+    /// of what was typed.
+    /// </summary>
+    [SkippableFact]
+    public async Task RealNarrowFrame_WithTypedFocalLength_Solves()
+    {
+        string? astap = InstalledAstap();
+        Skip.If(astap is null, "ASTAP is not installed where it is looked for; set FPA_ASTAP to run this.");
+
+        string path = Path.Combine(AppContext.BaseDirectory, "fixtures", "asi290mm_800mm_20261005T180537.fits");
+        FitsHeader header = FitsFile.Read(path).ExtraHeader;
+        double typedScale = PlateScale.ScaleArcsecondsPerPixel(header.GetDouble("XPIXSZ", 0.0), header.GetDouble("FOCALLEN", 0.0));
+
+        var clock = new TestClock();
+        PlateSolveResult result = await new ClaimedScaleFallbackSolver(new AstapPlateSolver(astap!, clock), clock).SolveAsync(
+            new PlateSolveRequest(
+                path,
+                ApproximateScaleArcsecPerPixel: typedScale,
+                ScaleToleranceFraction: 0.25,
+                ApproximateRaDegrees: header.GetDouble("RA", 0.0),
+                ApproximateDecDegrees: header.GetDouble("DEC", 0.0),
+                SearchRadiusDegrees: 10.0,
+                Timeout: TimeSpan.FromSeconds(60)));
+
+        SkipIfNoDatabase(result);
+        Assert.True(result.Success, result.Message);
+        PlateSolveSolution solution = result.Solution!;
+        double offArcsec = AngularSeparationDegrees(20.796, 65.482, solution.CenterRaDegrees, solution.CenterDecDegrees) * 3600.0;
+        Assert.True(offArcsec < 30.0, $"centre {offArcsec:F1} arcsec from ASTAP's earlier solve");
+        Assert.Equal(0.73, solution.PixelScaleArcsecPerPixel, precision: 1);
+    }
+
+    /// <summary>
     /// With no database ASTAP's GUI build stops at a dialog, which the adapter
     /// sees as a timeout. That is a missing install, not a defect here.
     /// </summary>

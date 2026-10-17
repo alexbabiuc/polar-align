@@ -591,21 +591,22 @@ made once; the next vendor should need none of them.
 
 ## Open issues
 
-### Images at longer focal lengths do not solve *(reported 2026-10-17)*
+### Images at longer focal lengths do not solve *(reported 2026-10-17, investigated the same day)*
 
 Frames taken at longer focal lengths fail to solve on the user's equipment.
-Shorter ones solve. Not yet investigated. The focal length, sensor, solver and
-build are not recorded yet, and should be, from the session log and a kept
-failed frame.
+Shorter ones solve. Investigated from the session log of 2026-10-05 (0.0.22)
+and three kept frames: ZWO ASI290MM at 800 mm, a 0.40° × 0.23° field.
 
-The first thing to check, an inference only: D13's bundled Watney packs cover a
-field radius of 0.6° and wider, about a 1.2° diagonal. A narrower field needs
-the `10-11`, `12-13` or `14-20` pack, and without one Watney cannot solve it
-whatever else is right. If the field is wider than that, the next suspects are:
-
-- a solve timeout too short for a denser search;
-- too few stars detected at the exposure used;
-- a field-size hint, from the entered or measured focal length, that is far off.
+- **ASTAP** was never told the field size, because a typed focal length was
+  withheld until a solve had measured it. Its automatic search stops at a
+  0.37° field height. Fixed in 0.0.30 (D41): every solver gets the typed scale
+  first and tries again without one if nothing matches. Two of the three
+  frames now solve through the real adapter.
+- **Watney** cannot solve a field this narrow with any pack D39 offers. A 0.23°
+  field radius needs `14-20`. Untested with it.
+- Still open: the third frame fails under ASTAP with D05 even when searching
+  the whole sky. It needs trying with D50, as installed on the machine in the
+  field.
 
 ---
 

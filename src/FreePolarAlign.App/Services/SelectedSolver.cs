@@ -22,6 +22,9 @@ namespace FreePolarAlign.App.Services;
 /// The timeout is chosen the same way, from the blind or near setting, and
 /// replaces whatever the request carried: the line between the two jobs is
 /// drawn here, so this is where each job's limit is applied (D33).
+///
+/// A scale from a typed focal length that finds no match is tried again without
+/// one, for every solver alike (D41).
 /// </summary>
 public sealed class SelectedSolver : ISolver, IDisposable
 {
@@ -108,7 +111,10 @@ public sealed class SelectedSolver : ISolver, IDisposable
         ISolver solver = near ? routes.Near : routes.Blind;
         TimeSpan timeout = near ? routes.NearTimeout : routes.BlindTimeout;
 
-        PlateSolveResult result = await solver.SolveAsync(request with { Timeout = timeout }, cancellationToken).ConfigureAwait(false);
+        // Whichever solver it is, a scale from a typed focal length is tried
+        // first and no scale after it, inside this job's timeout (D41).
+        PlateSolveResult result = await new ClaimedScaleFallbackSolver(solver, _time, _log)
+            .SolveAsync(request with { Timeout = timeout }, cancellationToken).ConfigureAwait(false);
         return result.From(solver.Name);
     }
 

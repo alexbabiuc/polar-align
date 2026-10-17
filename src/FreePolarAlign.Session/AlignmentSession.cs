@@ -2428,11 +2428,12 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
     private PlateSolveRequest BuildSolveRequest(CapturedImage frame, MountPosition? hint)
     {
-        // The scale hint is only offered once the focal length has actually
-        // been measured, since a claimed one is routinely several percent out.
-        double? scaleHint = _profile is { IsFocalLengthSolved: true } profile
-            ? profile.ExpectedScaleArcsecondsPerPixel
-            : null;
+        // A typed focal length is offered too, with the wide tolerance that
+        // marks it as a claim, and a claim that finds no match is tried again
+        // without a scale. Held back, ASTAP fell to its automatic field ladder,
+        // which stops at 0.37° and so never reached a 0.23° frame from an
+        // 800 mm scope (D41).
+        double? scaleHint = _profile?.ExpectedScaleArcsecondsPerPixel;
 
         return new PlateSolveRequest(
             frame.FitsPath,

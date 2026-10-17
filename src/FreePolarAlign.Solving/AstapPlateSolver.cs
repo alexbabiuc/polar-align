@@ -32,6 +32,9 @@ namespace FreePolarAlign.Solving;
 ///
 /// With no usable star database the GUI build shows a dialog and waits rather
 /// than exiting, so that case surfaces as a timeout, not a readable error.
+///
+/// Without a <c>-fov</c> ASTAP tries field heights from 9.5° down to 0.37° and
+/// stops, so a narrower frame solves only when its height is given (D41).
 /// </remarks>
 public sealed class AstapPlateSolver : ExternalProcessSolver
 {

@@ -54,15 +54,18 @@ public class AspsPlateSolverTests
         Assert.Equal(3.8, Arg(args, 4), precision: 6);
     }
 
-    /// <summary>A whole-number FOCALLEN is read back as an integer, and must still count.</summary>
+    /// <summary>
+    /// The frame's FOCALLEN is the typed figure, so honouring it would make the
+    /// retry without a scale (D41) no different from the first try.
+    /// </summary>
     [Fact]
-    public void NoMeasuredScale_UsesTheFramesOwnOptics()
+    public void NoScale_IgnoresTheFramesFocalLength()
     {
         string[] args = AspsPlateSolver.BuildArguments(
             new PlateSolveRequest("in.fits"), Image, Result, Header(pixelMicrons: 3.8, focalLength: 100));
 
-        Assert.Equal(100.0, Arg(args, 3), precision: 6);
-        Assert.Equal(3.8, Arg(args, 4), precision: 6);
+        Assert.Equal(0.0, Arg(args, 3));
+        Assert.Equal(0.0, Arg(args, 4));
     }
 
     [Fact]

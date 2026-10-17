@@ -405,6 +405,18 @@ vertical, so apparent field motion scales with cos(altitude). Arcseconds per kno
 turn genuinely changes with where the telescope is pointed, and the UI should not
 pretend otherwise.
 
+**Revised (2026-10-17): no correction reticle.** The user decided against an
+on-screen reticle. The guidance is the numeric altitude and azimuth deltas, plus
+the live reading's turn instructions (D17, D29). The reticle was only ever a
+placeholder, so nothing is removed but the promise.
+
+What stands:
+- **The CD matrix is still read and checked.** Parity is still what tells a
+  mirrored field from a plain one, and every solver adapter still produces the
+  matrix.
+- **The cos(altitude) consequence above stands.** It is about the fit's numbers,
+  not about drawing.
+
 ---
 
 ## D13 — Index packs: tiered, core bundled

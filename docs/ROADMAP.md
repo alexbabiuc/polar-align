@@ -205,7 +205,9 @@ were. The safety net earned its place before any hardware existed.
 
 ## Phase 4 — UI and the live adjustment loop *(joint)*
 
-- Correction reticle with parity from the CD matrix (D12)
+- ~~Correction reticle with parity from the CD matrix (D12)~~ — dropped at the
+  user's request (2026-10-17). The numeric deltas and the live reading's turn
+  instructions are the guidance. See D12 as revised.
 - Numeric altitude and azimuth deltas in arcminutes, with confidence
 - Hemisphere handling
 - **Freeze-and-track mode:** once the axis is known, stop slewing and keep solving
@@ -243,7 +245,8 @@ figure or their sum, and that a withheld result clears the previous estimate
 instead of leaving a stale number on screen. The window itself is not tested and
 cannot be here; it compiles, and the app launches and stays running with the
 virtual observatory wired up, which demonstrates the dependency graph constructs
-and nothing more. The correction reticle (D12) is still a placeholder.
+and nothing more. (The correction reticle that was a placeholder here has since
+been dropped; see D12.)
 
 **Freeze-and-track is now wired into the session and the window (D29, 0.0.12).**
 Until then it existed only in the core, and the screen stopped at the sweep's
@@ -411,8 +414,10 @@ into a test named after a pulled cable. The convergence tests remain exposed,
 and the proper fix is a clock the session can be given, which would also make
 D16's just-in-time resolve testable at chosen instants. Not done yet.
 
-**Still outstanding:** the correction reticle (D12) remains a placeholder, and
-the window's own rendering is still only verified by having been looked at.
+**Still outstanding:** the window's own rendering is still only verified by
+having been looked at. The proper fix for the wall-clock dependence above, a
+clock the session can be given, is not done either. (The correction reticle that
+was listed here was dropped; see D12.)
 
 ### Phase 4d — Live capture, and a mount that is optional
 

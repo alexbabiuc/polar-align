@@ -436,8 +436,8 @@ public class ImageStretchTests
     /// <summary>
     /// Row zero of the preview is the top of the display, which is the opposite
     /// of the FITS convention. A preview shown upside down relative to the solved
-    /// orientation would be actively misleading once the correction reticle
-    /// (D12) is drawn over it.
+    /// orientation would mislead anyone matching the frame against the sky or
+    /// against how the mount moved.
     /// </summary>
     [Fact]
     public void ThePreviewIsFlipped_SoRowZeroIsTheTopOfTheDisplay()

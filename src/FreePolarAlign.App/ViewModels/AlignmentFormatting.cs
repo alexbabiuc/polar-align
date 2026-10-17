@@ -118,11 +118,10 @@ public static class AlignmentFormatting
         FormattableString.Invariant($"{residualRmsArcseconds:F1}\"");
 
     /// <summary>
-    /// Which hemisphere a site latitude falls in. Display-only: this project's
-    /// on-screen correction direction and parity are derived from the solved
-    /// CD matrix (D12), not guessed from hemisphere, and that reticle/parity
-    /// work is explicitly out of scope here. This exists only so the UI can
-    /// say "Northern hemisphere" next to the numbers rather than nothing.
+    /// Which hemisphere a site latitude falls in. Display-only: parity comes
+    /// from the solved CD matrix (D12), never from the hemisphere. This exists
+    /// only so the UI can say "Northern hemisphere" next to the numbers rather
+    /// than nothing.
     /// </summary>
     public static string Hemisphere(double siteLatitudeDegrees) =>
         siteLatitudeDegrees >= 0.0 ? "Northern" : "Southern";

@@ -217,9 +217,9 @@ begin
   Result := (PageID = SolverPage.ID) and AnyPackChosen;
 end;
 
-{ Downloads into {tmp} before anything is installed, one pack at a time, so a
-  failure costs only that pack. Installing them waits for the files, because
-  the script that does it is one of them. }
+{ Downloads into the temporary folder before anything is installed, one pack
+  at a time, so a failure costs only that pack. Installing them waits for the
+  files, because the script that does it is one of them. }
 procedure DownloadPacks;
 var
   I: Integer;

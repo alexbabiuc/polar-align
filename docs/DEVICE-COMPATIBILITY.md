@@ -27,6 +27,9 @@ compiled-but-unverified).
   I found. Flagged so it can be weighted accordingly.
 - **[UNKNOWN]** — I found nothing either way. Left unknown deliberately
   rather than guessed, per the brief.
+- **[FIELD]** — seen by this project's user on their own equipment. As solid
+  as the detail recorded with it. Where the build or the exact hardware is not
+  recorded, it says so.
 
 No mount or driver was available to test directly. Nothing here should be
 treated as more solid than its tag says.
@@ -229,9 +232,13 @@ whether the end of one is visible at all.
 - Whether a hand-controller or SynScan-app slew, or a slew commanded by a
   second client through the same driver instance, sets `Slewing` is
   therefore up to each driver. I found nothing stating it either way for
-  the iOptron driver, EQMOD/EQASCOM or the SynScan driver. **[UNKNOWN]**,
-  and **VERIFY** on each: start a slew from the hand controller while
-  polling `Slewing`, and again from a second ASCOM client.
+  the iOptron driver, EQMOD/EQASCOM or the SynScan driver.
+- **[FIELD]** On the user's mount, a manual move is reported as `Slewing`
+  (2026-10-17). Which driver it was, and whether the move was a hand-controller
+  goto or a held direction button, is not recorded. The other drivers, and a
+  slew from a second ASCOM client, are still **[UNKNOWN]**. **VERIFY** on
+  each: start a slew from the hand controller while polling `Slewing`, and
+  again from a second ASCOM client.
 - A related case, also **[UNKNOWN]**: whether holding a direction button on
   the hand controller, which is motion at a guide or centring rate rather
   than a goto, is reported as slewing by any of the three.
@@ -397,10 +404,11 @@ mount. `AscomMount.SetSiteLocationAsync` is compiled but **untested**.
 - **[UNKNOWN]** Whether the iOptron, EQMOD and SynScan drivers accept
   `Tracking = false`, and whether they turn tracking back on at the next slew.
   **VERIFY** with Abort on each, and watch the drive state the status shows (D36).
-- **[UNKNOWN]** Whether any of the three drivers reports hand-controller or
+- **[UNKNOWN]** Whether each of the three drivers reports hand-controller or
   other-software motion through `Slewing`, and whether their reported
-  coordinates follow it. See the `Slewing` section above; D26 depends on
-  at least the second.
+  coordinates follow it. One driver, not recorded which, reports a manual move
+  as slewing **[FIELD]**. See the `Slewing` section above; D26 depends on at
+  least the second.
 - **[UNKNOWN]** Whether a camera driver's `SetupDialog` behaves correctly when
   called from a dedicated STA thread rather than from the client's own UI
   thread. ASCOM's convention is the latter; this application calls it from a
@@ -410,15 +418,22 @@ mount. `AscomMount.SetSiteLocationAsync` is compiled but **untested**.
   or will not close. If a driver's settings window misbehaves — blank, frozen,
   or refusing to close — this is the first thing to suspect. See
   `AscomCamera.ShowSetupDialogAsync`.
-- **[UNKNOWN]** Everything about the native ZWO and ToupTek camera plugins at
-  runtime (D25). No native call in either has executed: the development machine
-  has neither the cameras nor the vendor libraries. What *is* known: the struct
-  layouts match the vendors' headers for both the Windows x64 and the
-  macOS/Linux ABI **[DOC]**, checked with the C compiler.
+- **[FIELD]** The native ZWO plugin works on the user's camera (reported
+  2026-10-17; build and model not recorded). The struct layouts match the
+  vendors' headers for both the Windows x64 and the macOS/Linux ABI **[DOC]**,
+  checked with the C compiler.
+- **[FIELD]** The native ToupTek plugin runs on the user's camera, which
+  reports a maximum bit depth of 12 (`Toupcam_get_MaxBitDepth`). The plugin
+  therefore offers "8-bit" and "12-bit" readouts, the second delivered in 16-bit
+  frames (reported 2026-10-17; build and model not recorded).
+- **[UNKNOWN]** Whether the ToupTek high bit-depth readout is right end to end:
+  stretch, star detection, solving, and the saved FITS. **VERIFY** in that mode
+  on the user's camera. It needs more testing (Phase 6).
 - **[UNKNOWN]** Whether ToupTek's 16-bit RAW output is right-aligned (values up
   to 4095 from a 12-bit sensor) or scaled to the full 16 bits. Either writes a
   valid 16-bit frame and solves the same; it changes only what the raw numbers
-  look like in another program.
+  look like in another program. A frame saved in that mode on the user's 12-bit
+  camera answers it: a maximum near 4095 means right-aligned.
 - **[UNKNOWN]** Which ToupTek rebrands (Altair, Omegon, RisingCam, Bresser)
   enumerate through `toupcam` itself rather than only through their own renamed
   copy of the library. The plugin loads `toupcam` and lists what it finds.

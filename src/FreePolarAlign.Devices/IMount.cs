@@ -45,8 +45,9 @@ public sealed record GeodeticLocation(double LatitudeDegrees, double LongitudeDe
 ///
 /// Advisory, like <see cref="PierSide"/>. ASCOM defines <c>Slewing</c> in terms
 /// of the slews, parks and axis moves a client asked for, and whether a driver
-/// also reports motion started from a hand controller or another program is
-/// unknown (see docs/DEVICE-COMPATIBILITY.md). The engine therefore also treats
+/// also reports motion started from a hand controller or another program is up
+/// to the driver: one has been seen to, the rest are unknown (see
+/// docs/DEVICE-COMPATIBILITY.md). The engine therefore also treats
 /// a reported position that is still changing as motion, and false here means
 /// only that the driver did not say otherwise.
 /// </param>

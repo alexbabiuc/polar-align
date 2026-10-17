@@ -201,6 +201,11 @@ D11's residual check caught all three: it rejected the fits and named
 declination movement as the likely cause, which is exactly what two of them
 were. The safety net earned its place before any hardware existed.
 
+**Hardware half: met (reported 2026-10-17).** The user ran the sequence on their
+own equipment and reports it worked. Which build, mounts and drivers were used is
+not recorded here, so the per-driver questions in
+`docs/DEVICE-COMPATIBILITY.md` stay open until someone records them.
+
 ---
 
 ## Phase 4 — UI and the live adjustment loop *(joint)*
@@ -256,11 +261,14 @@ starting 2° out, one sweep and one turn by the live reading left 0.03′ of tru
 error, and the reading agreed with the truth to 0.007′. Whether the left/right
 wording matches what a user at a real mount sees is VERIFY until a night allows it.
 
-**The exit criterion is not met and cannot be here.** It asks for a real night on
-real equipment, which needs both hardware and a sky. What has been established is
-that the numbers behind the screen are right and that the screen does not
-misrepresent them; whether they can be *acted on* without reading the source is
-exactly what a real night would test.
+**Exit criterion: met (reported 2026-10-17).** It asks for a real night on real
+equipment, aligning to better than 2′ from what the screen says. The user reports
+it tested fine on their own equipment. The final error and the build used are
+not recorded here.
+
+*Before that:* the simulator showed the numbers behind the screen were right and
+that the screen did not misrepresent them. Only a real night could show they can
+be *acted on* without reading the source.
 
 ### Phase 4b — Operator control of the loop
 
@@ -496,9 +504,13 @@ forced sample never using a frame exposed before the press.
 
 **Not verified:** the window. The app launches and stays running with the
 simulator; its reducer, commands, preview queue and save path are tested (147
-tests). The hardware half stays VERIFY, in particular whether a driver reports
-hand-controller motion as `Slewing` (`docs/DEVICE-COMPATIBILITY.md`). The engine
-does not depend on it, because it also treats a changing position as motion.
+tests).
+
+**Hardware half: met (reported 2026-10-17).** The user reports it tested fine
+on their own equipment, and that their mount's driver reports a manual move as
+`Slewing`. Which driver that was is not recorded, and the others are still
+unknown (`docs/DEVICE-COMPATIBILITY.md`). The engine does not depend on it,
+because it also treats a changing position as motion.
 
 ---
 
@@ -530,14 +542,42 @@ Each lands as a plugin. None require touching the application.
 phase, because through ASCOM the one setting that ruined a night — gain — could
 not be reached. Built and tested as far as a machine without the cameras or the
 vendor libraries allows: struct layouts checked against the real headers for
-both ABIs, all data handling tested, no native call ever executed. *Not yet
-verified against real hardware*, which is this phase's actual bar.
+both ABIs, all data handling tested, no native call ever executed.
+
+**On hardware (reported 2026-10-17):**
+- **ZWO works.**
+- **ToupTek needs more testing in its high bit-depth readout.** That is the
+  plugin's second readout mode, delivered in 16-bit frames. The user's camera
+  reports a maximum bit depth of 12, so the window labels the mode "12-bit".
+  What remains open is whether frames in that mode come out right: stretch, star
+  detection, solving, and the raw values in the saved FITS (see
+  `docs/DEVICE-COMPATIBILITY.md`).
 
 The line above turned out not to be quite true. The plugins themselves needed
 nothing from the application, but offering their gain did: a gain member on
 `ICamera`, capabilities on `DeviceDescriptor` so the UI can offer the right
 control before connecting, and settings remembered per camera. Contract changes,
 made once; the next vendor should need none of them.
+
+---
+
+## Open issues
+
+### Images at longer focal lengths do not solve *(reported 2026-10-17)*
+
+Frames taken at longer focal lengths fail to solve on the user's equipment.
+Shorter ones solve. Not yet investigated. The focal length, sensor, solver and
+build are not recorded yet, and should be, from the session log and a kept
+failed frame.
+
+The first thing to check, an inference only: D13's bundled Watney packs cover a
+field radius of 0.6° and wider, about a 1.2° diagonal. A narrower field needs
+the `10-11`, `12-13` or `14-20` pack, and without one Watney cannot solve it
+whatever else is right. If the field is wider than that, the next suspects are:
+
+- a solve timeout too short for a denser search;
+- too few stars detected at the exposure used;
+- a field-size hint, from the entered or measured focal length, that is far off.
 
 ---
 
@@ -553,7 +593,10 @@ Checked for the two pulled forward (D25): ZWO's SDK licence permits
 redistribution with its notice. The ToupTek library is LGPL-2.1 as INDI
 redistributes it, but that covers its Linux and macOS builds; no terms were found
 for the Windows `toupcam.dll`. ZWO's library is now shipped from `resources/`
-with its notice; ToupTek's is supplied by the user.
+with its notice. ToupTek's Windows `toupcam.dll` is shipped as well
+(`resources/touptek/`). That was the user's decision, made knowing the SDK states
+no redistribution terms, and D25 records that they should be confirmed with
+ToupTek before the repository goes public.
 
 **Watney's library API.** D3 assumes it is usable as an embedded library with
 manageable database tiers. If that assumption fails, the fallback is subprocessing

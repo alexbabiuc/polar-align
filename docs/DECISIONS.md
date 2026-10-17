@@ -272,7 +272,22 @@ the dangerous part.
 **Consequences.** Usable RA sweep is limited to roughly 60–75° rather than a full
 half-revolution. This is not a real constraint: plate solving is precise enough
 that 30° gives good conditioning, so the geometry is comfortable. If a requested
-sweep would cross, the software reverses direction instead.
+sweep would cross, the planner shrinks it, in 5° steps down to 30°, rather than
+cross; and only if nothing east survives does it plan the west side.
+
+The bounds are a 5° margin either side of the meridian and a 30° altitude
+floor, both in `TargetSelection`, and every proposed point keeps them. The plan
+is made in mechanical hour angle from the site and the current time, so "one
+side" holds by construction. The margin is 5° rather than the 2° first
+suggested because the live reading (D17) keeps tracking after the sweep's last
+point, which sits on the margin. At sidereal rate, 5° gives about twenty minutes
+of bolt-turning before the meridian; 2° would give about eight.
+
+**Revised (0.0.26).** Edited slew coordinates are held to the same bounds.
+They used to go straight to the mount, so a typed position west of the
+meridian was a GoTo across it, which is the command that makes a mount flip.
+An edit outside the margin or below the floor is now refused before anything
+moves.
 
 Some drivers report `SideOfPier` unreliably (see D9), so hour angle is also
 computed independently as a cross-check.

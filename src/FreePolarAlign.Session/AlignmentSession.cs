@@ -1865,6 +1865,13 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         double declination = MechanicalDeclinationOf(
             _site!, command.RaDegrees, command.DecDegrees, DateTime.UtcNow);
 
+        string? outOfBounds = EditedSlewOutOfBoundsReason(command.RaDegrees, command.DecDegrees, rotation);
+        if (outOfBounds is not null)
+        {
+            _events.Publish(new CommandRejectedEvent(outOfBounds));
+            return;
+        }
+
         double declinationDifferenceArcminutes =
             Math.Abs(declination - _plan!.MechanicalDeclinationDegrees) * 60.0;
 
@@ -1898,6 +1905,45 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         _events.Publish(new SlewConfirmedEvent(ra, dec, WasOverridden: true));
         BeginSlew(ra, dec);
+    }
+
+    /// <summary>
+    /// Holds an edited slew to the bounds every proposal already keeps (D8).
+    ///
+    /// Proposals respect the meridian margin and the altitude floor by
+    /// construction, but edited coordinates went straight to the mount, and a
+    /// GoTo to the far side of the meridian is exactly what makes a mount flip
+    /// -- the one move D8 exists to forbid, now commanded by this software
+    /// rather than merely observed. Refusing costs the user a retype; slewing
+    /// costs the sequence, and possibly the cables.
+    ///
+    /// The side is the plan's, not merely "east": a plan falls back to the west
+    /// when nothing east survives, and an edit must stay where it is.
+    /// The altitude is the commanded position's own, rather than one predicted
+    /// from the snapped declination: that is where the mount will actually go.
+    /// </summary>
+    private string? EditedSlewOutOfBoundsReason(double raDegrees, double decDegrees, double rotation)
+    {
+        int side = _plan!.IsWest ? 1 : -1;
+        if (Math.Sign(rotation) != side || Math.Abs(rotation) < TargetSelection.MeridianMarginDegrees)
+        {
+            string planSide = side > 0 ? "west" : "east";
+            return $"Those coordinates are {Math.Abs(rotation):F1}° {(rotation >= 0 ? "west" : "east")} of the " +
+                   $"meridian. The sequence stays {planSide} of it with a {TargetSelection.MeridianMarginDegrees:F0}° " +
+                   "margin, because a slew across would flip the mount and put the samples on two different " +
+                   "circles (D8). Nothing has moved.";
+        }
+
+        var observer = new ObserverSite(_site!.LatitudeDegrees, _site.LongitudeDegrees, _site.HeightMeters);
+        double altitude = TopocentricConverter.ToAltAz(
+            raDegrees, decDegrees, DateTime.UtcNow, observer, AtmosphericConditions.Vacuum).AltitudeDegrees;
+        if (altitude < TargetSelection.MinimumAltitudeDegrees)
+        {
+            return $"Those coordinates are {altitude:F0}° above the horizon, below the " +
+                   $"{TargetSelection.MinimumAltitudeDegrees:F0}° floor every capture keeps (D8). Nothing has moved.";
+        }
+
+        return null;
     }
 
     /// <summary>

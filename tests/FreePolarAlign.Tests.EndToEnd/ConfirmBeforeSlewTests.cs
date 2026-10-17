@@ -259,6 +259,57 @@ public class ConfirmBeforeSlewTests
             "computed from samples that no longer exist");
     }
 
+    /// <summary>
+    /// An edit across the meridian is refused before anything moves (D8).
+    /// Edited coordinates used to go straight to the mount, and a GoTo to the
+    /// far side is the one command that makes a mount flip mid-sequence.
+    /// </summary>
+    [Fact]
+    public async Task AnOverrideAcrossTheMeridian_IsRefusedWithoutMoving()
+    {
+        using var harness = new SessionHarness();
+        await harness.ReadyAsync();
+        await harness.WaitForSampleAsync(1);
+
+        SlewProposedEvent proposal = await harness.Recorder.WaitForAsync<SlewProposedEvent>(e => e.PointIndex == 2);
+        int slewsBefore = harness.Mount.Slews.Count;
+
+        (double ra, double dec) = TargetSelection.ResolveCommand(
+            Site, 10.0, harness.Recorder.Last<TargetSelectedEvent>()!.DeclinationDegrees, DateTime.UtcNow);
+        await harness.Session.SendAsync(new ConfirmSlewCommand(ra, dec));
+
+        CommandRejectedEvent? rejected = harness.Recorder.Last<CommandRejectedEvent>();
+        Assert.True(rejected is not null, harness.Recorder.Trail());
+        Assert.Contains("meridian", rejected!.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(slewsBefore, harness.Mount.Slews.Count);
+    }
+
+    /// <summary>
+    /// An edit below the altitude floor is refused too, including one at a new
+    /// declination: that path re-plans, but it used to slew to the typed
+    /// coordinates whatever the new plan said about them.
+    /// </summary>
+    [Fact]
+    public async Task AnOverrideBelowTheAltitudeFloor_IsRefusedWithoutMoving()
+    {
+        using var harness = new SessionHarness();
+        await harness.ReadyAsync();
+        await harness.WaitForSampleAsync(1);
+
+        await harness.Recorder.WaitForAsync<SlewProposedEvent>(e => e.PointIndex == 2);
+        int slewsBefore = harness.Mount.Slews.Count;
+
+        // East of the meridian, but near the horizon.
+        (double ra, double dec) = TargetSelection.ResolveCommand(Site, -100.0, 10.0, DateTime.UtcNow);
+        await harness.Session.SendAsync(new ConfirmSlewCommand(ra, dec));
+
+        CommandRejectedEvent? rejected = harness.Recorder.Last<CommandRejectedEvent>();
+        Assert.True(rejected is not null, harness.Recorder.Trail());
+        Assert.Contains("floor", rejected!.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(slewsBefore, harness.Mount.Slews.Count);
+        Assert.Null(harness.Recorder.Last<AlignmentWithheldEvent>());
+    }
+
     /// <summary>Coordinates that are not on the sky are refused before anything moves.</summary>
     [Theory]
     [InlineData(400.0, 30.0)]

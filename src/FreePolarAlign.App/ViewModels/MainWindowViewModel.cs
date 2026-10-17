@@ -221,9 +221,11 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             () => SendAsync(new CancelSessionCommand()),
             () => Ready && State.SessionActive);
 
+        // Abort stops the mount's drive as well as the sequence (D36), so it is
+        // offered only where there is a drive to stop; Stop sequence covers the rest.
         AbortCommand = new RelayCommand(
             () => SendAsync(new AbortSessionCommand("Aborted by operator.")),
-            () => Ready && State.SessionActive);
+            () => Ready && State.SessionActive && State.Mount.IsConnected);
 
         _subscription = _engine?.Events.Subscribe(new DelegateObserver<EngineEvent>(OnEngineEvent));
 

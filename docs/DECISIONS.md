@@ -1809,3 +1809,35 @@ tried on hardware.
 showing, still under the 720px limit D34 set, and the layout test holds that. The
 simulated mount now keeps a reported site apart from where it physically stands,
 so a wrong site written to it changes the warning and not the sky.
+
+---
+
+## D36 — Abort stops the mount, tracking included, and needs a mount
+
+**Abort** ends the sequence, stops any slew where it has got to, and turns
+tracking off. It is offered only while a sequence runs with a mount connected,
+and the engine refuses it otherwise. **Stop sequence** is unchanged: it ends the
+sequence, cancels a slew the sequence started, keeps the last figure on screen,
+and leaves the drive running.
+
+**Why.** The user asked for it. Before, both buttons ran the same reset. Both
+already cancelled the engine's slew (the ASCOM mount calls `AbortSlew` when its
+slew is cancelled). They differed only in whether the result stayed on screen
+and whether the log called it a fault. The red Abort button looked like an
+emergency stop and did nothing more than Stop.
+
+**What the fault says is what the mount did.** The engine resets the sequence
+first, so nothing it does next can restart the mount, then calls
+`IMount.HaltAsync`: `AbortSlew`, then `Tracking = false`. If the driver refuses
+the second, the fault says tracking may still be on. "Aborted" alone would leave
+someone believing a drive was off when it was not.
+
+**Without a mount, Abort is refused rather than acting like Stop.** It is there
+to stop a drive, and with no mount connected there is none to stop. Stop sequence
+covers ending an unconnected sequence.
+
+`CanSetTracking` is not consulted. A driver that reports false throws on the
+write anyway, and one that reports true may still refuse, so only the write
+gives a real answer. See docs/DEVICE-COMPATIBILITY.md.
+
+Not tested on hardware. Pinned by `AbortTests` (engine) and `AbortUiTests` (UI).

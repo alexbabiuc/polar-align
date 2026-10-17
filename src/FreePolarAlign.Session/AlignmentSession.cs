@@ -407,8 +407,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                     _events.Publish(new SessionCompletedEvent());
                     break;
                 case AbortSessionCommand abort:
-                    ResetSession();
-                    _events.Publish(new SessionFaultedEvent(abort.Reason));
+                    await AbortAsync(abort, cancellationToken).ConfigureAwait(false);
                     break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(command), command, "Unrecognised engine command.");
@@ -746,6 +745,45 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 await ReleaseMountAsync(CancellationToken.None).ConfigureAwait(false);
             }
         }
+    }
+
+    // ---- Abort ----
+
+    /// <summary>
+    /// Ends the sequence and stops the mount, tracking included (D36). Stop
+    /// sequence already cancels a slew the engine started; what Abort adds is
+    /// the drive, which is why it means nothing without a mount and is refused
+    /// rather than quietly behaving like Stop.
+    ///
+    /// The sequence is reset first, so nothing the engine does next can start
+    /// the mount again, and the fault carries what the mount actually did --
+    /// "aborted" alone would let someone believe a drive was off that the
+    /// driver refused to stop.
+    /// </summary>
+    private async Task AbortAsync(AbortSessionCommand abort, CancellationToken cancellationToken)
+    {
+        if (!MountConnected)
+        {
+            _events.Publish(new CommandRejectedEvent(
+                "Abort stops the mount, and no mount is connected. Stop sequence ends the sequence."));
+            return;
+        }
+
+        ResetSession();
+
+        string outcome;
+        try
+        {
+            await _mount!.HaltAsync(cancellationToken).ConfigureAwait(false);
+            outcome = "The mount has stopped, tracking included.";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            outcome = $"Any slew was stopped, but tracking may still be on: {ex.Message}. " +
+                      "Turn it off at the hand controller if it needs to be.";
+        }
+
+        _events.Publish(new SessionFaultedEvent($"{abort.Reason} {outcome}"));
     }
 
     // ---- Site and equipment ----

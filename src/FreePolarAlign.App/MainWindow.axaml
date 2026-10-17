@@ -560,8 +560,10 @@
                 ToolTip.Tip="Needs a camera and a site, which is entered in Settings. With no mount connected, positions come from blind solves and you move the telescope by hand." />
         <Button Content="Record sample" Command="{Binding RecordSampleCommand}"
                 ToolTip.Tip="Uses the next frame to start as a sample now, whatever the spacing and settling checks say. The frame on screen is never used: it may have been exposed while the telescope was moving." />
-        <Button Content="Stop sequence" Command="{Binding CancelCommand}" />
-        <Button Content="Abort" Command="{Binding AbortCommand}" Background="#5A1E1E" />
+        <Button Content="Stop sequence" Command="{Binding CancelCommand}"
+                ToolTip.Tip="Ends the sequence and keeps the last figure on screen. A slew the sequence started is stopped; the mount keeps tracking." />
+        <Button Content="Abort" Command="{Binding AbortCommand}" Background="#5A1E1E"
+                ToolTip.Tip="Ends the sequence, stops any slew and turns tracking off. Only with a mount connected." />
       </StackPanel>
 
       <Border Grid.Row="1" BorderBrush="#4A4A4A" BorderThickness="1" CornerRadius="4">

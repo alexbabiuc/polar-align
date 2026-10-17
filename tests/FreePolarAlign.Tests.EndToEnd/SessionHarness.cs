@@ -128,6 +128,7 @@ internal sealed class RecordingMount : IMount
 {
     private readonly SimulatedMount _inner;
     private readonly List<(double Ra, double Dec)> _slews = new();
+    private int _halts;
 
     public RecordingMount(SimulatedMount inner) => _inner = inner;
 
@@ -175,6 +176,14 @@ internal sealed class RecordingMount : IMount
 
     public Task SetSiteLocationAsync(GeodeticLocation site, CancellationToken cancellationToken = default) =>
         _inner.SetSiteLocationAsync(site, cancellationToken);
+
+    public int Halts => Volatile.Read(ref _halts);
+
+    public Task HaltAsync(CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref _halts);
+        return _inner.HaltAsync(cancellationToken);
+    }
 
     public void Dispose() => _inner.Dispose();
 }
@@ -410,7 +419,8 @@ internal sealed class SessionHarness : IDisposable
         ISolver? solver = null,
         TimeSpan? settleDelay = null,
         TimeSpan? solveInterval = null,
-        SimulatedSiteWrites siteWrites = SimulatedSiteWrites.Stored)
+        SimulatedSiteWrites siteWrites = SimulatedSiteWrites.Stored,
+        bool canStopTracking = true)
     {
         Simulated = new SimulatedMount(new SimulatedMountOptions(
             Site,
@@ -421,7 +431,8 @@ internal sealed class SessionHarness : IDisposable
             SlewDuration: slewDuration ?? TimeSpan.Zero,
             CanSlewAsync: canSlew,
             InitialMechanicalRotationDegrees: initialRotationDegrees,
-            SiteWrites: siteWrites));
+            SiteWrites: siteWrites,
+            CanStopTracking: canStopTracking));
 
         Mount = new RecordingMount(Simulated);
         Camera = new StubCamera();

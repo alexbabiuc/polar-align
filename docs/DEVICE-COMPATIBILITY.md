@@ -329,6 +329,19 @@ mount. `AscomMount.SetSiteLocationAsync` is compiled but **untested**.
 
 ---
 
+### Turning tracking off on Abort (all three drivers, D36)
+
+- `Tracking` is read/write in ITelescope, and `CanSetTracking` says whether it
+  can be written. A driver that cannot write it throws
+  PropertyNotImplementedException **[DOC]**.
+- `AbortSlew` stops a slew and is meant to return promptly **[DOC]**.
+- Whether the iOptron, EQMOD and SynScan drivers accept `Tracking = false`
+  **[UNKNOWN]**. The engine tries the write rather than trusting
+  `CanSetTracking`. If it is refused, the abort says tracking may still be on.
+- Whether a driver that has turned tracking off turns it back on when the next
+  slew is commanded **[UNKNOWN]**. ASCOM leaves this to the driver. The
+  simulator leaves the drive off.
+
 ## What this means for D9/D8 in this project
 
 1. **`SideOfPier` should be treated as advisory across all three drivers, not
@@ -381,6 +394,9 @@ mount. `AscomMount.SetSiteLocationAsync` is compiled but **untested**.
   on each, and compare the read-back the log reports with what was written (D35).
 - Any meridian-flip firmware behaviour specific to the SynScan driver
   analogous to iOptron's "Meridian Treatment" setting.
+- **[UNKNOWN]** Whether the iOptron, EQMOD and SynScan drivers accept
+  `Tracking = false`, and whether they turn tracking back on at the next slew.
+  **VERIFY** with Abort on each, and watch the drive state the status shows (D36).
 - **[UNKNOWN]** Whether any of the three drivers reports hand-controller or
   other-software motion through `Slewing`, and whether their reported
   coordinates follow it. See the `Slewing` section above; D26 depends on

@@ -346,7 +346,11 @@ public sealed record ConfirmSlewCommand(double RaDegrees, double DecDegrees) : E
 
 public sealed record CancelSessionCommand : EngineCommand;
 
-/// <summary>An operator- or safety-triggered abort, distinct from a plain cancel (carries a reason for the log/UI).</summary>
+/// <summary>
+/// Ends the sequence and stops the mount, tracking included (D36). A plain
+/// cancel ends the sequence and keeps the last figure; this treats it as a
+/// fault and needs a connected mount. The reason is carried for the log and UI.
+/// </summary>
 public sealed record AbortSessionCommand(string Reason) : EngineCommand;
 
 /// <summary>

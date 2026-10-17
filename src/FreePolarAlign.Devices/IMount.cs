@@ -113,4 +113,15 @@ public interface IMount : IDisposable
     /// some of it. Callers read it back with <see cref="GetSiteLocationAsync"/>.
     /// </summary>
     Task SetSiteLocationAsync(GeodeticLocation site, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stops the mount: ends any slew where it has got to, then turns tracking
+    /// off. This is what the operator's Abort means (D36): cancelling a slew
+    /// alone leaves the drive running, which is not "stop".
+    ///
+    /// Throws when tracking could not be turned off, with a message that says
+    /// so. The slew is stopped regardless, since that is the part that can hit
+    /// something.
+    /// </summary>
+    Task HaltAsync(CancellationToken cancellationToken = default);
 }

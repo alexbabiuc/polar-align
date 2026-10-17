@@ -44,6 +44,10 @@ namespace FreePolarAlign.Devices.Simulated;
 /// It is also the site the mount reports until a client writes another (D35).
 /// </param>
 /// <param name="SiteWrites">How the mount answers a client writing a site to it.</param>
+/// <param name="CanStopTracking">
+/// False for a driver that refuses <c>Tracking = false</c>, so the engine's
+/// report of an abort that could not stop the drive can be exercised (D36).
+/// </param>
 public sealed record SimulatedMountOptions(
     GeodeticLocation Site,
     MountMisalignment Misalignment,
@@ -55,7 +59,8 @@ public sealed record SimulatedMountOptions(
     bool CanSlewAsync = true,
     double InitialMechanicalRotationDegrees = 12.0,
     double InitialPoleDistanceDegrees = 22.0,
-    SimulatedSiteWrites SiteWrites = SimulatedSiteWrites.Stored);
+    SimulatedSiteWrites SiteWrites = SimulatedSiteWrites.Stored,
+    bool CanStopTracking = true);
 
 /// <summary>
 /// The ways a driver answers a client writing a site, as far as D35's reading
@@ -118,6 +123,7 @@ public sealed class SimulatedMount : IMount
 
     private MountMisalignment _misalignment;
     private GeodeticLocation _reportedSite;
+    private bool _tracking;
     private double _commandedRaDegrees;
     private double _commandedDecDegrees;
     private DateTime _mechanicalEpochUtc;
@@ -131,6 +137,7 @@ public sealed class SimulatedMount : IMount
         Options = options;
         _misalignment = options.Misalignment;
         _reportedSite = options.Site;
+        _tracking = options.Tracking;
         _observerSite = new ObserverSite(options.Site.LatitudeDegrees, options.Site.LongitudeDegrees, options.Site.HeightMeters);
 
         // Switched on already pointing somewhere, like the real thing. The
@@ -279,7 +286,7 @@ public sealed class SimulatedMount : IMount
             // With the drive off the mechanical angles hold and the sky moves
             // past, so what the encoders say the mount points at drifts at the
             // sidereal rate, as a real undriven mount's report does.
-            if (slewing || !Options.Tracking)
+            if (slewing || !_tracking)
             {
                 (double rotation, double declination) = MechanicsAt(now);
                 (ra, dec) = BeliefFromMechanics(rotation, declination, now);
@@ -290,7 +297,7 @@ public sealed class SimulatedMount : IMount
                 dec,
                 ComputeSideOfPier(now),
                 now,
-                Options.Tracking ? TrackingState.Tracking : TrackingState.Stopped,
+                _tracking ? TrackingState.Tracking : TrackingState.Stopped,
                 slewing));
         }
     }
@@ -436,6 +443,39 @@ public sealed class SimulatedMount : IMount
     }
 
     /// <summary>
+    /// Stops any slew where it has got to, then freezes the mechanical angles
+    /// where tracking had carried them. The belief is re-derived at that
+    /// instant so that, with the drive off, the angles hold and the reported
+    /// position drifts with the sky, as on an undriven mount.
+    /// </summary>
+    public Task HaltAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        RequireConnected();
+
+        lock (_gate)
+        {
+            DateTime now = DateTime.UtcNow;
+            StopWhereItIs(now);
+
+            if (!Options.CanStopTracking)
+            {
+                throw new NotSupportedException("Property write Tracking is not implemented in this driver.");
+            }
+
+            if (_tracking)
+            {
+                (double rotation, double declination) = MechanicsAt(now);
+                (_commandedRaDegrees, _commandedDecDegrees) = BeliefFromMechanics(rotation, declination, now);
+                _mechanicalEpochUtc = now;
+                _tracking = false;
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
     /// Where the telescope is really aimed at a given instant, in the local
     /// horizon frame. This is the physical truth the camera sees and the
     /// software never learns directly.
@@ -483,7 +523,7 @@ public sealed class SimulatedMount : IMount
         {
             if (utc >= slew.EndUtc)
             {
-                return Decompose(slew.TargetRaDegrees, slew.TargetDecDegrees, Options.Tracking ? utc : slew.EndUtc);
+                return Decompose(slew.TargetRaDegrees, slew.TargetDecDegrees, _tracking ? utc : slew.EndUtc);
             }
 
             double fraction = Math.Clamp((utc - slew.StartUtc) / (slew.EndUtc - slew.StartUtc), 0.0, 1.0);
@@ -501,7 +541,7 @@ public sealed class SimulatedMount : IMount
         // With the drive stopped the mechanical angles stay where the slew left
         // them, so they are evaluated at the slew's epoch; while tracking they
         // are evaluated now, which advances them at the sidereal rate.
-        return Decompose(_commandedRaDegrees, _commandedDecDegrees, Options.Tracking ? utc : _mechanicalEpochUtc);
+        return Decompose(_commandedRaDegrees, _commandedDecDegrees, _tracking ? utc : _mechanicalEpochUtc);
     }
 
     /// <summary>

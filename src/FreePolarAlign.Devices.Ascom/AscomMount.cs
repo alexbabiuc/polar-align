@@ -230,6 +230,31 @@ public sealed class AscomMount : IMount
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// <c>AbortSlew</c> first and best-effort, then <c>Tracking = false</c>.
+    /// <c>CanSetTracking</c> is not consulted: a driver that says false throws
+    /// PropertyNotImplementedException on the write, and one that says true
+    /// may still refuse, so the write itself is the only answer worth having.
+    /// </summary>
+    public Task HaltAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        TryAbortSlew();
+
+        try
+        {
+            _telescope.Tracking = false;
+        }
+        catch (Exception ex)
+        {
+            Exception cause = ex is System.Reflection.TargetInvocationException { InnerException: { } inner } ? inner : ex;
+            throw new AscomPlatformNotAvailableException(
+                $"the driver would not turn tracking off ({cause.Message})", cause);
+        }
+
+        return Task.CompletedTask;
+    }
+
     private static void TrySet(string property, Action set, List<string> refusals)
     {
         try

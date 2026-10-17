@@ -23,15 +23,17 @@ public sealed class AscomCamera : ICamera
     private readonly string _progId;
     private readonly dynamic _camera;
     private readonly string _workingDirectory;
+    private readonly TimeProvider _time;
     private bool _disposed;
 
-    public AscomCamera(string progId)
-        : this(progId, Path.Combine(Path.GetTempPath(), "FreePolarAlign", "captures"))
+    public AscomCamera(string progId, TimeProvider timeProvider)
+        : this(progId, Path.Combine(Path.GetTempPath(), "FreePolarAlign", "captures"), timeProvider)
     {
     }
 
-    internal AscomCamera(string progId, string workingDirectory)
+    internal AscomCamera(string progId, string workingDirectory, TimeProvider timeProvider)
     {
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _progId = progId;
         _workingDirectory = workingDirectory;
         _camera = AscomDeviceProvider.CreateComObject(progId,
@@ -306,7 +308,7 @@ public sealed class AscomCamera : ICamera
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        DateTime startUtc = DateTime.UtcNow;
+        DateTime startUtc = _time.GetUtcNow().UtcDateTime;
         try
         {
             _camera.StartExposure(duration.TotalSeconds, true);
@@ -320,7 +322,7 @@ public sealed class AscomCamera : ICamera
         {
             while (!IsImageReady())
             {
-                await Task.Delay(PollInterval, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(PollInterval, _time, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)

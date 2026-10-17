@@ -5,6 +5,7 @@ using FreePolarAlign.Imaging.Detection;
 using FreePolarAlign.Imaging.Fits;
 using FreePolarAlign.Imaging.Wcs;
 using FreePolarAlign.Solving;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.EndToEnd;
@@ -100,7 +101,7 @@ public class Phase2ExitCriterionTests
 
         try
         {
-            using var solver = new WatneyPlateSolver(QuadDatabaseDirectory);
+            using var solver = new WatneyPlateSolver(QuadDatabaseDirectory, new TestClock());
             PlateSolveResult result = solver.SolveAsync(
                 new PlateSolveRequest(path, Timeout: TimeSpan.FromMinutes(2))).GetAwaiter().GetResult();
 
@@ -140,7 +141,7 @@ public class Phase2ExitCriterionTests
 
         try
         {
-            using var solver = new WatneyPlateSolver(QuadDatabaseDirectory);
+            using var solver = new WatneyPlateSolver(QuadDatabaseDirectory, new TestClock());
             PlateSolveResult result = solver.SolveAsync(
                 new PlateSolveRequest(path, Timeout: TimeSpan.FromMinutes(2))).GetAwaiter().GetResult();
 
@@ -182,7 +183,7 @@ public class Phase2ExitCriterionTests
     {
         RequireQuadDatabase();
 
-        using var solver = new WatneyPlateSolver(QuadDatabaseDirectory);
+        using var solver = new WatneyPlateSolver(QuadDatabaseDirectory, new TestClock());
         AssertInjectedMisalignmentRecovered(solver);
     }
 
@@ -199,7 +200,7 @@ public class Phase2ExitCriterionTests
         string executable = AstapPlateSolver.ResolveExecutable(Environment.GetEnvironmentVariable("FPA_ASTAP"));
         Skip.IfNot(File.Exists(executable), "ASTAP is not installed where it is looked for; set FPA_ASTAP to run this.");
 
-        AssertInjectedMisalignmentRecovered(new AstapPlateSolver(executable));
+        AssertInjectedMisalignmentRecovered(new AstapPlateSolver(executable, new TestClock()));
     }
 
     private static void AssertInjectedMisalignmentRecovered(ISolver solver)
@@ -317,7 +318,7 @@ public class Phase2ExitCriterionTests
 
         try
         {
-            using var solver = new WatneyPlateSolver(QuadDatabaseDirectory);
+            using var solver = new WatneyPlateSolver(QuadDatabaseDirectory, new TestClock());
             PlateSolveResult result = solver.SolveAsync(
                 new PlateSolveRequest(path, Timeout: TimeSpan.FromMinutes(2))).GetAwaiter().GetResult();
 

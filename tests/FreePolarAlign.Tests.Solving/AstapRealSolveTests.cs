@@ -2,6 +2,7 @@ using FreePolarAlign.Devices.Simulated.SyntheticSky;
 using FreePolarAlign.Imaging.Fits;
 using FreePolarAlign.Imaging.Wcs;
 using FreePolarAlign.Solving;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.Solving;
@@ -54,7 +55,7 @@ public class AstapRealSolveTests
         (string path, TanWcsSolution truth) = RenderFrame(raDegrees, decDegrees);
         try
         {
-            PlateSolveResult result = await new AstapPlateSolver(astap!).SolveAsync(
+            PlateSolveResult result = await new AstapPlateSolver(astap!, new TestClock()).SolveAsync(
                 new PlateSolveRequest(path, Timeout: TimeSpan.FromSeconds(60)));
 
             SkipIfNoDatabase(result);
@@ -88,7 +89,7 @@ public class AstapRealSolveTests
                 SearchRadiusDegrees: 10.0,
                 Timeout: TimeSpan.FromSeconds(60));
 
-            PlateSolveResult result = await new AstapPlateSolver(astap!).SolveAsync(request);
+            PlateSolveResult result = await new AstapPlateSolver(astap!, new TestClock()).SolveAsync(request);
 
             SkipIfNoDatabase(result);
             AssertMatches(truth, result);

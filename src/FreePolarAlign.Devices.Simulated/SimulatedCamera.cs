@@ -148,13 +148,13 @@ public sealed class SimulatedCamera : ICamera
             throw new InvalidOperationException("The simulated camera is not connected.");
         }
 
-        DateTime start = DateTime.UtcNow;
+        DateTime start = _mount.Time.GetUtcNow().UtcDateTime;
         if (duration > TimeSpan.Zero)
         {
             // Shortened deliberately: the exposure has to be interruptible and
             // has to take some real time, but a test suite cannot wait out
             // hundreds of real exposures.
-            await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(duration.TotalMilliseconds, 20.0)), cancellationToken)
+            await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(duration.TotalMilliseconds, 20.0)), _mount.Time, cancellationToken)
                 .ConfigureAwait(false);
         }
 

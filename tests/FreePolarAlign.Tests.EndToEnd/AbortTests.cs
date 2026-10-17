@@ -1,6 +1,7 @@
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Devices;
 using FreePolarAlign.Session;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.EndToEnd;
@@ -59,7 +60,7 @@ public class AbortTests
         await harness.Recorder.WaitForAsync<SlewProposedEvent>(e => e.PointIndex == 2);
         await harness.Session.SendAsync(new CaptureNextPointCommand());
         await harness.Recorder.WaitForAsync<SlewConfirmedEvent>();
-        await Task.Delay(200);
+        await harness.Clock.PassAsync(TimeSpan.FromMilliseconds(200));
 
         await harness.Session.SendAsync(new AbortSessionCommand("Aborted by operator."));
 

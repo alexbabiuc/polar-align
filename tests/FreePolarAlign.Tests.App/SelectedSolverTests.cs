@@ -1,6 +1,7 @@
 using FreePolarAlign.App.Services;
 using FreePolarAlign.Session;
 using FreePolarAlign.Solving;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.App;
@@ -39,7 +40,7 @@ public class SelectedSolverTests
     private static string MissingFrame() => Path.Combine(Path.GetTempPath(), $"fpa-selected-{Guid.NewGuid():N}.fits");
 
     private static SelectedSolver Create(CountingSolver inner, List<string>? log = null, bool windows = true) =>
-        new(inner, log is null ? null : log.Add, resolveExecutable: (_, path) => path ?? "solver-not-installed", canRunWindowsSolvers: windows);
+        new(inner, new TestClock(), log is null ? null : log.Add, resolveExecutable: (_, path) => path ?? "solver-not-installed", canRunWindowsSolvers: windows);
 
     [Fact]
     public async Task Unconfigured_SendsEverythingToTheInternalSolver()

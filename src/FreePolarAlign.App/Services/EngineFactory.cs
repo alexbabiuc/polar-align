@@ -42,7 +42,8 @@ public sealed record EngineStartupResult(
     SessionConfiguration DefaultConfiguration,
     SelectedSolver Solver,
     IReadOnlyList<string> Warnings,
-    IReadOnlyList<IDisposable> OwnedDisposables);
+    IReadOnlyList<IDisposable> OwnedDisposables,
+    TimeProvider Time);
 
 /// <summary>
 /// Assembles the application: the device catalogue (the virtual observatory
@@ -63,10 +64,15 @@ public static class EngineFactory
         "https://github.com/Jusas/WatneyAstrometry/releases/download/watneyqdb3/watneyqdb-08-09-20-v3.zip",
     };
 
-    public static EngineStartupResult Create()
+    /// <param name="time">
+    /// The one clock everything built here runs on: the system's, passed by the
+    /// application. With the site it is all the engine needs (D37).
+    /// </param>
+    public static EngineStartupResult Create(TimeProvider time)
     {
+        ArgumentNullException.ThrowIfNull(time);
         var warnings = new List<string>();
-        SessionLog log = SessionLog.Create();
+        SessionLog log = SessionLog.Create(time);
 
         if (log.Problem is not null)
         {
@@ -93,19 +99,21 @@ public static class EngineFactory
 
         log.Write(LogSeverity.Info, $"Quad database directory: {quadDatabaseDirectory}");
 
-        DeviceCatalog catalog = BuildCatalog(warnings, log);
+        DeviceCatalog catalog = BuildCatalog(warnings, log, time);
 
         // Watney first, and a frame redrawn from its own detected stars if
         // Watney cannot match the original. Both attempts are written to the
         // session log: "could not solve" is a great deal easier to act on when
         // it says what was tried.
-        var watney = new WatneyPlateSolver(quadDatabaseDirectory);
+        var watney = new WatneyPlateSolver(quadDatabaseDirectory, time);
         var internalSolver = new RestampFallbackSolver(
             watney,
             Path.Combine(Path.GetTempPath(), "FreePolarAlign", "restamped"),
+            time,
             message => log.Write(LogSeverity.Info, message));
 
-        var solver = new SelectedSolver(internalSolver, message => log.Write(LogSeverity.Info, message));
+        var solver = new SelectedSolver(
+            internalSolver, time, message => log.Write(LogSeverity.Info, message));
         solver.Configure(loaded.Settings);
 
         // The focal length is carried forward but not its measured status: a
@@ -125,7 +133,7 @@ public static class EngineFactory
             ApplicationName: AppVersion.ProductName,
             ApplicationVersion: AppVersion.Identifier());
 
-        var session = new AlignmentSession(catalog, solver, options);
+        var session = new AlignmentSession(catalog, solver, time, options);
 
         var configuration = new SessionConfiguration(
             CapturePoints: loaded.Settings.DefaultCapturePoints ?? options.CaptureCount,
@@ -141,7 +149,8 @@ public static class EngineFactory
             configuration,
             solver,
             warnings,
-            new IDisposable[] { session, solver, log });
+            new IDisposable[] { session, solver, log },
+            time);
     }
 
     /// <summary>
@@ -150,7 +159,7 @@ public static class EngineFactory
     /// session logic shows up on a laptop at noon rather than at a telescope in
     /// the dark.
     /// </summary>
-    private static DeviceCatalog BuildCatalog(List<string> warnings, SessionLog log)
+    private static DeviceCatalog BuildCatalog(List<string> warnings, SessionLog log, TimeProvider time)
     {
         var providers = new List<IDeviceProvider>();
 
@@ -167,7 +176,7 @@ public static class EngineFactory
             var misalignment = new Core.Alignment.MountMisalignment(
                 AltitudeErrorArcminutes: 27.0, AzimuthErrorArcminutes: -19.0);
 
-            providers.Add(new SimulatedDeviceProvider(catalog, new SimulatedMountOptions(site, misalignment)));
+            providers.Add(new SimulatedDeviceProvider(catalog, new SimulatedMountOptions(site, misalignment), time));
         }
         catch (Exception ex) when (ex is IOException or FormatException or UnauthorizedAccessException)
         {

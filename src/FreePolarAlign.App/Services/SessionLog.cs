@@ -22,9 +22,11 @@ public sealed class SessionLog : IDisposable
 {
     private readonly object _gate = new();
     private readonly StreamWriter? _writer;
+    private readonly TimeProvider _time;
 
-    private SessionLog(StreamWriter? writer, string path, string? problem)
+    private SessionLog(StreamWriter? writer, string path, string? problem, TimeProvider time)
     {
+        _time = time;
         _writer = writer;
         Path = path;
         Problem = problem;
@@ -45,12 +47,14 @@ public sealed class SessionLog : IDisposable
     /// forever: a session is the unit anybody wants to read, and a file named
     /// for its start time is the easiest possible way to find the right one.
     /// </summary>
-    public static SessionLog Create(string? directory = null)
+    /// <param name="time">Names the file and stamps lines that bring no time of their own.</param>
+    public static SessionLog Create(TimeProvider time, string? directory = null)
     {
+        ArgumentNullException.ThrowIfNull(time);
         string folder = directory ?? DefaultDirectory();
         string path = System.IO.Path.Combine(
             folder,
-            $"session-{DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)}.log");
+            $"session-{time.GetLocalNow().ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)}.log");
 
         try
         {
@@ -60,8 +64,8 @@ public sealed class SessionLog : IDisposable
                 AutoFlush = true,
             };
 
-            var log = new SessionLog(writer, path, null);
-            log.Write(LogSeverity.Info, $"free-polar-align session log started {DateTimeOffset.UtcNow:O}.");
+            var log = new SessionLog(writer, path, null, time);
+            log.Write(LogSeverity.Info, $"free-polar-align session log started {time.GetUtcNow():O}.");
 
             // Immediately after the start line, before anything can go wrong:
             // every later line in this file is only interpretable if you know
@@ -75,7 +79,8 @@ public sealed class SessionLog : IDisposable
             return new SessionLog(
                 null,
                 path,
-                $"Could not open a log file at '{path}': {ex.Message}. This session will not be recorded.");
+                $"Could not open a log file at '{path}': {ex.Message}. This session will not be recorded.",
+                time);
         }
     }
 
@@ -116,7 +121,7 @@ public sealed class SessionLog : IDisposable
 
         string line = string.Create(
             CultureInfo.InvariantCulture,
-            $"{(timestampUtc ?? DateTimeOffset.UtcNow).UtcDateTime:yyyy-MM-dd HH:mm:ss.fff}Z {Label(severity)} {message}");
+            $"{(timestampUtc ?? _time.GetUtcNow()).UtcDateTime:yyyy-MM-dd HH:mm:ss.fff}Z {Label(severity)} {message}");
 
         lock (_gate)
         {

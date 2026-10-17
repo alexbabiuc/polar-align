@@ -2,6 +2,7 @@ using FreePolarAlign.Core.Alignment;
 using FreePolarAlign.Core.Astrometry;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Session;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.EndToEnd;
@@ -113,7 +114,7 @@ public class FreezeAndTrackTests
         Assert.True(harness.Recorder.Last<TrackingStartedEvent>()!.IsUsableGeometry, harness.Recorder.Trail());
         Assert.Null(harness.Recorder.Last<SessionCompletedEvent>());
 
-        AlignmentTrackedEvent reading = await NextReadingAsync(harness, DateTimeOffset.UtcNow);
+        AlignmentTrackedEvent reading = await NextReadingAsync(harness, harness.Clock.GetUtcNow());
 
         Assert.Equal(sweep.AltitudeErrorArcminutes, reading.Estimate.AltitudeErrorArcminutes, tolerance: StillToleranceArcminutes);
         Assert.Equal(sweep.AzimuthErrorArcminutes, reading.Estimate.AzimuthErrorArcminutes, tolerance: StillToleranceArcminutes);
@@ -134,7 +135,7 @@ public class FreezeAndTrackTests
     {
         using var harness = new SessionHarness();
         await CompleteConnectedSweepAsync(harness);
-        AlignmentTrackedEvent reading = await NextReadingAsync(harness, DateTimeOffset.UtcNow);
+        AlignmentTrackedEvent reading = await NextReadingAsync(harness, harness.Clock.GetUtcNow());
 
         Assert.All(harness.Recorder.All<PointCapturedEvent>(), e => Assert.Equal(harness.Solver.Name, e.Solver));
         Assert.Equal(harness.Solver.Name, reading.Solver);
@@ -153,7 +154,7 @@ public class FreezeAndTrackTests
 
         // Half of it first, as a user would, then the rest.
         harness.Simulated.AdjustAxis(-sweep.AltitudeErrorArcminutes / 2.0, -sweep.AzimuthErrorArcminutes / 2.0);
-        AlignmentTrackedEvent halfway = await NextReadingAsync(harness, DateTimeOffset.UtcNow);
+        AlignmentTrackedEvent halfway = await NextReadingAsync(harness, harness.Clock.GetUtcNow());
 
         Assert.Equal(Truth(harness).AltitudeErrorArcminutes, halfway.Estimate.AltitudeErrorArcminutes, tolerance: ToleranceArcminutes);
         Assert.Equal(Truth(harness).AzimuthErrorArcminutes, halfway.Estimate.AzimuthErrorArcminutes, tolerance: ToleranceArcminutes);
@@ -161,7 +162,7 @@ public class FreezeAndTrackTests
         Assert.Equal(-sweep.AzimuthErrorArcminutes / 2.0, halfway.AppliedAzimuthArcminutes, tolerance: ToleranceArcminutes);
 
         harness.Simulated.AdjustAxis(-halfway.Estimate.AltitudeErrorArcminutes, -halfway.Estimate.AzimuthErrorArcminutes);
-        AlignmentTrackedEvent done = await NextReadingAsync(harness, DateTimeOffset.UtcNow);
+        AlignmentTrackedEvent done = await NextReadingAsync(harness, harness.Clock.GetUtcNow());
 
         Assert.True(done.Estimate.TotalErrorArcminutes < ToleranceArcminutes,
             $"the reading ended at {done.Estimate.TotalErrorArcminutes:F2}'{harness.Recorder.Trail()}");
@@ -186,8 +187,8 @@ public class FreezeAndTrackTests
         using var harness = new SessionHarness(tracking: driveRunning);
         AlignmentEstimate sweep = await CompleteConnectedSweepAsync(harness);
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
-        AlignmentTrackedEvent later = await NextReadingAsync(harness, DateTimeOffset.UtcNow);
+        await harness.Clock.PassAsync(TimeSpan.FromSeconds(3), harness.PollAsync);
+        AlignmentTrackedEvent later = await NextReadingAsync(harness, harness.Clock.GetUtcNow());
 
         Assert.True(Math.Abs(later.AppliedAltitudeArcminutes) < StillToleranceArcminutes &&
                     Math.Abs(later.AppliedAzimuthArcminutes) < StillToleranceArcminutes,
@@ -209,7 +210,7 @@ public class FreezeAndTrackTests
 
         await harness.MoveFromOutsideAsync(harness.MountRotationNow() - 15.0);
         harness.Simulated.AdjustAxis(-5.0, 4.0);
-        AlignmentTrackedEvent reading = await NextReadingAsync(harness, DateTimeOffset.UtcNow);
+        AlignmentTrackedEvent reading = await NextReadingAsync(harness, harness.Clock.GetUtcNow());
 
         Assert.Equal(-5.0, reading.AppliedAltitudeArcminutes, tolerance: ToleranceArcminutes);
         Assert.Equal(4.0, reading.AppliedAzimuthArcminutes, tolerance: ToleranceArcminutes);
@@ -228,7 +229,7 @@ public class FreezeAndTrackTests
     {
         using var harness = new SessionHarness();
         await CompleteConnectedSweepAsync(harness);
-        await NextReadingAsync(harness, DateTimeOffset.UtcNow);
+        await NextReadingAsync(harness, harness.Clock.GetUtcNow());
 
         harness.Simulated.NudgeDeclination(3.0);
         SequenceRestartedEvent restarted = await harness.Recorder.WaitForAsync<SequenceRestartedEvent>(poll: harness.PollAsync);
@@ -239,7 +240,7 @@ public class FreezeAndTrackTests
         // live reading follows it.
         int from = harness.Recorder.IndexOfLast<SequenceRestartedEvent>();
         await harness.Recorder.WaitForAsync<SlewProposedEvent>(e => e.PointIndex == 1, fromIndex: from);
-        await Task.Delay(300);
+        await harness.Clock.PassAsync(TimeSpan.FromMilliseconds(300));
         Assert.DoesNotContain(harness.Recorder.Events.Skip(from), e => e is AlignmentTrackedEvent);
     }
 
@@ -276,12 +277,12 @@ public class FreezeAndTrackTests
         AlignmentEstimate sweep = await CompleteUnconnectedSweepAsync(harness);
 
         // Held still until the drive is known: the first reading comes only then.
-        AlignmentTrackedEvent first = await NextReadingAsync(harness, DateTimeOffset.UtcNow, poll: false);
+        AlignmentTrackedEvent first = await NextReadingAsync(harness, harness.Clock.GetUtcNow(), poll: false);
         Assert.Equal(sweep.TotalErrorArcminutes, first.Estimate.TotalErrorArcminutes, tolerance: StillToleranceArcminutes);
 
         harness.Simulated.AdjustAxis(-sweep.AltitudeErrorArcminutes, -sweep.AzimuthErrorArcminutes);
-        await Task.Delay(TimeSpan.FromSeconds(2));
-        AlignmentTrackedEvent after = await NextReadingAsync(harness, DateTimeOffset.UtcNow, poll: false);
+        await harness.Clock.PassAsync(TimeSpan.FromSeconds(2));
+        AlignmentTrackedEvent after = await NextReadingAsync(harness, harness.Clock.GetUtcNow(), poll: false);
 
         Assert.True(after.Estimate.TotalErrorArcminutes < ToleranceArcminutes,
             $"drive {(driveRunning ? "on" : "off")}: the reading ended at {after.Estimate.TotalErrorArcminutes:F2}' " +

@@ -362,7 +362,12 @@ public sealed record AbortSessionCommand(string Reason) : EngineCommand;
 /// </summary>
 public abstract record EngineEvent
 {
-    public DateTimeOffset TimestampUtc { get; init; } = DateTimeOffset.UtcNow;
+    /// <summary>
+    /// When the engine published the event, stamped by the engine from its
+    /// clock. Default until then; an event made by hand, as a test's fake
+    /// engine makes them, carries whatever it was given.
+    /// </summary>
+    public DateTimeOffset TimestampUtc { get; init; }
 }
 
 /// <param name="Camera">Populated only when <paramref name="Kind"/> is <see cref="DeviceKind.Camera"/>.</param>

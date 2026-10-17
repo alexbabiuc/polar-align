@@ -1,5 +1,6 @@
 using FreePolarAlign.Imaging.Fits;
 using FreePolarAlign.Solving;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.Solving;
@@ -27,7 +28,7 @@ public class AstapMissingBinaryTests
         string imagePath = WriteMinimalFits();
         try
         {
-            var solver = new AstapPlateSolver(executablePath: "/definitely/does/not/exist/astap-" + Guid.NewGuid().ToString("N"));
+            var solver = new AstapPlateSolver("/definitely/does/not/exist/astap-" + Guid.NewGuid().ToString("N"), new TestClock());
 
             PlateSolveResult result = await solver.SolveAsync(new PlateSolveRequest(imagePath));
 
@@ -44,7 +45,7 @@ public class AstapMissingBinaryTests
     [Fact]
     public async Task InvalidImagePath_ReturnsInvalidImageNotException()
     {
-        var solver = new AstapPlateSolver(executablePath: "astap-" + Guid.NewGuid().ToString("N"));
+        var solver = new AstapPlateSolver("astap-" + Guid.NewGuid().ToString("N"), new TestClock());
 
         PlateSolveResult result = await solver.SolveAsync(new PlateSolveRequest("/no/such/file.fits"));
 

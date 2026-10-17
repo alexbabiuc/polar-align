@@ -1,6 +1,7 @@
 using FreePolarAlign.App.ViewModels;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Session;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.App;
@@ -89,7 +90,7 @@ public class SettingsWindowTests
     {
         var engine = new RecordingEngine();
         var store = new InMemorySettingsStore();
-        var viewModel = new MainWindowViewModel(engine, catalog: null, store, settings, log: null, warnings: null, Defaults);
+        var viewModel = new MainWindowViewModel(engine, catalog: null, store, settings, log: null, warnings: null, Defaults, new TestClock());
         return (viewModel, engine, store);
     }
 
@@ -215,7 +216,7 @@ public class SettingsWindowTests
         var store = new InMemorySettingsStore();
         var viewModel = new MainWindowViewModel(
             engine: null, catalog: null, settingsStore: store, settings: null, log: null, warnings: null,
-            Defaults);
+            Defaults, new TestClock());
 
         SettingsViewModel window = viewModel.CreateSettingsViewModel(() => { });
         window.CapturePointsText = "11";
@@ -232,7 +233,7 @@ public class SettingsWindowTests
         var changes = new List<AppSettings>();
         var viewModel = new MainWindowViewModel(
             engine: null, catalog: null, settingsStore: new InMemorySettingsStore(), settings: null, log: null, warnings: null,
-            Defaults,
+            Defaults, new TestClock(),
             settingsChanged: changes.Add);
 
         SettingsViewModel window = viewModel.CreateSettingsViewModel(() => { });

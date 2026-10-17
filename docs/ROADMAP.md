@@ -418,14 +418,19 @@ succeeds in some parts of that band and fails in others. The frames were fine â€
 The recovery test has been narrowed to assert what it is actually about: that a
 reconnected session starts and captures again rather than finding the engine
 wedged. Requiring a full six-point solution imported the solver's reliability
-into a test named after a pulled cable. The convergence tests remain exposed,
-and the proper fix is a clock the session can be given, which would also make
-D16's just-in-time resolve testable at chosen instants. Not done yet.
+into a test named after a pulled cable.
+
+**Fixed (#13, D37).** Time now reaches everything through an injected
+`TimeProvider`. Every test runs on a fake clock that starts at 2026-01-15
+22:00 UTC and moves only when the test moves it, so the same sky is rendered on
+every run. With the clock fixed at that
+instant and at one six hours later, the four convergence tests passed at both.
+The fifth failed at both, but because of a test bug: it compared engine event
+times with the system clock. That is fixed, and it passes.
 
 **Still outstanding:** the window's own rendering is still only verified by
-having been looked at. The proper fix for the wall-clock dependence above, a
-clock the session can be given, is not done either. (The correction reticle that
-was listed here was dropped; see D12.)
+having been looked at. (The correction reticle that was listed here was dropped;
+see D12.)
 
 ### Phase 4d â€” Live capture, and a mount that is optional
 

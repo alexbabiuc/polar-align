@@ -3,6 +3,7 @@ using FreePolarAlign.App.ViewModels;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Imaging.Fits;
 using FreePolarAlign.Session;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.App;
@@ -191,7 +192,7 @@ public sealed class LiveCaptureUiTests : IDisposable
 
         var viewModel = new MainWindowViewModel(
             engine, catalog: null, settingsStore: null, settings: null, log: null, warnings: null,
-            new SessionConfiguration(6, 70.0),
+            new SessionConfiguration(6, 70.0), new TestClock(),
             saveTarget: saveTarget,
             renderPreview: renderer.Render);
 
@@ -209,7 +210,7 @@ public sealed class LiveCaptureUiTests : IDisposable
         var viewModel = new MainWindowViewModel(
             new PublishingEngine(), catalog: null, settingsStore: null, settings: null, log: null,
             warnings: new[] { "No Watney quad database found." },
-            new SessionConfiguration(6, 70.0),
+            new SessionConfiguration(6, 70.0), new TestClock(),
             renderPreview: new RecordingRenderer().Render);
 
         LogEntry entry = Assert.Single(viewModel.Log);

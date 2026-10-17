@@ -31,13 +31,25 @@ public sealed unsafe class ZwoDeviceProvider : IDeviceProvider
         linuxFile: "libASICamera2.so");
 
     private readonly string _workingDirectory;
+    private readonly TimeProvider _time;
 
+    /// <summary>The constructor the plugin loader calls; the system clock.</summary>
     public ZwoDeviceProvider()
-        : this(NativeFrame.DefaultWorkingDirectory())
+        : this(NativeFrame.DefaultWorkingDirectory(), TimeProvider.System)
     {
     }
 
-    internal ZwoDeviceProvider(string workingDirectory) => _workingDirectory = workingDirectory;
+    /// <param name="timeProvider">Timestamps frames and paces exposures for every camera this opens.</param>
+    public ZwoDeviceProvider(TimeProvider timeProvider)
+        : this(NativeFrame.DefaultWorkingDirectory(), timeProvider)
+    {
+    }
+
+    internal ZwoDeviceProvider(string workingDirectory, TimeProvider timeProvider)
+    {
+        _workingDirectory = workingDirectory;
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+    }
 
     public string Name => "ZWO";
 
@@ -64,7 +76,7 @@ public sealed unsafe class ZwoDeviceProvider : IDeviceProvider
         {
             if (string.Equals(id, deviceId, StringComparison.Ordinal))
             {
-                return new ZwoCamera(info, id, _workingDirectory);
+                return new ZwoCamera(info, id, _workingDirectory, _time);
             }
         }
 

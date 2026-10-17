@@ -63,6 +63,7 @@ public sealed class RestampFallbackSolver : ISolver, IDisposable
     private readonly ISolver _inner;
     private readonly string _workingDirectory;
     private readonly Action<string>? _log;
+    private readonly TimeProvider _time;
 
     /// <param name="inner">The solver to try first, and to try again on the redrawn frame.</param>
     /// <param name="workingDirectory">Where the redrawn frame is written. Created on demand.</param>
@@ -72,8 +73,15 @@ public sealed class RestampFallbackSolver : ISolver, IDisposable
     /// user reading "could not solve" deserves to know that a second attempt was
     /// made on their behalf and what it did.
     /// </param>
-    public RestampFallbackSolver(ISolver inner, string workingDirectory, Action<string>? log = null)
+    /// <param name="timeProvider">
+    /// Measures what the first attempt used of the
+    /// solve timeout, so the retry gets only what is left.
+    /// </param>
+    public RestampFallbackSolver(
+        ISolver inner, string workingDirectory, TimeProvider timeProvider, Action<string>? log = null)
     {
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+
         ArgumentNullException.ThrowIfNull(inner);
         if (string.IsNullOrWhiteSpace(workingDirectory))
         {
@@ -91,7 +99,7 @@ public sealed class RestampFallbackSolver : ISolver, IDisposable
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        long started = _time.GetTimestamp();
         PlateSolveResult direct = await _inner.SolveAsync(request, cancellationToken).ConfigureAwait(false);
         if (direct.Success || !IsWorthRedrawing(direct.FailureReason))
         {
@@ -103,7 +111,7 @@ public sealed class RestampFallbackSolver : ISolver, IDisposable
         // The request's timeout is for the frame, not for each attempt at it:
         // the retry gets what the first attempt left, and none if it used it
         // all. Otherwise a near solve given five seconds could take ten.
-        TimeSpan? remaining = request.Timeout - stopwatch.Elapsed;
+        TimeSpan? remaining = request.Timeout - _time.GetElapsedTime(started);
         if (remaining is { } left && left <= TimeSpan.Zero)
         {
             _log?.Invoke($"Solve failed ({direct.FailureReason}): {direct.Message} No time left in the solve timeout to retry on a redrawn frame.");

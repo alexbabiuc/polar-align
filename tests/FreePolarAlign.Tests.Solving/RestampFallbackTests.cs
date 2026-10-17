@@ -1,5 +1,6 @@
 using FreePolarAlign.Imaging.Fits;
 using FreePolarAlign.Solving;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.Solving;
@@ -16,11 +17,18 @@ namespace FreePolarAlign.Tests.Solving;
 /// </summary>
 public class RestampFallbackTests
 {
+    private readonly TestClock _clock = new();
+
     private sealed class ScriptedSolver : ISolver
     {
         private readonly Queue<PlateSolveResult> _results;
+        private readonly TestClock _clock;
 
-        public ScriptedSolver(params PlateSolveResult[] results) => _results = new Queue<PlateSolveResult>(results);
+        public ScriptedSolver(TestClock clock, params PlateSolveResult[] results)
+        {
+            _clock = clock;
+            _results = new Queue<PlateSolveResult>(results);
+        }
 
         public string Name => "Scripted";
 
@@ -28,21 +36,24 @@ public class RestampFallbackTests
 
         public List<TimeSpan?> Timeouts { get; } = new();
 
-        /// <summary>How long the first call takes, standing in for a slow solve.</summary>
+        /// <summary>
+        /// How long the first call takes, standing in for a slow solve. It moves
+        /// the fake clock rather than waiting, so the time it used is exact.
+        /// </summary>
         public TimeSpan FirstCallTakes { get; init; }
 
         public int Calls => Paths.Count;
 
-        public async Task<PlateSolveResult> SolveAsync(PlateSolveRequest request, CancellationToken cancellationToken = default)
+        public Task<PlateSolveResult> SolveAsync(PlateSolveRequest request, CancellationToken cancellationToken = default)
         {
             Paths.Add(request.ImagePath);
             Timeouts.Add(request.Timeout);
             if (Calls == 1 && FirstCallTakes > TimeSpan.Zero)
             {
-                await Task.Delay(FirstCallTakes, cancellationToken);
+                _clock.Advance(FirstCallTakes);
             }
 
-            return _results.Count > 0 ? _results.Dequeue() : Failure(PlateSolveFailureReason.NoMatchFound);
+            return Task.FromResult(_results.Count > 0 ? _results.Dequeue() : Failure(PlateSolveFailureReason.NoMatchFound));
         }
     }
 
@@ -112,17 +123,17 @@ public class RestampFallbackTests
         string directory = TempDirectory();
         try
         {
-            var inner = new ScriptedSolver(Failure(PlateSolveFailureReason.NoMatchFound), Success())
+            var inner = new ScriptedSolver(_clock, Failure(PlateSolveFailureReason.NoMatchFound), Success())
             {
                 FirstCallTakes = TimeSpan.FromMilliseconds(400),
             };
-            using var solver = new RestampFallbackSolver(inner, directory);
+            using var solver = new RestampFallbackSolver(inner, directory, _clock);
 
             await solver.SolveAsync(new PlateSolveRequest(WriteFrameWithStars(directory), Timeout: TimeSpan.FromSeconds(5)));
 
             Assert.Equal(2, inner.Calls);
             Assert.Equal(TimeSpan.FromSeconds(5), inner.Timeouts[0]);
-            Assert.InRange(inner.Timeouts[1]!.Value, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(4.6));
+            Assert.Equal(TimeSpan.FromSeconds(4.6), inner.Timeouts[1]);
         }
         finally
         {
@@ -136,12 +147,12 @@ public class RestampFallbackTests
         string directory = TempDirectory();
         try
         {
-            var inner = new ScriptedSolver(Failure(PlateSolveFailureReason.NoMatchFound), Success())
+            var inner = new ScriptedSolver(_clock, Failure(PlateSolveFailureReason.NoMatchFound), Success())
             {
                 FirstCallTakes = TimeSpan.FromMilliseconds(300),
             };
             var log = new List<string>();
-            using var solver = new RestampFallbackSolver(inner, directory, log.Add);
+            using var solver = new RestampFallbackSolver(inner, directory, _clock, log.Add);
 
             PlateSolveResult result = await solver.SolveAsync(
                 new PlateSolveRequest(WriteFrameWithStars(directory), Timeout: TimeSpan.FromMilliseconds(100)));
@@ -162,9 +173,9 @@ public class RestampFallbackTests
         string directory = TempDirectory();
         try
         {
-            var inner = new ScriptedSolver(Success());
+            var inner = new ScriptedSolver(_clock, Success());
             var log = new List<string>();
-            using var solver = new RestampFallbackSolver(inner, directory, log.Add);
+            using var solver = new RestampFallbackSolver(inner, directory, _clock, log.Add);
 
             PlateSolveResult result = await solver.SolveAsync(new PlateSolveRequest(WriteFrameWithStars(directory)));
 
@@ -190,9 +201,9 @@ public class RestampFallbackTests
         string directory = TempDirectory();
         try
         {
-            var inner = new ScriptedSolver(Failure(reason), Success());
+            var inner = new ScriptedSolver(_clock, Failure(reason), Success());
             var log = new List<string>();
-            using var solver = new RestampFallbackSolver(inner, directory, log.Add);
+            using var solver = new RestampFallbackSolver(inner, directory, _clock, log.Add);
 
             string original = WriteFrameWithStars(directory);
             PlateSolveResult result = await solver.SolveAsync(new PlateSolveRequest(original));
@@ -223,11 +234,11 @@ public class RestampFallbackTests
         string directory = TempDirectory();
         try
         {
-            var inner = new ScriptedSolver(
+            var inner = new ScriptedSolver(_clock, 
                 Failure(PlateSolveFailureReason.NoStarsDetected),
                 Failure(PlateSolveFailureReason.NoMatchFound));
             var log = new List<string>();
-            using var solver = new RestampFallbackSolver(inner, directory, log.Add);
+            using var solver = new RestampFallbackSolver(inner, directory, _clock, log.Add);
 
             PlateSolveResult result = await solver.SolveAsync(new PlateSolveRequest(WriteFrameWithStars(directory)));
 
@@ -258,9 +269,9 @@ public class RestampFallbackTests
         string directory = TempDirectory();
         try
         {
-            var inner = new ScriptedSolver(Failure(reason), Success());
+            var inner = new ScriptedSolver(_clock, Failure(reason), Success());
             var log = new List<string>();
-            using var solver = new RestampFallbackSolver(inner, directory, log.Add);
+            using var solver = new RestampFallbackSolver(inner, directory, _clock, log.Add);
 
             PlateSolveResult result = await solver.SolveAsync(new PlateSolveRequest(WriteFrameWithStars(directory)));
 
@@ -296,9 +307,9 @@ public class RestampFallbackTests
             string path = Path.Combine(directory, "blank.fits");
             FitsFile.Write(path, FitsImage.ForCapturedFrame(64, 64, blank, bitsPerPixel: 16));
 
-            var inner = new ScriptedSolver(Failure(PlateSolveFailureReason.NoStarsDetected), Success());
+            var inner = new ScriptedSolver(_clock, Failure(PlateSolveFailureReason.NoStarsDetected), Success());
             var log = new List<string>();
-            using var solver = new RestampFallbackSolver(inner, directory, log.Add);
+            using var solver = new RestampFallbackSolver(inner, directory, _clock, log.Add);
 
             PlateSolveResult result = await solver.SolveAsync(new PlateSolveRequest(path));
 
@@ -326,9 +337,9 @@ public class RestampFallbackTests
             string path = Path.Combine(directory, "not-a-fits.fits");
             File.WriteAllText(path, "this is not a FITS file");
 
-            var inner = new ScriptedSolver(Failure(PlateSolveFailureReason.NoMatchFound));
+            var inner = new ScriptedSolver(_clock, Failure(PlateSolveFailureReason.NoMatchFound));
             var log = new List<string>();
-            using var solver = new RestampFallbackSolver(inner, directory, log.Add);
+            using var solver = new RestampFallbackSolver(inner, directory, _clock, log.Add);
 
             PlateSolveResult result = await solver.SolveAsync(new PlateSolveRequest(path));
 
@@ -349,8 +360,8 @@ public class RestampFallbackTests
         string directory = TempDirectory();
         try
         {
-            var inner = new ScriptedSolver(Failure(PlateSolveFailureReason.NoMatchFound), Success());
-            using var solver = new RestampFallbackSolver(inner, directory);
+            var inner = new ScriptedSolver(_clock, Failure(PlateSolveFailureReason.NoMatchFound), Success());
+            using var solver = new RestampFallbackSolver(inner, directory, _clock);
 
             string original = WriteFrameWithStars(directory);
             await solver.SolveAsync(new PlateSolveRequest(original));

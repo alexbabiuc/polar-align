@@ -4,6 +4,7 @@ using Avalonia.Headless;
 using Avalonia.LogicalTree;
 using FreePolarAlign.App.ViewModels;
 using FreePolarAlign.Core.Engine;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 using AppShell = FreePolarAlign.App.App;
 using MainWindow = FreePolarAlign.App.MainWindow;
@@ -118,7 +119,7 @@ public class WindowLayoutTests
                         "'FreePolarAlign.Imaging' does not contain any usable IDeviceProvider implementation.",
                     }
                     : null,
-                new SessionConfiguration(6, 70.0),
+                new SessionConfiguration(6, 70.0), new TestClock(),
                 postToUiThread: action => action());
 
             var window = new MainWindow { DataContext = viewModel, Width = width, Height = height };
@@ -310,7 +311,7 @@ public class WindowLayoutTests
                 settings: null,
                 log: null,
                 warnings: null,
-                new SessionConfiguration(6, 70.0),
+                new SessionConfiguration(6, 70.0), new TestClock(),
                 postToUiThread: action => action());
 
             var window = new FreePolarAlign.App.SettingsWindow();

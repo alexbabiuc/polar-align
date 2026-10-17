@@ -19,8 +19,12 @@ namespace FreePolarAlign.Solving;
 /// </summary>
 public abstract class ExternalProcessSolver : ISolver
 {
-    private protected ExternalProcessSolver(string executablePath)
+    private readonly TimeProvider _time;
+
+    private protected ExternalProcessSolver(string executablePath, TimeProvider timeProvider)
     {
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+
         if (string.IsNullOrWhiteSpace(executablePath))
         {
             throw new ArgumentException("An executable path must be provided.", nameof(executablePath));
@@ -86,15 +90,14 @@ public abstract class ExternalProcessSolver : ISolver
                 psi.ArgumentList.Add(argument);
             }
 
-            using var timeoutCts = new CancellationTokenSource();
-            if (request.Timeout is { } timeout)
-            {
-                timeoutCts.CancelAfter(timeout);
-            }
+            // The timeout runs on the injected clock, like every other wait.
+            using var timeoutCts = request.Timeout is { } timeout
+                ? new CancellationTokenSource(timeout, _time)
+                : new CancellationTokenSource();
 
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
 
-            var stopwatch = Stopwatch.StartNew();
+            long started = _time.GetTimestamp();
             ProcessOutcome outcome;
             try
             {
@@ -111,8 +114,7 @@ public abstract class ExternalProcessSolver : ISolver
                     $"Could not start {Name} at '{ExecutablePath}': {ex.Message}. Install {Name} or set its path in Settings.");
             }
 
-            stopwatch.Stop();
-            return ReadResult(outcome, frame, stopwatch.Elapsed);
+            return ReadResult(outcome, frame, _time.GetElapsedTime(started));
         }
         finally
         {

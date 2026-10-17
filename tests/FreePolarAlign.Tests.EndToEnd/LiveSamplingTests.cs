@@ -1,6 +1,7 @@
 using FreePolarAlign.Core.Alignment;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Session;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.EndToEnd;
@@ -45,7 +46,7 @@ public class LiveSamplingTests
         await harness.WaitForSampleAsync(1);
 
         await harness.Session.SendAsync(new SetExposureCommand(TimeSpan.FromMilliseconds(35)));
-        DateTime changedAt = DateTime.UtcNow;
+        DateTime changedAt = harness.Clock.UtcNow;
 
         Assert.Null(harness.Recorder.Last<CommandRejectedEvent>());
         Assert.Equal(TimeSpan.FromMilliseconds(35), harness.Recorder.Last<ExposureChangedEvent>()!.Duration);
@@ -95,7 +96,7 @@ public class LiveSamplingTests
         SampleSkippedEvent skipped = await harness.Recorder.WaitForAsync<SampleSkippedEvent>(poll: harness.PollAsync);
         Assert.Contains("15", skipped.Reason, StringComparison.Ordinal);
 
-        await Task.Delay(200);
+        await harness.Clock.PassAsync(TimeSpan.FromMilliseconds(200));
         Assert.Single(harness.Recorder.All<PointCapturedEvent>());
         Assert.Equal(callsAfterFirst, harness.Perfect.Calls);
     }
@@ -122,7 +123,7 @@ public class LiveSamplingTests
         await harness.PollAsync();
         Assert.True(harness.Recorder.Last<MountStatusEvent>()!.IsMoving);
 
-        await Task.Delay(500);
+        await harness.Clock.PassAsync(TimeSpan.FromMilliseconds(500));
         Assert.Equal(calls, harness.Perfect.Calls);
 
         // And once it stops, the new position is sampled instead.
@@ -144,13 +145,14 @@ public class LiveSamplingTests
         await harness.ConnectAsync();
         await harness.ConfirmSiteAsync();
 
-        var clock = System.Diagnostics.Stopwatch.StartNew();
+        DateTimeOffset started = harness.Clock.GetUtcNow();
         await harness.Session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 60.0, settle)));
-        await Task.Delay(400);
+        await harness.Clock.PassAsync(TimeSpan.FromMilliseconds(400));
         Assert.Equal(0, harness.Perfect.Calls);
 
-        await harness.WaitForSampleAsync(1);
-        Assert.True(clock.Elapsed >= settle, $"sampled after {clock.Elapsed.TotalMilliseconds:F0} ms");
+        PointCapturedEvent first = await harness.WaitForSampleAsync(1);
+        TimeSpan waited = first.TimestampUtc - started;
+        Assert.True(waited >= settle, $"sampled after {waited.TotalMilliseconds:F0} ms of the test's clock");
         Assert.Equal(settle, harness.Recorder.All<SolveScheduledEvent>().First(e => e.Trigger == SampleTrigger.SlewEnded).Delay);
         Assert.Equal(settle, harness.Recorder.Last<SessionStartedEvent>()!.Configuration.SettleDelay);
     }
@@ -203,11 +205,11 @@ public class LiveSamplingTests
             await harness.Session.SendAsync(new RecordSampleCommand());
             await harness.MoveFromOutsideAsync(rotation + 11.0 * (i + 1));
             await harness.PollAsync();
-            await Task.Delay(40);
+            await harness.Clock.PassAsync(TimeSpan.FromMilliseconds(40));
             await harness.PollAsync();
         }
 
-        await Task.Delay(600);
+        await harness.Clock.PassAsync(TimeSpan.FromMilliseconds(600));
         Assert.Equal(1, harness.Perfect.MostAtOnce);
     }
 
@@ -223,7 +225,7 @@ public class LiveSamplingTests
         await harness.ReadyAsync();
         await harness.WaitForSampleAsync(1);
 
-        DateTime pressed = DateTime.UtcNow;
+        DateTime pressed = harness.Clock.UtcNow;
         await harness.Session.SendAsync(new RecordSampleCommand());
 
         PointCapturedEvent second = await harness.WaitForSampleAsync(2, poll: false);
@@ -274,7 +276,7 @@ public class LiveSamplingTests
         for (int i = 0; i < 5; i++)
         {
             await harness.PollAsync();
-            await Task.Delay(20);
+            await harness.Clock.PassAsync(TimeSpan.FromMilliseconds(20));
         }
 
         Assert.Null(harness.Recorder.Last<SequenceRestartedEvent>());

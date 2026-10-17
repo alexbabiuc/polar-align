@@ -30,6 +30,7 @@ namespace FreePolarAlign.App.ViewModels;
 /// </summary>
 public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 {
+    private readonly TimeProvider _time;
     private readonly IAlignmentEngine? _engine;
     private readonly DeviceCatalog? _catalog;
     private readonly ISettingsStore? _settingsStore;
@@ -89,11 +90,13 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         SessionLog? log,
         IReadOnlyList<string>? warnings,
         SessionConfiguration defaultConfiguration,
+        TimeProvider timeProvider,
         Action<Action>? postToUiThread = null,
         IFrameSaveTarget? saveTarget = null,
         Func<Imaging.Fits.FitsImage, double, Services.FramePreview>? renderPreview = null,
         Action<AppSettings>? settingsChanged = null)
     {
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _engine = engine;
         _catalog = catalog;
         _settingsStore = settingsStore;
@@ -147,7 +150,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         // Where the full log is written is the log's first line rather than a row
         // of its own under the buttons: that row cost the frame view a line of
         // height on every screen to say something read once.
-        DateTimeOffset startedAt = DateTimeOffset.UtcNow;
+        DateTimeOffset startedAt = _time.GetUtcNow();
         var startupLog = new List<LogEntry>();
         if (LogPath is not null)
         {
@@ -796,7 +799,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     /// the next solve. Read against the clock, so the window refreshes it on a
     /// timer (<see cref="OnClockTick"/>) as well as on every event.
     /// </summary>
-    public string? SamplingStatusText => AlignmentFormatting.SamplingStatus(State, DateTimeOffset.UtcNow);
+    public string? SamplingStatusText => AlignmentFormatting.SamplingStatus(State, _time.GetUtcNow());
 
     public bool HasSamplingStatus => SamplingStatusText is not null;
 

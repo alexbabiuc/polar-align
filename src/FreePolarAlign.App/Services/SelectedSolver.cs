@@ -29,6 +29,7 @@ public sealed class SelectedSolver : ISolver, IDisposable
     private readonly Action<string>? _log;
     private readonly Func<SolverKind, string?, string> _resolveExecutable;
     private readonly bool _canRunWindowsSolvers;
+    private readonly TimeProvider _time;
 
     private volatile Routes _routes;
     private (SolverKind Blind, SolverKind Near, string? AstapPath, string? AspsPath, string? Ps3Path, TimeSpan BlindTimeout, TimeSpan NearTimeout)? _configuredFrom;
@@ -49,11 +50,13 @@ public sealed class SelectedSolver : ISolver, IDisposable
     /// </param>
     public SelectedSolver(
         ISolver internalSolver,
+        TimeProvider timeProvider,
         Action<string>? log = null,
         Func<SolverKind, string?, string>? resolveExecutable = null,
         bool? canRunWindowsSolvers = null)
     {
         _internal = internalSolver ?? throw new ArgumentNullException(nameof(internalSolver));
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _log = log;
         _resolveExecutable = resolveExecutable ?? ResolveInstalled;
         _canRunWindowsSolvers = canRunWindowsSolvers ?? OperatingSystem.IsWindows();
@@ -120,9 +123,9 @@ public sealed class SelectedSolver : ISolver, IDisposable
         string executable = _resolveExecutable(kind, PathFor(kind, settings));
         ExternalProcessSolver external = kind switch
         {
-            SolverKind.Astap => new AstapPlateSolver(executable),
-            SolverKind.Asps => new AspsPlateSolver(executable),
-            _ => new PlateSolve3Solver(executable),
+            SolverKind.Astap => new AstapPlateSolver(executable, _time),
+            SolverKind.Asps => new AspsPlateSolver(executable, _time),
+            _ => new PlateSolve3Solver(executable, _time),
         };
 
         // Said once here, where it can be acted on, rather than left to a

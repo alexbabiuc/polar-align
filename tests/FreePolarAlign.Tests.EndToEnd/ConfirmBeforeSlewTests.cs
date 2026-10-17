@@ -4,6 +4,7 @@ using FreePolarAlign.Devices;
 using FreePolarAlign.Devices.Simulated;
 using FreePolarAlign.Devices.Simulated.SyntheticSky;
 using FreePolarAlign.Session;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.EndToEnd;
@@ -39,7 +40,7 @@ public class ConfirmBeforeSlewTests
         using var harness = new SessionHarness(initialRotationDegrees: 12.0);
 
         await harness.ReadyAsync();
-        await Task.Delay(200);
+        await harness.Clock.PassAsync(TimeSpan.FromMilliseconds(200));
 
         Assert.Empty(harness.Mount.Slews);
 
@@ -77,7 +78,7 @@ public class ConfirmBeforeSlewTests
     {
         using var harness = new SessionHarness(initialRotationDegrees: 12.0);
         await harness.ReadyAsync();
-        await Task.Delay(200);
+        await harness.Clock.PassAsync(TimeSpan.FromMilliseconds(200));
 
         SlewProposedEvent proposed = harness.Recorder.Last<SlewProposedEvent>()!;
         Assert.True(proposed.RequiresMotion, harness.Recorder.Trail());
@@ -100,7 +101,7 @@ public class ConfirmBeforeSlewTests
         SlewProposedEvent proposed = await harness.Recorder.WaitForAsync<SlewProposedEvent>(e => e.PointIndex == 2);
         Assert.True(proposed.RequiresMotion);
 
-        await Task.Delay(200);
+        await harness.Clock.PassAsync(TimeSpan.FromMilliseconds(200));
         Assert.Empty(harness.Mount.Slews);
         Assert.Single(harness.Recorder.All<PointCapturedEvent>());
 
@@ -137,10 +138,10 @@ public class ConfirmBeforeSlewTests
         await harness.Recorder.WaitForAsync<TrackingStartedEvent>();
         Assert.Equal(4, harness.Mount.Slews.Count);
 
-        double planned = SessionHarness.MechanicalDeclinationOf(harness.Mount.Slews[0].Ra, harness.Mount.Slews[0].Dec);
+        double planned = harness.MechanicalDeclinationOf(harness.Mount.Slews[0].Ra, harness.Mount.Slews[0].Dec);
         foreach ((double ra, double dec) in harness.Mount.Slews)
         {
-            Assert.Equal(planned, SessionHarness.MechanicalDeclinationOf(ra, dec), tolerance: ToleranceDegrees);
+            Assert.Equal(planned, harness.MechanicalDeclinationOf(ra, dec), tolerance: ToleranceDegrees);
         }
 
         // Five points over 60°, all trusted, from a noiseless solver: the
@@ -185,7 +186,7 @@ public class ConfirmBeforeSlewTests
         Assert.Null(harness.Recorder.Last<SlewConfirmedEvent>()!.ReanchoredReason);
 
         (double ra, double dec) = harness.Mount.Slews[^1];
-        Assert.Equal(sampleDeclination, SessionHarness.MechanicalDeclinationOf(ra, dec), tolerance: ToleranceDegrees);
+        Assert.Equal(sampleDeclination, harness.MechanicalDeclinationOf(ra, dec), tolerance: ToleranceDegrees);
     }
 
     /// <summary>
@@ -275,7 +276,7 @@ public class ConfirmBeforeSlewTests
         int slewsBefore = harness.Mount.Slews.Count;
 
         (double ra, double dec) = TargetSelection.ResolveCommand(
-            Site, 10.0, harness.Recorder.Last<TargetSelectedEvent>()!.DeclinationDegrees, DateTime.UtcNow);
+            Site, 10.0, harness.Recorder.Last<TargetSelectedEvent>()!.DeclinationDegrees, harness.Clock.UtcNow);
         await harness.Session.SendAsync(new ConfirmSlewCommand(ra, dec));
 
         CommandRejectedEvent? rejected = harness.Recorder.Last<CommandRejectedEvent>();
@@ -300,7 +301,7 @@ public class ConfirmBeforeSlewTests
         int slewsBefore = harness.Mount.Slews.Count;
 
         // East of the meridian, but near the horizon.
-        (double ra, double dec) = TargetSelection.ResolveCommand(Site, -100.0, 10.0, DateTime.UtcNow);
+        (double ra, double dec) = TargetSelection.ResolveCommand(Site, -100.0, 10.0, harness.Clock.UtcNow);
         await harness.Session.SendAsync(new ConfirmSlewCommand(ra, dec));
 
         CommandRejectedEvent? rejected = harness.Recorder.Last<CommandRejectedEvent>();
@@ -523,7 +524,7 @@ public class ConfirmBeforeSlewTests
         using var harness = new SessionHarness();
         await harness.ConnectAsync();
 
-        await harness.Session.SendAsync(new SetReadoutModeCommand(1));
+        await harness.Clock.CompleteAsync(harness.Session.SendAsync(new SetReadoutModeCommand(1)).AsTask());
 
         Assert.True(harness.Recorder.Last<CommandRejectedEvent>() is not null, harness.Recorder.Trail());
         Assert.Null(harness.Recorder.Last<ReadoutModeChangedEvent>());
@@ -540,15 +541,16 @@ public class ConfirmBeforeSlewTests
     {
         var mountOptions = new SimulatedMountOptions(
             Site, new MountMisalignment(30.0, -25.0), InitialMechanicalRotationDegrees: -70.0);
+        var clock = new TestClock();
         var provider = new SimulatedDeviceProvider(
-            StarCatalog.LoadCsv(CatalogPath), mountOptions,
+            StarCatalog.LoadCsv(CatalogPath), mountOptions, clock,
             new SimulatedCameraOptions(WidthPixels: 320, HeightPixels: 240));
         var mount = new RecordingMount(provider.MountInstance);
 
         using ICamera camera = provider.OpenCamera("sim-camera");
-        using var session = new AlignmentSession(camera, mount, new PerfectSolver(provider.MountInstance, Site),
+        using var session = new AlignmentSession(camera, mount, new PerfectSolver(provider.MountInstance, Site), clock,
             new AlignmentSessionOptions(ExposureDuration: TimeSpan.FromMilliseconds(20), FailedSolvesDirectory: TempDirectory()));
-        var recorder = new Recorder();
+        var recorder = new Recorder(clock);
         using IDisposable subscription = session.Events.Subscribe(recorder);
 
         await session.SendAsync(new ConnectDeviceCommand(DeviceKind.Camera, AlignmentSession.AttachedProviderName, "camera"));
@@ -557,7 +559,9 @@ public class ConfirmBeforeSlewTests
         await session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 60.0)));
         Assert.NotNull(recorder.Last<SessionStartedEvent>());
 
-        await session.SendAsync(new SetReadoutModeCommand(1));
+        // The change waits for the frame in progress, which ends on the test's
+        // clock, so the clock is moved on until the command returns.
+        await clock.CompleteAsync(session.SendAsync(new SetReadoutModeCommand(1)).AsTask());
 
         Assert.Null(recorder.Last<CommandRejectedEvent>());
         Assert.Equal(8, recorder.Last<ReadoutModeChangedEvent>()!.BitDepth);
@@ -576,15 +580,16 @@ public class ConfirmBeforeSlewTests
     public async Task ConnectingReportsTheAvailableReadoutModes()
     {
         var options = new SimulatedMountOptions(Site, new MountMisalignment(10.0, 10.0));
-        var provider = new SimulatedDeviceProvider(StarCatalog.LoadCsv(CatalogPath), options,
+        var clock = new TestClock();
+        var provider = new SimulatedDeviceProvider(StarCatalog.LoadCsv(CatalogPath), options, clock,
             new SimulatedCameraOptions(WidthPixels: 320, HeightPixels: 240));
 
         using ICamera camera = provider.OpenCamera("sim-camera");
         using IMount mount = provider.OpenMount("sim-mount");
-        using var session = new AlignmentSession(camera, mount, new PerfectSolver(provider.MountInstance, Site),
+        using var session = new AlignmentSession(camera, mount, new PerfectSolver(provider.MountInstance, Site), clock,
             new AlignmentSessionOptions(FailedSolvesDirectory: TempDirectory()));
 
-        var recorder = new Recorder();
+        var recorder = new Recorder(clock);
         using IDisposable subscription = session.Events.Subscribe(recorder);
 
         await session.SendAsync(new ConnectDeviceCommand(

@@ -1853,3 +1853,82 @@ write anyway, and one that reports true may still refuse, so only the write
 gives a real answer. See docs/DEVICE-COMPATIBILITY.md.
 
 Not tested on hardware. Pinned by `AbortTests` (engine) and `AbortUiTests` (UI).
+
+---
+
+## D37 — Time is injected, never read
+
+No class reads the clock itself. Everything that needs the time, or waits on it,
+takes a `TimeProvider` (Microsoft's abstraction) in its constructor and uses only
+that:
+- the engine, and the timestamps on its events;
+- the simulator;
+- the ASCOM, ZWO and ToupTek devices;
+- the solvers' timeouts and timings;
+- the main view model and the session log.
+
+Pure calculations take the instant as a parameter instead (`TargetSelection`,
+`FrameStore.KeepFailed`).
+
+**The provider is required, not optional.** A default of the system clock would
+let a test use real time without saying so; a required parameter makes the
+compiler find every such test. The system clock is chosen in exactly two kinds of
+place:
+- **The application's composition root:** `App` passes `TimeProvider.System` to
+  `EngineFactory.Create`, which hands that one provider to everything it builds.
+- **A plugin's parameterless constructor:** the plugin loader can only call that
+  one. Each plugin also has a constructor that takes a provider.
+
+**Events are stamped by the engine, not by their own initializer.**
+`EngineEvent.TimestampUtc` is default until the engine's event stream publishes
+it, and the stream stamps it from the engine's clock. An event a test builds by
+hand keeps whatever stamp it is given.
+
+**Why.** Two reasons:
+- **#13.** The end-to-end tests depended on the time of day: the target comes
+  from sidereal time, and the committed catalogue has enough stars in some parts
+  of the sky and not others, so the same test passed or failed by the hour it ran.
+- **Dependency inversion throughout.** The user asked for it everywhere, not
+  only where a test needed it. A class that reads `DateTime.UtcNow` hides a
+  dependency that decides what it computes.
+
+**This is for tests.** The application runs on the system clock, and with the
+site that is all the engine needs.
+
+### The tests' clock
+
+Every test runs on `TestClock` (`tests/FreePolarAlign.Tests.Support`), which is
+`FakeTimeProvider` from `Microsoft.Extensions.TimeProvider.Testing`.
+
+- **Fixed start:** it begins at 2026-01-15 22:00 UTC. That fixes the sidereal
+  time and so the sky. The convergence tests passed with the clock set to that
+  instant and to one six hours later.
+- **Moves only when a test moves it:**
+  - `AdvanceAsync` jumps, for exact checks: half a 2 s slew is exactly half-way.
+  - `PassAsync` steps through a span, so timers fire in order. It replaces
+    "wait 200 ms, then check nothing happened".
+  - `RunUntilAsync` steps until an event arrives. It is what the recorder's
+    waits use.
+- **Limits are fake time too:** a wait gives up after so much fake time, not
+  real time.
+
+Two places still meet real time, and neither can change a result:
+- **Between steps it yields for a millisecond**, so work a step released can run
+  on the thread pool before the next look. Nothing under test reads that wait; a
+  slow machine only makes a test slower.
+- **Time does not move while real work is in flight.** The Phase 3 tests run the
+  real Watney solver, which takes real seconds; their recorder counts solves in
+  progress and holds the clock until they finish. Otherwise the sky would turn
+  for minutes between a frame and its result. A wait blocked only on real work
+  has a hang guard counted in looks, not time, which fires only if the work
+  never finishes.
+
+**What a test must not do:**
+- **Compare engine times with `DateTime.UtcNow`, or wait with `Task.Delay` on
+  the real clock.** The first such comparison, before this was complete, made a
+  test wait out its timeouts and fail.
+- **Await a camera command bare while the camera is capturing.** Gain, readout
+  mode and the setup dialog wait for the exposure in progress, which ends only
+  when the test moves the clock. Awaited bare, such a command hangs whenever an
+  exposure happens to be running; two tests did, intermittently. Send it
+  through `TestClock.CompleteAsync`.

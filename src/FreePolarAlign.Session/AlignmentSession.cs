@@ -104,7 +104,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     private readonly ISolver _solver;
     private readonly AlignmentSessionOptions _options;
     private readonly DeviceCatalog? _catalog;
-    private readonly EventStream _events = new();
+    private readonly TimeProvider _time;
+    private readonly EventStream _events;
     private readonly SemaphoreSlim _commandGate = new(1, 1);
 
     /// <summary>
@@ -305,8 +306,12 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     /// form the application uses: device selection is the user's, made after
     /// startup, from whatever the catalogue found.
     /// </summary>
-    public AlignmentSession(DeviceCatalog catalog, ISolver solver, AlignmentSessionOptions? options = null)
+    /// <param name="timeProvider">The engine's clock: the system's in the application, a fake one in tests (D37).</param>
+    public AlignmentSession(
+        DeviceCatalog catalog, ISolver solver, TimeProvider timeProvider, AlignmentSessionOptions? options = null)
     {
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+        _events = new EventStream(_time);
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _solver = solver ?? throw new ArgumentNullException(nameof(solver));
         _options = options ?? new AlignmentSessionOptions();
@@ -322,8 +327,13 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     /// ownership, so the session will not dispose them.
     /// </summary>
     /// <param name="mount">Null for a session that will only ever run unconnected (D10).</param>
-    public AlignmentSession(ICamera camera, IMount? mount, ISolver solver, AlignmentSessionOptions? options = null)
+    /// <param name="timeProvider">The engine's clock: the system's in the application, a fake one in tests (D37).</param>
+    public AlignmentSession(
+        ICamera camera, IMount? mount, ISolver solver, TimeProvider timeProvider,
+        AlignmentSessionOptions? options = null)
     {
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+        _events = new EventStream(_time);
         _camera = camera ?? throw new ArgumentNullException(nameof(camera));
         _mount = mount;
         _solver = solver ?? throw new ArgumentNullException(nameof(solver));
@@ -712,6 +722,14 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     }
 
     private bool MountConnected => _mount is { IsConnected: true };
+
+    /// <summary>
+    /// Every reading of the time in the engine goes through the injected
+    /// provider. The application's is the system clock; a test's can fix the
+    /// instant, which fixes the sidereal time and so the patch of sky a
+    /// sequence plans for (#13).
+    /// </summary>
+    private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
 
     private async Task RefreshMountStatusAsync(CancellationToken cancellationToken)
     {
@@ -1360,7 +1378,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 try
                 {
                     exposure = Exposure;
-                    startedUtc = DateTime.UtcNow;
+                    startedUtc = UtcNow;
                     frame = await camera.ExposeAsync(exposure, BuildCaptureContext(), cancellationToken)
                         .ConfigureAwait(false);
 
@@ -1389,10 +1407,10 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 // A camera that hands a frame back faster than the exposure it
                 // was asked for -- a stub, or a driver returning a cached frame --
                 // would otherwise spin the loop flat out.
-                TimeSpan elapsed = DateTime.UtcNow - startedUtc;
+                TimeSpan elapsed = UtcNow - startedUtc;
                 if (elapsed < exposure)
                 {
-                    await Task.Delay(exposure - elapsed, cancellationToken).ConfigureAwait(false);
+                    await Task.Delay(exposure - elapsed, _time, cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException)
@@ -1539,7 +1557,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             if (_mode == SequenceMode.Unconnected)
             {
                 plan = TargetSelection.Plan(
-                    _site, DateTime.UtcNow, _captureCount, _sweepDegrees, _options.EffectiveAtmosphere);
+                    _site, UtcNow, _captureCount, _sweepDegrees, _options.EffectiveAtmosphere);
             }
             else
             {
@@ -1549,11 +1567,11 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 // drives in.
                 position = await _mount!.GetPositionAsync(cancellationToken).ConfigureAwait(false);
                 double rotation = TargetSelection.MechanicalRotationOf(
-                    _site, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
-                double declination = MechanicalDeclinationOf(_site, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+                    _site, position.RaDegrees, position.DecDegrees, UtcNow);
+                double declination = MechanicalDeclinationOf(_site, position.RaDegrees, position.DecDegrees, UtcNow);
 
                 plan = TargetSelection.PlanFrom(
-                    _site, rotation, declination, DateTime.UtcNow,
+                    _site, rotation, declination, UtcNow,
                     _captureCount, _sweepDegrees, _options.EffectiveAtmosphere);
             }
 
@@ -1699,7 +1717,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                               !(_samples.Count == 0 && _plan.AnchoredAtCurrentPointing);
 
         (double ra, double dec) = TargetSelection.ResolveCommand(
-            _site, rotation, _plan.MechanicalDeclinationDegrees, DateTime.UtcNow);
+            _site, rotation, _plan.MechanicalDeclinationDegrees, UtcNow);
 
         _proposal = new PendingProposal(pointIndex, rotation, ra, dec, requiresMotion);
 
@@ -1842,7 +1860,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         // frame that starts from now: the one on screen may have been exposed
         // while the telescope was still moving (D26).
         CancelPendingSolve();
-        _armed = new Armed(SampleTrigger.Forced, DateTime.UtcNow);
+        _armed = new Armed(SampleTrigger.Forced, UtcNow);
         _events.Publish(new SolveScheduledEvent(SampleTrigger.Forced, TimeSpan.Zero));
     }
 
@@ -1867,7 +1885,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         // moves the mount in declination by minutes of arc over a wide sweep
         // (D16) -- which is exactly what invalidates the fit.
         (double ra, double dec) = TargetSelection.ResolveCommand(
-            _site!, proposal.MechanicalRotationDegrees, _plan!.MechanicalDeclinationDegrees, DateTime.UtcNow);
+            _site!, proposal.MechanicalRotationDegrees, _plan!.MechanicalDeclinationDegrees, UtcNow);
 
         _events.Publish(new SlewConfirmedEvent(ra, dec, WasOverridden: false));
         BeginSlew(ra, dec);
@@ -1899,9 +1917,9 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         }
 
         double rotation = TargetSelection.MechanicalRotationOf(
-            _site!, command.RaDegrees, command.DecDegrees, DateTime.UtcNow);
+            _site!, command.RaDegrees, command.DecDegrees, UtcNow);
         double declination = MechanicalDeclinationOf(
-            _site!, command.RaDegrees, command.DecDegrees, DateTime.UtcNow);
+            _site!, command.RaDegrees, command.DecDegrees, UtcNow);
 
         string? outOfBounds = EditedSlewOutOfBoundsReason(command.RaDegrees, command.DecDegrees, rotation);
         if (outOfBounds is not null)
@@ -1937,7 +1955,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         // real declination movement into the data, which is precisely what the
         // sequence must not contain.
         (double ra, double dec) = TargetSelection.ResolveCommand(
-            _site!, rotation, _plan.MechanicalDeclinationDegrees, DateTime.UtcNow);
+            _site!, rotation, _plan.MechanicalDeclinationDegrees, UtcNow);
 
         _proposal = proposal! with { MechanicalRotationDegrees = rotation, RaDegrees = ra, DecDegrees = dec };
 
@@ -1974,7 +1992,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         var observer = new ObserverSite(_site!.LatitudeDegrees, _site.LongitudeDegrees, _site.HeightMeters);
         double altitude = TopocentricConverter.ToAltAz(
-            raDegrees, decDegrees, DateTime.UtcNow, observer, AtmosphericConditions.Vacuum).AltitudeDegrees;
+            raDegrees, decDegrees, UtcNow, observer, AtmosphericConditions.Vacuum).AltitudeDegrees;
         if (altitude < TargetSelection.MinimumAltitudeDegrees)
         {
             return $"Those coordinates are {altitude:F0}° above the horizon, below the " +
@@ -1997,7 +2015,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     private bool Reanchor(double rotation, double declination, string reason, bool moved)
     {
         TargetPlan plan = TargetSelection.PlanFrom(
-            _site!, rotation, declination, DateTime.UtcNow,
+            _site!, rotation, declination, UtcNow,
             _captureCount, _sweepDegrees, _options.EffectiveAtmosphere);
 
         if (!plan.Success)
@@ -2199,7 +2217,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             return;
         }
         double rotation = TargetSelection.MechanicalRotationOf(
-            _site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+            _site!, position.RaDegrees, position.DecDegrees, UtcNow);
 
         if (!_atConfirmedPosition && IsTooClose(rotation, out double nearest))
         {
@@ -2241,7 +2259,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             return false;
         }
 
-        double declination = MechanicalDeclinationOf(_site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+        double declination = MechanicalDeclinationOf(_site!, position.RaDegrees, position.DecDegrees, UtcNow);
         double changeArcminutes = Math.Abs(declination - _plan.MechanicalDeclinationDegrees) * 60.0;
 
         if (_samples.Count == 0)
@@ -2264,7 +2282,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         }
 
         double rotation = TargetSelection.MechanicalRotationOf(
-            _site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+            _site!, position.RaDegrees, position.DecDegrees, UtcNow);
 
         string reason = _tracking is not null
             ? $"The mount moved {changeArcminutes:F1}' in declination. The live reading follows the bolts by " +
@@ -2275,7 +2293,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
               "been discarded and the sequence restarted here (D18). Leave declination alone from now on.";
 
         TargetPlan plan = TargetSelection.PlanFrom(
-            _site!, rotation, declination, DateTime.UtcNow, _captureCount, _sweepDegrees, _options.EffectiveAtmosphere);
+            _site!, rotation, declination, UtcNow, _captureCount, _sweepDegrees, _options.EffectiveAtmosphere);
 
         if (!plan.Success)
         {
@@ -2328,7 +2346,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         {
             try
             {
-                await Task.Delay(delay, delayCts.Token).ConfigureAwait(false);
+                await Task.Delay(delay, _time, delayCts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -2341,7 +2359,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 {
                     _pendingDelay = null;
                     delayCts.Dispose();
-                    _armed = new Armed(trigger, DateTime.UtcNow);
+                    _armed = new Armed(trigger, UtcNow);
                 }
 
                 return Task.CompletedTask;
@@ -2488,7 +2506,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     private void OnSolveFailed(SampleTrigger trigger, CapturedImage frame, PlateSolveResult result)
     {
         _consecutiveSolveFailures++;
-        string? kept = _frameStore.KeepFailed(frame.FitsPath, DateTime.UtcNow);
+        string? kept = _frameStore.KeepFailed(frame.FitsPath, UtcNow);
 
         _events.Publish(new SolveFailedEvent(
             trigger,
@@ -2602,7 +2620,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         }
 
         double rotation = TargetSelection.MechanicalRotationOf(
-            _site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+            _site!, position.RaDegrees, position.DecDegrees, UtcNow);
 
         if (trigger != SampleTrigger.Forced && !_atConfirmedPosition && IsTooClose(rotation, out double nearest))
         {
@@ -2617,7 +2635,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             // What the mount actually holds becomes the sequence's declination.
             // Every later slew is resolved to it (D16), and every later poll is
             // compared against it (D18).
-            double declination = MechanicalDeclinationOf(_site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+            double declination = MechanicalDeclinationOf(_site!, position.RaDegrees, position.DecDegrees, UtcNow);
             _plan = _plan! with { MechanicalDeclinationDegrees = declination };
         }
 
@@ -2669,7 +2687,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     private async Task<bool> PassesSafetyChecksAsync(MountPosition position, CancellationToken cancellationToken)
     {
         double rotation = TargetSelection.MechanicalRotationOf(
-            _site!, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+            _site!, position.RaDegrees, position.DecDegrees, UtcNow);
         double sign = Math.Sign(rotation);
 
         PierSide pierSide = position.PierSide;

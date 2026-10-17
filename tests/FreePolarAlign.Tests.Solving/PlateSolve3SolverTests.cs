@@ -1,6 +1,7 @@
 using System.Globalization;
 using FreePolarAlign.Imaging.Fits;
 using FreePolarAlign.Solving;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.Solving;
@@ -190,7 +191,7 @@ public class PlateSolve3SolverTests
         FitsFile.Write(imagePath, new FitsImage(8, 8, FitsBitPix.Int16, 0.0, 1.0, new double[8, 8]));
         try
         {
-            var solver = new PlateSolve3Solver("/definitely/not/PlateSolve3-" + Guid.NewGuid().ToString("N") + ".exe");
+            var solver = new PlateSolve3Solver("/definitely/not/PlateSolve3-" + Guid.NewGuid().ToString("N") + ".exe", new TestClock());
 
             PlateSolveResult result = await solver.SolveAsync(new PlateSolveRequest(imagePath));
 

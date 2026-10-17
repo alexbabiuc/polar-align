@@ -41,8 +41,9 @@ public sealed class AstapPlateSolver : ExternalProcessSolver
     /// turns what a user is likely to type into one. Defaults to
     /// <c>"astap"</c>, which relies on PATH.
     /// </param>
-    public AstapPlateSolver(string executablePath = "astap")
-        : base(executablePath)
+    /// <param name="timeProvider">Runs the solve timeout and times the solve.</param>
+    public AstapPlateSolver(string executablePath, TimeProvider timeProvider)
+        : base(executablePath, timeProvider)
     {
     }
 

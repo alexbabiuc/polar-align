@@ -6,6 +6,7 @@ using FreePolarAlign.Devices.Simulated;
 using FreePolarAlign.Devices.Simulated.SyntheticSky;
 using FreePolarAlign.Session;
 using FreePolarAlign.Solving;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.EndToEnd;
@@ -41,7 +42,20 @@ public class Phase3ExitCriterionTests
 
     private const double Latitude = 45.0;
 
-    private static SimulatedDeviceProvider BuildProvider(MountMisalignment injected, double coneErrorArcminutes = 20.0) =>
+    /// <summary>
+    /// How much fake time a sweep may take before the test gives up. Generous:
+    /// a sweep here takes seconds of the sky's time, and the guard only has to
+    /// catch one that never ends.
+    /// </summary>
+    private static readonly TimeSpan SequenceLimit = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// The mount, camera and engine all run on <paramref name="clock"/>, which
+    /// starts at <see cref="TestClock.DefaultStart"/>. That fixes the sidereal
+    /// time, so the sky each sequence walks across is the same on every run (#13).
+    /// </summary>
+    private static SimulatedDeviceProvider BuildProvider(
+        TestClock clock, MountMisalignment injected, double coneErrorArcminutes = 20.0) =>
         new(
             Catalog,
             new SimulatedMountOptions(
@@ -50,7 +64,43 @@ public class Phase3ExitCriterionTests
                 ConeErrorArcminutes: coneErrorArcminutes,
                 ConePhaseDegrees: 35.0,
                 Tracking: true),
+            clock,
             new SimulatedCameraOptions(FocalLengthMillimetres: 100.0));
+
+    /// <summary>
+    /// Counts the solves in flight. A real solve takes real seconds, and fake
+    /// time must not run on while one does, or the sky would turn for minutes
+    /// between a frame and its result.
+    /// </summary>
+    private sealed class CountingSolver(ISolver inner) : ISolver, IDisposable
+    {
+        private int _inFlight;
+
+        public string Name => inner.Name;
+
+        public bool Busy => Volatile.Read(ref _inFlight) > 0;
+
+        public async Task<PlateSolveResult> SolveAsync(PlateSolveRequest request, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _inFlight);
+            try
+            {
+                return await inner.SolveAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _inFlight);
+            }
+        }
+
+        public void Dispose() => (inner as IDisposable)?.Dispose();
+    }
+
+    private static CountingSolver Watney(TestClock clock) =>
+        new(new WatneyPlateSolver(QuadDatabaseDirectory, clock));
+
+    private static Recorder NewRecorder(TestClock clock, CountingSolver solver) =>
+        new(clock) { Busy = () => solver.Busy };
 
     private static readonly GeodeticLocation Site = new(Latitude, 15.0, 200.0);
 
@@ -93,9 +143,9 @@ public class Phase3ExitCriterionTests
     /// the caller is a program, and the engine only ever answers with events (D6).
     /// </summary>
     private static async Task<(AlignmentEstimate? Estimate, Recorder Recorder)> RunSequenceAsync(
-        AlignmentSession session, int captureCount)
+        AlignmentSession session, int captureCount, TestClock clock, CountingSolver solver)
     {
-        var recorder = new Recorder();
+        Recorder recorder = NewRecorder(clock, solver);
         using IDisposable subscription = session.Events.Subscribe(recorder);
 
         await session.SendAsync(new StartSessionCommand(new SessionConfiguration(
@@ -108,8 +158,8 @@ public class Phase3ExitCriterionTests
         }
 
         int seen = 0;
-        DateTime deadline = DateTime.UtcNow + TimeSpan.FromMinutes(3);
-        while (DateTime.UtcNow < deadline)
+        DateTimeOffset deadline = clock.GetUtcNow() + SequenceLimit;
+        while (clock.GetUtcNow() < deadline)
         {
             IReadOnlyList<EngineEvent> events = recorder.Events;
             for (; seen < events.Count; seen++)
@@ -129,7 +179,7 @@ public class Phase3ExitCriterionTests
             }
 
             await session.SendAsync(new RefreshMountStatusCommand());
-            await Task.Delay(50);
+            await clock.PassAsync(TimeSpan.FromMilliseconds(50), busy: recorder.Busy);
         }
 
         return (null, recorder);
@@ -156,15 +206,16 @@ public class Phase3ExitCriterionTests
         // *angle* subtends less on the sky by cos(axis altitude) (D12), so 120'
         // of azimuth is only 85' of pointing error at this latitude.
         var injected = new MountMisalignment(AltitudeErrorArcminutes: 84.85, AzimuthErrorArcminutes: 120.0);
-        SimulatedDeviceProvider provider = BuildProvider(injected);
+        var clock = new TestClock();
+        SimulatedDeviceProvider provider = BuildProvider(clock, injected);
         SimulatedMount mount = provider.MountInstance;
 
         double startingError = AxisErrorArcminutes(mount);
         Assert.InRange(startingError, 115.0, 125.0);
 
         using ICamera camera = provider.OpenCamera("sim-camera");
-        using var solver = new WatneyPlateSolver(QuadDatabaseDirectory);
-        using var session = new AlignmentSession(camera, mount, solver, LiveOptions(6, TempDirectory()));
+        using CountingSolver solver = Watney(clock);
+        using var session = new AlignmentSession(camera, mount, solver, clock, LiveOptions(6, TempDirectory()));
 
         await ConnectAndConfirmSiteAsync(session);
 
@@ -174,7 +225,7 @@ public class Phase3ExitCriterionTests
 
         for (int round = 0; round < 4; round++)
         {
-            var (estimate, recorder) = await RunSequenceAsync(session, 6);
+            var (estimate, recorder) = await RunSequenceAsync(session, 6, clock, solver);
 
             Assert.True(estimate is not null, recorder.Trail());
             Assert.Null(recorder.Last<AlignmentWithheldEvent>());
@@ -225,14 +276,15 @@ public class Phase3ExitCriterionTests
         RequireQuadDatabase();
 
         var injected = new MountMisalignment(AltitudeErrorArcminutes: 84.85, AzimuthErrorArcminutes: 120.0);
-        SimulatedDeviceProvider provider = BuildProvider(injected);
+        var clock = new TestClock();
+        SimulatedDeviceProvider provider = BuildProvider(clock, injected);
         SimulatedMount mount = provider.MountInstance;
 
         using ICamera camera = provider.OpenCamera("sim-camera");
-        using var solver = new WatneyPlateSolver(QuadDatabaseDirectory);
-        using var session = new AlignmentSession(camera, mount, solver, LiveOptions(6, TempDirectory()));
+        using CountingSolver solver = Watney(clock);
+        using var session = new AlignmentSession(camera, mount, solver, clock, LiveOptions(6, TempDirectory()));
 
-        var recorder = new Recorder();
+        Recorder recorder = NewRecorder(clock, solver);
         using IDisposable subscription = session.Events.Subscribe(recorder);
         Task PollAsync() => session.SendAsync(new RefreshMountStatusCommand()).AsTask();
 
@@ -240,10 +292,10 @@ public class Phase3ExitCriterionTests
         await session.SendAsync(new StartSessionCommand(new SessionConfiguration(6, 70.0)));
 
         int seen = 0;
-        DateTime deadline = DateTime.UtcNow + TimeSpan.FromMinutes(3);
+        DateTimeOffset deadline = clock.GetUtcNow() + SequenceLimit;
         while (recorder.Last<TrackingStartedEvent>() is null)
         {
-            Assert.True(DateTime.UtcNow < deadline && recorder.Last<SessionFaultedEvent>() is null, recorder.Trail());
+            Assert.True(clock.GetUtcNow() < deadline && recorder.Last<SessionFaultedEvent>() is null, recorder.Trail());
             IReadOnlyList<EngineEvent> events = recorder.Events;
             for (; seen < events.Count; seen++)
             {
@@ -254,14 +306,15 @@ public class Phase3ExitCriterionTests
             }
 
             await PollAsync();
-            await Task.Delay(50);
+            await clock.PassAsync(TimeSpan.FromMilliseconds(50), busy: recorder.Busy);
         }
 
         // A reading wholly from after the last turn: the first one published
         // after it may have come from a frame exposed before.
         async Task<AlignmentTrackedEvent> FreshReadingAsync()
         {
-            DateTimeOffset turnedAt = DateTimeOffset.UtcNow;
+            // The engine's clock, not the system's: events are stamped by it.
+            DateTimeOffset turnedAt = clock.GetUtcNow();
             AlignmentTrackedEvent straddling = await recorder.WaitForAsync<AlignmentTrackedEvent>(
                 e => e.TimestampUtc > turnedAt, poll: PollAsync, timeout: TimeSpan.FromMinutes(1));
             return await recorder.WaitForAsync<AlignmentTrackedEvent>(
@@ -296,16 +349,17 @@ public class Phase3ExitCriterionTests
         RequireQuadDatabase();
 
         var injected = new MountMisalignment(60.0, -80.0);
-        SimulatedDeviceProvider provider = BuildProvider(injected, coneErrorArcminutes: 90.0);
+        var clock = new TestClock();
+        SimulatedDeviceProvider provider = BuildProvider(clock, injected, coneErrorArcminutes: 90.0);
         SimulatedMount mount = provider.MountInstance;
 
         using ICamera camera = provider.OpenCamera("sim-camera");
-        using var solver = new WatneyPlateSolver(QuadDatabaseDirectory);
-        using var session = new AlignmentSession(camera, mount, solver, LiveOptions(6, TempDirectory()));
+        using CountingSolver solver = Watney(clock);
+        using var session = new AlignmentSession(camera, mount, solver, clock, LiveOptions(6, TempDirectory()));
 
         await ConnectAndConfirmSiteAsync(session);
 
-        var (estimate, recorder) = await RunSequenceAsync(session, 6);
+        var (estimate, recorder) = await RunSequenceAsync(session, 6, clock, solver);
         Assert.True(estimate is not null, recorder.Trail());
 
         mount.AdjustAxis(-estimate!.AltitudeErrorArcminutes, -estimate.AzimuthErrorArcminutes);
@@ -323,14 +377,15 @@ public class Phase3ExitCriterionTests
     {
         RequireQuadDatabase();
 
-        SimulatedDeviceProvider provider = BuildProvider(new MountMisalignment(30.0, -25.0));
+        var clock = new TestClock();
+        SimulatedDeviceProvider provider = BuildProvider(clock, new MountMisalignment(30.0, -25.0));
         SimulatedMount mount = provider.MountInstance;
 
         using ICamera camera = provider.OpenCamera("sim-camera");
-        using var solver = new WatneyPlateSolver(QuadDatabaseDirectory);
-        using var session = new AlignmentSession(camera, mount, solver, LiveOptions(6, TempDirectory()));
+        using CountingSolver solver = Watney(clock);
+        using var session = new AlignmentSession(camera, mount, solver, clock, LiveOptions(6, TempDirectory()));
 
-        var recorder = new Recorder();
+        Recorder recorder = NewRecorder(clock, solver);
         using IDisposable subscription = session.Events.Subscribe(recorder);
 
         await ConnectAndConfirmSiteAsync(session);
@@ -359,7 +414,7 @@ public class Phase3ExitCriterionTests
         await mount.ConnectAsync();
         await camera.ConnectAsync();
 
-        var recovered = new Recorder();
+        Recorder recovered = NewRecorder(clock, solver);
         using IDisposable recoveredSubscription = session.Events.Subscribe(recovered);
 
         await ConnectAndConfirmSiteAsync(session);
@@ -386,15 +441,16 @@ public class Phase3ExitCriterionTests
         RequireQuadDatabase();
 
         var injected = new MountMisalignment(40.0, -30.0);
-        SimulatedDeviceProvider provider = BuildProvider(injected);
+        var clock = new TestClock();
+        SimulatedDeviceProvider provider = BuildProvider(clock, injected);
         SimulatedMount mount = provider.MountInstance;
         await mount.ConnectAsync();
 
         using ICamera camera = provider.OpenCamera("sim-camera");
-        using var solver = new WatneyPlateSolver(QuadDatabaseDirectory);
-        using var session = new AlignmentSession(camera, mount: null, solver, LiveOptions(5, TempDirectory()));
+        using CountingSolver solver = Watney(clock);
+        using var session = new AlignmentSession(camera, mount: null, solver, clock, LiveOptions(5, TempDirectory()));
 
-        var recorder = new Recorder();
+        Recorder recorder = NewRecorder(clock, solver);
         using IDisposable subscription = session.Events.Subscribe(recorder);
 
         await session.SendAsync(new ConnectDeviceCommand(DeviceKind.Camera, AlignmentSession.AttachedProviderName, "camera"));
@@ -413,7 +469,7 @@ public class Phase3ExitCriterionTests
 
         for (int point = 1; point <= 5; point++)
         {
-            (double ra, double dec) = TargetSelection.ResolveCommand(Site, rotation, declination, DateTime.UtcNow);
+            (double ra, double dec) = TargetSelection.ResolveCommand(Site, rotation, declination, clock.GetUtcNow().UtcDateTime);
             await mount.SlewToCoordinatesAsync(ra, dec);
 
             await recorder.WaitForAsync<PointCapturedEvent>(e => e.Point.Index == point, timeout: TimeSpan.FromMinutes(1));

@@ -5,6 +5,7 @@ using FreePolarAlign.Devices;
 using FreePolarAlign.Devices.Simulated;
 using FreePolarAlign.Session;
 using FreePolarAlign.Solving;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.EndToEnd;
@@ -19,6 +20,9 @@ namespace FreePolarAlign.Tests.EndToEnd;
 /// </summary>
 public class CameraGainTests
 {
+    /// <summary>The engine's and the cameras' clock (D37).</summary>
+    private readonly TestClock _clock = new();
+
     private static readonly GeodeticLocation Site = new(45.0, 15.0, 200.0);
 
     /// <summary>A camera with a gain control, shaped like an ASI290: 0 to 600, clamping like the real SDK.</summary>
@@ -26,8 +30,11 @@ public class CameraGainTests
     {
         private int _gain;
 
-        public GainCamera(CameraGainRange? range = null, int initialGain = 150, int? hardwareCeiling = null)
+        private readonly TimeProvider _time;
+
+        public GainCamera(TimeProvider time, CameraGainRange? range = null, int initialGain = 150, int? hardwareCeiling = null)
         {
+            _time = time;
             GainRange = range ?? new CameraGainRange(0, 600);
             _gain = initialGain;
             HardwareCeiling = hardwareCeiling;
@@ -83,7 +90,7 @@ public class CameraGainTests
 
         public Task<CapturedImage> ExposeAsync(
             TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default) =>
-            StubFrames.ExposeAsync(duration, cancellationToken);
+            StubFrames.ExposeAsync(duration, _time, cancellationToken);
 
         public void Dispose()
         {
@@ -93,6 +100,10 @@ public class CameraGainTests
     /// <summary>An ASCOM-shaped camera: its gain is its driver's business, so it reports no range.</summary>
     private sealed class NoGainCamera : ICamera
     {
+        private readonly TimeProvider _time;
+
+        public NoGainCamera(TimeProvider time) => _time = time;
+
         public string Name => "ASCOM-ish Camera";
 
         public int SensorWidthPixels => 1936;
@@ -124,7 +135,7 @@ public class CameraGainTests
 
         public Task<CapturedImage> ExposeAsync(
             TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default) =>
-            StubFrames.ExposeAsync(duration, cancellationToken);
+            StubFrames.ExposeAsync(duration, _time, cancellationToken);
 
         public void Dispose()
         {
@@ -144,17 +155,24 @@ public class CameraGainTests
         private readonly IDisposable _subscription;
         private readonly SimulatedMount _mount;
 
-        public Harness(ICamera camera)
+        private readonly TestClock _clock;
+
+        public Harness(ICamera camera, TestClock clock)
         {
-            _mount = new SimulatedMount(new SimulatedMountOptions(Site, new MountMisalignment(30.0, -25.0)));
+            _clock = clock;
+            Recorder = new Recorder(clock);
+            _mount = new SimulatedMount(new SimulatedMountOptions(Site, new MountMisalignment(30.0, -25.0)), clock);
             Session = new AlignmentSession(
-                camera, _mount, new UnusedSolver(), new AlignmentSessionOptions(CaptureCount: 5, SweepDegrees: 60.0, ExposureDuration: StubFrames.Exposure));
+                camera, _mount, new UnusedSolver(), clock, new AlignmentSessionOptions(CaptureCount: 5, SweepDegrees: 60.0, ExposureDuration: StubFrames.Exposure));
             _subscription = Session.Events.Subscribe(Recorder);
         }
 
         public AlignmentSession Session { get; }
 
-        public Recorder Recorder { get; } = new();
+        /// <summary>A camera command, with time moved on until it returns (see <see cref="TestClock.CompleteAsync"/>).</summary>
+        public Task SendAsync(EngineCommand command) => _clock.CompleteAsync(Session.SendAsync(command).AsTask());
+
+        public Recorder Recorder { get; }
 
         public async Task ConnectAsync(bool mountToo = false)
         {
@@ -187,7 +205,7 @@ public class CameraGainTests
     [Fact]
     public async Task ConnectingReportsTheCamerasSerialAndGain()
     {
-        using var harness = new Harness(new GainCamera(initialGain: 150));
+        using var harness = new Harness(new GainCamera(_clock, initialGain: 150), _clock);
         await harness.ConnectAsync();
 
         CameraDescription camera = harness.Recorder.Events.OfType<DeviceConnectedEvent>().Single().Camera!;
@@ -198,7 +216,7 @@ public class CameraGainTests
     [Fact]
     public async Task AnAscomShapedCameraReportsNoGain()
     {
-        using var harness = new Harness(new NoGainCamera());
+        using var harness = new Harness(new NoGainCamera(_clock), _clock);
         await harness.ConnectAsync();
 
         Assert.Null(harness.Recorder.Events.OfType<DeviceConnectedEvent>().Single().Camera!.Gain);
@@ -209,11 +227,11 @@ public class CameraGainTests
     [Fact]
     public async Task APercentageIsMappedOntoTheCamerasOwnRange()
     {
-        var camera = new GainCamera();
-        using var harness = new Harness(camera);
+        var camera = new GainCamera(_clock);
+        using var harness = new Harness(camera, _clock);
         await harness.ConnectAsync();
 
-        await harness.Session.SendAsync(new SetCameraGainCommand(50));
+        await harness.SendAsync(new SetCameraGainCommand(50));
 
         Assert.Equal(300, camera.Gain);
         Assert.Equal(new CameraGainDescription(50, 300, 0, 600), harness.LastGain!.Gain);
@@ -227,11 +245,11 @@ public class CameraGainTests
     [Fact]
     public async Task TheGainReportedIsWhatTheCameraTook_NotWhatWasAsked()
     {
-        var camera = new GainCamera(hardwareCeiling: 480);
-        using var harness = new Harness(camera);
+        var camera = new GainCamera(_clock, hardwareCeiling: 480);
+        using var harness = new Harness(camera, _clock);
         await harness.ConnectAsync();
 
-        await harness.Session.SendAsync(new SetCameraGainCommand(100));
+        await harness.SendAsync(new SetCameraGainCommand(100));
 
         Assert.Equal(480, harness.LastGain!.Gain.Value);
         Assert.Equal(80, harness.LastGain.Gain.Percent);
@@ -244,10 +262,10 @@ public class CameraGainTests
     [Fact]
     public async Task OnANarrowRange_TheTypedPercentageIsKept()
     {
-        using var harness = new Harness(new GainCamera(new CameraGainRange(0, 10), initialGain: 0));
+        using var harness = new Harness(new GainCamera(_clock, new CameraGainRange(0, 10), initialGain: 0), _clock);
         await harness.ConnectAsync();
 
-        await harness.Session.SendAsync(new SetCameraGainCommand(37));
+        await harness.SendAsync(new SetCameraGainCommand(37));
 
         Assert.Equal(4, harness.LastGain!.Gain.Value);
         Assert.Equal(37, harness.LastGain.Gain.Percent);
@@ -258,10 +276,10 @@ public class CameraGainTests
     [Fact]
     public async Task WithNoCameraConnected_GainIsRefused()
     {
-        var camera = new GainCamera();
-        using var harness = new Harness(camera);
+        var camera = new GainCamera(_clock);
+        using var harness = new Harness(camera, _clock);
 
-        await harness.Session.SendAsync(new SetCameraGainCommand(50));
+        await harness.SendAsync(new SetCameraGainCommand(50));
 
         Assert.Equal(0, camera.SetCalls);
         Assert.Contains("Connect a camera", harness.LastRejection);
@@ -274,10 +292,10 @@ public class CameraGainTests
     [Fact]
     public async Task ACameraWithoutGainControl_PointsAtItsDriverSettings()
     {
-        using var harness = new Harness(new NoGainCamera());
+        using var harness = new Harness(new NoGainCamera(_clock), _clock);
         await harness.ConnectAsync();
 
-        await harness.Session.SendAsync(new SetCameraGainCommand(50));
+        await harness.SendAsync(new SetCameraGainCommand(50));
 
         Assert.Null(harness.LastGain);
         Assert.Contains("driver settings", harness.LastRejection);
@@ -288,11 +306,11 @@ public class CameraGainTests
     [InlineData(101)]
     public async Task APercentageOutsideTheControlIsRefused(int percent)
     {
-        var camera = new GainCamera();
-        using var harness = new Harness(camera);
+        var camera = new GainCamera(_clock);
+        using var harness = new Harness(camera, _clock);
         await harness.ConnectAsync();
 
-        await harness.Session.SendAsync(new SetCameraGainCommand(percent));
+        await harness.SendAsync(new SetCameraGainCommand(percent));
 
         Assert.Equal(0, camera.SetCalls);
         Assert.Contains("0 to 100", harness.LastRejection);
@@ -307,13 +325,13 @@ public class CameraGainTests
     [Fact]
     public async Task DuringASequence_GainIsAccepted()
     {
-        var camera = new GainCamera();
-        using var harness = new Harness(camera);
+        var camera = new GainCamera(_clock);
+        using var harness = new Harness(camera, _clock);
         await harness.ConnectAsync(mountToo: true);
         await harness.Session.SendAsync(new ConfigureSiteCommand(Site.LatitudeDegrees, Site.LongitudeDegrees, Site.HeightMeters));
         await harness.Session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 60.0)));
 
-        await harness.Session.SendAsync(new SetCameraGainCommand(80));
+        await harness.SendAsync(new SetCameraGainCommand(80));
 
         Assert.Equal(1, camera.SetCalls);
         Assert.Null(harness.LastRejection);

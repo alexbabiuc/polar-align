@@ -1,4 +1,5 @@
 using FreePolarAlign.Session;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.EndToEnd;
@@ -11,6 +12,9 @@ namespace FreePolarAlign.Tests.EndToEnd;
 /// </summary>
 public sealed class FrameStoreTests : IDisposable
 {
+    /// <summary>When a failed frame is kept; it only names the file (D37).</summary>
+    private static readonly DateTime KeptAt = TestClock.DefaultStart.UtcDateTime;
+
     private readonly string _directory;
     private readonly string _failedDirectory;
 
@@ -173,7 +177,7 @@ public sealed class FrameStoreTests : IDisposable
     {
         using var store = new FrameStore(_failedDirectory);
 
-        Assert.Null(store.KeepFailed(Path.Combine(_directory, "never-written.fits"), DateTime.UtcNow));
+        Assert.Null(store.KeepFailed(Path.Combine(_directory, "never-written.fits"), KeptAt));
     }
 
     /// <summary>
@@ -231,7 +235,7 @@ public sealed class FrameStoreTests : IDisposable
         store.Displayed(stuck);
         store.Displayed(shown);
         IDisposable hold = store.Hold(held);
-        string? kept = store.KeepFailed(held, DateTime.UtcNow);
+        string? kept = store.KeepFailed(held, KeptAt);
 
         store.ReleaseAll();
         Assert.False(File.Exists(held));
@@ -293,7 +297,7 @@ public sealed class FrameStoreTests : IDisposable
                     {
                         // A frame the capture loop already superseded is gone, so
                         // not every one of these can be kept.
-                        if (store.KeepFailed(paths[i], DateTime.UtcNow) is not null)
+                        if (store.KeepFailed(paths[i], KeptAt) is not null)
                         {
                             Interlocked.Increment(ref keptCount);
                         }

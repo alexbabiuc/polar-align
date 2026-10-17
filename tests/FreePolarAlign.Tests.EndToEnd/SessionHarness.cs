@@ -5,6 +5,7 @@ using FreePolarAlign.Devices;
 using FreePolarAlign.Devices.Simulated;
 using FreePolarAlign.Session;
 using FreePolarAlign.Solving;
+using FreePolarAlign.Tests.Support;
 
 namespace FreePolarAlign.Tests.EndToEnd;
 
@@ -16,6 +17,16 @@ namespace FreePolarAlign.Tests.EndToEnd;
 internal sealed class Recorder : IObserver<EngineEvent>
 {
     private readonly List<EngineEvent> _events = new();
+    private readonly TestClock _clock;
+
+    /// <param name="clock">The engine's clock, which waiting moves on (D37).</param>
+    public Recorder(TestClock clock) => _clock = clock;
+
+    /// <summary>
+    /// True while real work is in flight, such as a solve. Waiting does not move
+    /// time on until it is done (see <see cref="TestClock.RunUntilAsync{T}"/>).
+    /// </summary>
+    public Func<bool>? Busy { get; set; }
 
     public IReadOnlyList<EngineEvent> Events
     {
@@ -82,40 +93,34 @@ internal sealed class Recorder : IObserver<EngineEvent>
 
     /// <summary>
     /// Waits for an event matching <paramref name="predicate"/> that arrived at
-    /// or after <paramref name="fromIndex"/>, calling <paramref name="poll"/>
-    /// between looks -- which is how a test stands in for the UI's status timer.
+    /// or after <paramref name="fromIndex"/>, moving the fake clock on between
+    /// looks and calling <paramref name="poll"/> -- which is how a test stands in
+    /// for the UI's status timer.
     /// </summary>
-    public async Task<T> WaitForAsync<T>(
+    /// <param name="timeout">How much fake time may pass first.</param>
+    public Task<T> WaitForAsync<T>(
         Func<T, bool>? predicate = null,
         int fromIndex = 0,
         Func<Task>? poll = null,
-        TimeSpan? timeout = null) where T : EngineEvent
-    {
-        DateTime deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(20));
-        while (true)
-        {
-            IReadOnlyList<EngineEvent> events = Events;
-            for (int i = fromIndex; i < events.Count; i++)
+        TimeSpan? timeout = null) where T : EngineEvent =>
+        _clock.RunUntilAsync(
+            () =>
             {
-                if (events[i] is T match && (predicate is null || predicate(match)))
+                IReadOnlyList<EngineEvent> events = Events;
+                for (int i = fromIndex; i < events.Count; i++)
                 {
-                    return match;
+                    if (events[i] is T match && (predicate is null || predicate(match)))
+                    {
+                        return match;
+                    }
                 }
-            }
 
-            if (DateTime.UtcNow > deadline)
-            {
-                throw new TimeoutException($"No {typeof(T).Name} arrived.{Trail()}");
-            }
-
-            if (poll is not null)
-            {
-                await poll().ConfigureAwait(false);
-            }
-
-            await Task.Delay(10).ConfigureAwait(false);
-        }
-    }
+                return null;
+            },
+            () => $" No {typeof(T).Name} arrived.{Trail()}",
+            timeout,
+            poll,
+            Busy);
 }
 
 /// <summary>
@@ -198,8 +203,11 @@ internal sealed class StubCamera : ICamera
 {
     private readonly List<(DateTime StartUtc, TimeSpan Duration, CaptureContext? Context, string Path)> _frames = new();
 
-    public StubCamera(string? workingDirectory = null)
+    private readonly TimeProvider _time;
+
+    public StubCamera(TimeProvider time, string? workingDirectory = null)
     {
+        _time = time;
         WorkingDirectory = workingDirectory ?? Path.Combine(Path.GetTempPath(), $"fpa-stub-{Guid.NewGuid():N}");
         Directory.CreateDirectory(WorkingDirectory);
     }
@@ -259,8 +267,8 @@ internal sealed class StubCamera : ICamera
             throw new InvalidOperationException("The stub camera is not connected.");
         }
 
-        DateTime start = DateTime.UtcNow;
-        await Task.Delay(duration, cancellationToken).ConfigureAwait(false);
+        DateTime start = _time.GetUtcNow().UtcDateTime;
+        await Task.Delay(duration, _time, cancellationToken).ConfigureAwait(false);
 
         string path;
         lock (_frames)
@@ -330,10 +338,10 @@ internal sealed class PerfectSolver : ISolver
         {
             if (Delay > TimeSpan.Zero)
             {
-                await Task.Delay(Delay, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(Delay, _mount.Time, cancellationToken).ConfigureAwait(false);
             }
 
-            DateTime utc = DateTime.UtcNow;
+            DateTime utc = _mount.Time.GetUtcNow().UtcDateTime;
             HorizontalCoordinates pointing = _mount.PhysicalPointingAt(utc);
             (double ra, double dec) = TopocentricConverter.FromAltAz(pointing, utc, _observer, AtmosphericConditions.Standard);
 
@@ -362,10 +370,10 @@ internal static class StubFrames
     /// <summary>Short, so a command waiting for the frame in progress (D22, D23) does not wait long.</summary>
     public static readonly TimeSpan Exposure = TimeSpan.FromMilliseconds(10);
 
-    public static async Task<CapturedImage> ExposeAsync(TimeSpan duration, CancellationToken cancellationToken)
+    public static async Task<CapturedImage> ExposeAsync(TimeSpan duration, TimeProvider time, CancellationToken cancellationToken)
     {
-        await Task.Delay(duration, cancellationToken).ConfigureAwait(false);
-        return new CapturedImage("never-written.fits", DateTime.UtcNow, duration);
+        await Task.Delay(duration, time, cancellationToken).ConfigureAwait(false);
+        return new CapturedImage("never-written.fits", time.GetUtcNow().UtcDateTime, duration);
     }
 }
 
@@ -422,6 +430,7 @@ internal sealed class SessionHarness : IDisposable
         SimulatedSiteWrites siteWrites = SimulatedSiteWrites.Stored,
         bool canStopTracking = true)
     {
+        Clock = new TestClock();
         Simulated = new SimulatedMount(new SimulatedMountOptions(
             Site,
             Injected,
@@ -432,10 +441,10 @@ internal sealed class SessionHarness : IDisposable
             CanSlewAsync: canSlew,
             InitialMechanicalRotationDegrees: initialRotationDegrees,
             SiteWrites: siteWrites,
-            CanStopTracking: canStopTracking));
+            CanStopTracking: canStopTracking), Clock);
 
         Mount = new RecordingMount(Simulated);
-        Camera = new StubCamera();
+        Camera = new StubCamera(Clock);
         Perfect = new PerfectSolver(Simulated, Site);
         Solver = solver ?? Perfect;
 
@@ -450,11 +459,14 @@ internal sealed class SessionHarness : IDisposable
             SolveInterval: solveInterval ?? TimeSpan.FromMilliseconds(60),
             FailedSolvesDirectory: FailedSolvesDirectory);
 
-        Session = new AlignmentSession(Camera, withMount ? Mount : null, Solver, options);
+        Session = new AlignmentSession(Camera, withMount ? Mount : null, Solver, Clock, options);
 
-        Recorder = new Recorder();
+        Recorder = new Recorder(Clock);
         _subscription = Session.Events.Subscribe(Recorder);
     }
+
+    /// <summary>The fake clock the mount, camera, solver and engine all run on (D37).</summary>
+    public TestClock Clock { get; }
 
     public SimulatedMount Simulated { get; }
 
@@ -520,15 +532,20 @@ internal sealed class SessionHarness : IDisposable
 
         double declination = mechanicalDeclinationDegrees ?? MechanicalDeclinationNow();
         (double ra, double dec) = TargetSelection.ResolveCommand(
-            Site, mechanicalRotationDegrees, declination, DateTime.UtcNow);
-        await Simulated.SlewToCoordinatesAsync(ra, dec);
+            Site, mechanicalRotationDegrees, declination, Clock.UtcNow);
+
+        // A slew that takes time takes it on the fake clock, so the clock is
+        // moved on until it arrives.
+        Task slew = Simulated.SlewToCoordinatesAsync(ra, dec);
+        await Clock.WaitUntilAsync(() => slew.IsCompleted, () => " The slew never arrived.");
+        await slew;
     }
 
     /// <summary>The mount's own mechanical rotation, as the engine measures spacing by it (D27).</summary>
     public double MountRotationNow()
     {
         MountPosition position = Simulated.GetPositionAsync().GetAwaiter().GetResult();
-        return TargetSelection.MechanicalRotationOf(Site, position.RaDegrees, position.DecDegrees, DateTime.UtcNow);
+        return TargetSelection.MechanicalRotationOf(Site, position.RaDegrees, position.DecDegrees, Clock.UtcNow);
     }
 
     public double MechanicalDeclinationNow()
@@ -544,18 +561,18 @@ internal sealed class SessionHarness : IDisposable
     /// what the mount will do rather than model the atmosphere better than the
     /// mount does.
     /// </summary>
-    public static double MechanicalDeclinationOf(double raDegrees, double decDegrees)
+    public double MechanicalDeclinationOf(double raDegrees, double decDegrees)
     {
         HorizontalCoordinates pointing = TopocentricConverter.ToAltAz(
-            raDegrees, decDegrees, DateTime.UtcNow, Observer, AtmosphericConditions.Vacuum);
+            raDegrees, decDegrees, Clock.UtcNow, Observer, AtmosphericConditions.Vacuum);
 
         var (_, declination) = MountMechanics.Decompose(Latitude, pointing);
         return declination;
     }
 
-    private static HorizontalCoordinates ToHorizontal(MountPosition position) =>
+    private HorizontalCoordinates ToHorizontal(MountPosition position) =>
         TopocentricConverter.ToAltAz(
-            position.RaDegrees, position.DecDegrees, DateTime.UtcNow, Observer, AtmosphericConditions.Vacuum);
+            position.RaDegrees, position.DecDegrees, Clock.UtcNow, Observer, AtmosphericConditions.Vacuum);
 
     public void Dispose()
     {

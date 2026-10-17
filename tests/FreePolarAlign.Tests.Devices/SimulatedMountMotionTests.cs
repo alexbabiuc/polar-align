@@ -2,6 +2,7 @@ using FreePolarAlign.Core.Alignment;
 using FreePolarAlign.Core.Astrometry;
 using FreePolarAlign.Devices;
 using FreePolarAlign.Devices.Simulated;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.Devices;
@@ -15,19 +16,31 @@ namespace FreePolarAlign.Tests.Devices;
 /// mechanical angles can be read straight back off where the telescope
 /// physically points. That is what makes a position part-way through a slew
 /// checkable at all.
+///
+/// Time is the test's (D37): a slew is watched by moving the fake clock, so a
+/// position half-way through is exactly half-way, not roughly.
 /// </summary>
 public class SimulatedMountMotionTests
 {
     private static readonly GeodeticLocation Site = new(45.0, 15.0, 200.0);
     private static readonly ObserverSite Observer = new(45.0, 15.0, 200.0);
 
-    /// <summary>Long enough that a test's own scheduling cannot straddle it.</summary>
     private static readonly TimeSpan Slew = TimeSpan.FromSeconds(2);
 
-    private static async Task<SimulatedMount> ConnectedAsync(TimeSpan slewDuration)
+    /// <summary>
+    /// A slew's target is resolved for the instant it arrives, so a "40°" slew
+    /// also covers the sky's turn while it lasts, and the angles move linearly
+    /// over the whole of it. Half-way is therefore 20° plus one second of
+    /// sidereal rate (0.0042°), exactly.
+    /// </summary>
+    private static readonly double HalfWay = 20.0 + Slew.TotalSeconds / 2.0 * 360.0 / 86164.0905;
+
+    private readonly TestClock _clock = new();
+
+    private async Task<SimulatedMount> ConnectedAsync(TimeSpan slewDuration)
     {
-        var mount = new SimulatedMount(new SimulatedMountOptions(
-            Site, MountMisalignment.Aligned, SlewDuration: slewDuration));
+        var mount = new SimulatedMount(
+            new SimulatedMountOptions(Site, MountMisalignment.Aligned, SlewDuration: slewDuration), _clock);
         await mount.ConnectAsync();
         return mount;
     }
@@ -40,11 +53,11 @@ public class SimulatedMountMotionTests
     /// way the session resolves them (D16), so a test can ask for a pure
     /// rotation and know the declination should not move.
     /// </summary>
-    private static (double Ra, double Dec) Resolve(double rotation, double declination)
+    private (double Ra, double Dec) Resolve(double rotation, double declination)
     {
         HorizontalCoordinates ideal = MountMechanics.Compose(
             Site.LatitudeDegrees, MountMisalignment.Aligned, rotation, declination);
-        return TopocentricConverter.FromAltAz(ideal, DateTime.UtcNow, Observer, AtmosphericConditions.Vacuum);
+        return TopocentricConverter.FromAltAz(ideal, _clock.UtcNow, Observer, AtmosphericConditions.Vacuum);
     }
 
     private static double RotationDifference(double to, double from)
@@ -64,11 +77,11 @@ public class SimulatedMountMotionTests
     public async Task A_slew_takes_its_duration_and_passes_through_the_positions_between()
     {
         using SimulatedMount mount = await ConnectedAsync(Slew);
-        (double startRotation, double declination) = MechanicsAt(mount, DateTime.UtcNow);
+        (double startRotation, double declination) = MechanicsAt(mount, _clock.UtcNow);
         (double ra, double dec) = Resolve(startRotation + 40.0, declination);
 
         Task slew = mount.SlewToCoordinatesAsync(ra, dec);
-        await Task.Delay(Slew / 2);
+        await _clock.AdvanceAsync(Slew / 2);
 
         MountPosition during = await mount.GetPositionAsync();
         Assert.True(during.IsSlewing);
@@ -76,7 +89,7 @@ public class SimulatedMountMotionTests
 
         (double rotation, double midDeclination) = MechanicsAt(mount, during.TimestampUtc);
         double travelled = RotationDifference(rotation, startRotation);
-        Assert.InRange(travelled, 40.0 * 0.15, 40.0 * 0.85);
+        Assert.Equal(HalfWay, travelled, 1e-6);
 
         // The angles are interpolated, not the sky coordinates: a pure
         // rotation keeps the mechanical declination exactly where it was.
@@ -88,6 +101,7 @@ public class SimulatedMountMotionTests
             TopocentricConverter.ToAltAz(during.RaDegrees, during.DecDegrees, during.TimestampUtc, Observer, AtmosphericConditions.Vacuum));
         Assert.Equal(rotation, reportedRotation, 1e-6);
 
+        await _clock.AdvanceAsync(Slew / 2);
         await slew;
 
         MountPosition after = await mount.GetPositionAsync();
@@ -104,7 +118,7 @@ public class SimulatedMountMotionTests
     public async Task With_no_slew_duration_a_slew_is_instant_and_never_reported_as_slewing()
     {
         using SimulatedMount mount = await ConnectedAsync(TimeSpan.Zero);
-        (double rotation, double declination) = MechanicsAt(mount, DateTime.UtcNow);
+        (double rotation, double declination) = MechanicsAt(mount, _clock.UtcNow);
         (double ra, double dec) = Resolve(rotation + 30.0, declination);
 
         Task slew = mount.SlewToCoordinatesAsync(ra, dec);
@@ -126,12 +140,12 @@ public class SimulatedMountMotionTests
     public async Task A_cancelled_slew_stops_where_it_had_got_to()
     {
         using SimulatedMount mount = await ConnectedAsync(Slew);
-        (double startRotation, double declination) = MechanicsAt(mount, DateTime.UtcNow);
+        (double startRotation, double declination) = MechanicsAt(mount, _clock.UtcNow);
         (double ra, double dec) = Resolve(startRotation + 40.0, declination);
 
         using var cancellation = new CancellationTokenSource();
         Task slew = mount.SlewToCoordinatesAsync(ra, dec, cancellation.Token);
-        await Task.Delay(Slew / 2);
+        await _clock.AdvanceAsync(Slew / 2);
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => slew);
 
@@ -139,10 +153,10 @@ public class SimulatedMountMotionTests
         Assert.False(stopped.IsSlewing);
 
         (double stoppedRotation, _) = MechanicsAt(mount, stopped.TimestampUtc);
-        Assert.InRange(RotationDifference(stoppedRotation, startRotation), 40.0 * 0.15, 40.0 * 0.85);
+        Assert.Equal(HalfWay, RotationDifference(stoppedRotation, startRotation), 1e-6);
 
         // Only tracking moves it from here, in sky coordinates not at all.
-        await Task.Delay(TimeSpan.FromMilliseconds(300));
+        await _clock.AdvanceAsync(TimeSpan.FromMilliseconds(300));
         MountPosition later = await mount.GetPositionAsync();
         Assert.Equal(stopped.RaDegrees, later.RaDegrees, 1e-9);
         Assert.Equal(stopped.DecDegrees, later.DecDegrees, 1e-9);
@@ -160,29 +174,28 @@ public class SimulatedMountMotionTests
     public async Task A_slew_during_a_slew_replaces_it_from_where_the_mount_has_got_to()
     {
         using SimulatedMount mount = await ConnectedAsync(Slew);
-        (double startRotation, double declination) = MechanicsAt(mount, DateTime.UtcNow);
+        (double startRotation, double declination) = MechanicsAt(mount, _clock.UtcNow);
         (double firstRa, double firstDec) = Resolve(startRotation + 40.0, declination);
         (double secondRa, double secondDec) = Resolve(startRotation - 20.0, declination);
 
         Task first = mount.SlewToCoordinatesAsync(firstRa, firstDec);
-        await Task.Delay(Slew / 2);
+        await _clock.AdvanceAsync(Slew / 2);
 
-        DateTime replacedAt = DateTime.UtcNow;
-        (double reached, _) = MechanicsAt(mount, replacedAt);
+        (double reached, _) = MechanicsAt(mount, _clock.UtcNow);
         Task second = mount.SlewToCoordinatesAsync(secondRa, secondDec);
 
         // Continues from where the first had got to, rather than from its
-        // start or its target. 40 degrees in two seconds is 0.02 degrees a
-        // millisecond, so a degree allows for 50 ms of scheduling.
-        (double continuedFrom, _) = MechanicsAt(mount, DateTime.UtcNow);
-        Assert.InRange(RotationDifference(reached, startRotation), 40.0 * 0.15, 40.0 * 0.85);
-        Assert.InRange(Math.Abs(RotationDifference(continuedFrom, reached)), 0.0, 1.0);
+        // start or its target. The clock has not moved, so exactly from there.
+        (double continuedFrom, _) = MechanicsAt(mount, _clock.UtcNow);
+        Assert.Equal(HalfWay, RotationDifference(reached, startRotation), 1e-6);
+        Assert.Equal(reached, continuedFrom, 1e-6);
 
         // Past the first slew's own end, and short of the second's.
-        await Task.Delay(Slew * 0.75);
+        await _clock.AdvanceAsync(Slew * 0.75);
         Assert.False(first.IsCompleted);
         Assert.True((await mount.GetPositionAsync()).IsSlewing);
 
+        await _clock.AdvanceAsync(Slew);
         await Task.WhenAll(first, second);
 
         MountPosition after = await mount.GetPositionAsync();
@@ -200,7 +213,7 @@ public class SimulatedMountMotionTests
     public async Task A_declination_nudge_moves_the_mechanical_declination_and_is_reported()
     {
         using SimulatedMount mount = await ConnectedAsync(TimeSpan.Zero);
-        DateTime at = DateTime.UtcNow;
+        DateTime at = _clock.UtcNow;
         (double rotationBefore, double declinationBefore) = MechanicsAt(mount, at);
         MountPosition before = await mount.GetPositionAsync();
 
@@ -225,15 +238,16 @@ public class SimulatedMountMotionTests
     public async Task A_declination_nudge_during_a_slew_survives_its_arrival()
     {
         using SimulatedMount mount = await ConnectedAsync(Slew);
-        (double startRotation, double declination) = MechanicsAt(mount, DateTime.UtcNow);
+        (double startRotation, double declination) = MechanicsAt(mount, _clock.UtcNow);
         (double ra, double dec) = Resolve(startRotation + 20.0, declination);
 
         Task slew = mount.SlewToCoordinatesAsync(ra, dec);
-        await Task.Delay(Slew / 4);
+        await _clock.AdvanceAsync(Slew / 4);
         mount.NudgeDeclination(-6.0);
+        await _clock.AdvanceAsync(Slew);
         await slew;
 
-        (_, double arrived) = MechanicsAt(mount, DateTime.UtcNow);
+        (_, double arrived) = MechanicsAt(mount, _clock.UtcNow);
         Assert.Equal(-6.0, (arrived - declination) * 60.0, 1e-3);
     }
 
@@ -247,14 +261,15 @@ public class SimulatedMountMotionTests
     [Fact]
     public async Task AnUndrivenMount_ReportsAnRAThatDriftsWithTheSky()
     {
-        var mount = new SimulatedMount(new SimulatedMountOptions(Site, MountMisalignment.Aligned, Tracking: false));
+        var mount = new SimulatedMount(new SimulatedMountOptions(Site, MountMisalignment.Aligned, Tracking: false), _clock);
         await mount.ConnectAsync();
 
         MountPosition before = await mount.GetPositionAsync();
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        await _clock.AdvanceAsync(TimeSpan.FromSeconds(1));
         MountPosition after = await mount.GetPositionAsync();
 
         double seconds = (after.TimestampUtc - before.TimestampUtc).TotalSeconds;
+        Assert.Equal(1.0, seconds);
         double driftArcseconds = RotationDifference(after.RaDegrees, before.RaDegrees) * 3600.0;
 
         // A fixed hour angle under a turning sky: RA rises with sidereal time,

@@ -3,6 +3,7 @@ using FreePolarAlign.Devices;
 using FreePolarAlign.Devices.Simulated;
 using FreePolarAlign.Devices.Simulated.SyntheticSky;
 using FreePolarAlign.Imaging.Fits;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.Devices;
@@ -20,9 +21,11 @@ public class SimulatedCameraGainTests
     /// <summary>Small and starless: only the header is under test, and a full frame takes a second to render.</summary>
     private static readonly SimulatedCameraOptions Tiny = new(WidthPixels: 64, HeightPixels: 48);
 
-    private static (SimulatedMount Mount, SimulatedCamera Camera) Open()
+    private readonly TestClock _clock = new();
+
+    private (SimulatedMount Mount, SimulatedCamera Camera) Open()
     {
-        var mount = new SimulatedMount(new SimulatedMountOptions(Site, MountMisalignment.Aligned));
+        var mount = new SimulatedMount(new SimulatedMountOptions(Site, MountMisalignment.Aligned), _clock);
         var camera = new SimulatedCamera(mount, new StarCatalog(Array.Empty<CatalogStar>()), Tiny);
         return (mount, camera);
     }
@@ -49,6 +52,14 @@ public class SimulatedCameraGainTests
         }
     }
 
+    /// <summary>An exposure takes its time on the test's clock, so the clock is moved past it.</summary>
+    private async Task<CapturedImage> ExposeAsync(SimulatedCamera camera, TimeSpan duration)
+    {
+        Task<CapturedImage> exposure = camera.ExposeAsync(duration);
+        await _clock.AdvanceAsync(duration);
+        return await exposure;
+    }
+
     /// <summary>
     /// The exit criterion's own shape: a gain change between frames appears in
     /// the next one's header, beside the exposure it was taken at.
@@ -64,10 +75,10 @@ public class SimulatedCameraGainTests
             await camera.ConnectAsync();
 
             await camera.SetGainAsync(20);
-            CapturedImage first = await camera.ExposeAsync(TimeSpan.FromSeconds(0.5));
+            CapturedImage first = await ExposeAsync(camera, TimeSpan.FromSeconds(0.5));
 
             await camera.SetGainAsync(75);
-            CapturedImage second = await camera.ExposeAsync(TimeSpan.FromSeconds(2.0));
+            CapturedImage second = await ExposeAsync(camera, TimeSpan.FromSeconds(2.0));
 
             FitsHeader firstHeader = FitsFile.Read(first.FitsPath).ExtraHeader;
             FitsHeader secondHeader = FitsFile.Read(second.FitsPath).ExtraHeader;
@@ -88,7 +99,8 @@ public class SimulatedCameraGainTests
     {
         var provider = new SimulatedDeviceProvider(
             new StarCatalog(Array.Empty<CatalogStar>()),
-            new SimulatedMountOptions(Site, MountMisalignment.Aligned));
+            new SimulatedMountOptions(Site, MountMisalignment.Aligned),
+            new TestClock());
 
         CameraDescriptor camera = Assert.Single(provider.DiscoverDevices().OfType<CameraDescriptor>());
         Assert.True(camera.HasGainControl);

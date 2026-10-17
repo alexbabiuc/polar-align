@@ -17,15 +17,18 @@ public sealed class SimulatedDeviceProvider : IDeviceProvider
     private readonly SimulatedMountOptions _mountOptions;
     private readonly SimulatedCameraOptions _cameraOptions;
 
+    private readonly TimeProvider _time;
     private SimulatedMount? _mount;
 
     public SimulatedDeviceProvider(
         StarCatalog catalog,
         SimulatedMountOptions mountOptions,
+        TimeProvider timeProvider,
         SimulatedCameraOptions? cameraOptions = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(mountOptions);
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
 
         _catalog = catalog;
         _mountOptions = mountOptions;
@@ -68,5 +71,5 @@ public sealed class SimulatedDeviceProvider : IDeviceProvider
     }
 
     /// <summary>The mount both devices share. Exposed so tests can read ground truth.</summary>
-    public SimulatedMount MountInstance => _mount ??= new SimulatedMount(_mountOptions);
+    public SimulatedMount MountInstance => _mount ??= new SimulatedMount(_mountOptions, _time);
 }

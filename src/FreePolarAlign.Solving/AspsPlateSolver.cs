@@ -31,8 +31,9 @@ namespace FreePolarAlign.Solving;
 /// </remarks>
 public sealed class AspsPlateSolver : ExternalProcessSolver
 {
-    public AspsPlateSolver(string executablePath)
-        : base(executablePath)
+    /// <param name="timeProvider">Runs the solve timeout and times the solve.</param>
+    public AspsPlateSolver(string executablePath, TimeProvider timeProvider)
+        : base(executablePath, timeProvider)
     {
     }
 

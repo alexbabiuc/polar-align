@@ -1,6 +1,7 @@
 using FreePolarAlign.App.ViewModels;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Session;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.App;
@@ -12,6 +13,9 @@ namespace FreePolarAlign.Tests.App;
 /// </summary>
 public class LiveReadingPresentationTests
 {
+    /// <summary>A fixed instant for timestamps nothing here reads (D37).</summary>
+    private static readonly DateTimeOffset Noon = new(2026, 9, 24, 12, 0, 0, TimeSpan.Zero);
+
     private static AlignmentEstimate Estimate(double altitude, double azimuth, double total) =>
         new(altitude, azimuth, total, 0.2, 0.3, 0.25, 0.5);
 
@@ -197,7 +201,7 @@ public class LiveReadingPresentationTests
         Assert.StartsWith("Live (ASTAP): ", EngineEventNarrator.Describe(
             new AlignmentTrackedEvent(Estimate(12.0, -9.0, 14.2), -18.0, 16.0, IsReliable: true, Solver: "ASTAP")).Message);
         Assert.StartsWith("Sample 2, solved by Watney: ", EngineEventNarrator.Describe(
-            new PointCapturedEvent(new CapturePoint(2, 150.0, 68.0, DateTime.UtcNow), SampleTrigger.SlewEnded, "Watney")).Message);
+            new PointCapturedEvent(new CapturePoint(2, 150.0, 68.0, Noon.UtcDateTime), SampleTrigger.SlewEnded, "Watney")).Message);
         Assert.StartsWith("Live reading: solve failed (ASPS, 3 in a row): ", EngineEventNarrator.Describe(
             new SolveFailedEvent(SampleTrigger.Tracking, "blurred", 3, Solver: "ASPS")).Message);
         Assert.StartsWith("Solve failed (PlateSolve3, 1 in a row): ", EngineEventNarrator.Describe(

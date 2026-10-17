@@ -1,6 +1,7 @@
 using FreePolarAlign.App.ViewModels;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Session;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.App;
@@ -75,7 +76,7 @@ public class AbortUiTests
             settings: null,
             log: null,
             warnings: null,
-            new SessionConfiguration(6, 70.0));
+            new SessionConfiguration(6, 70.0), new TestClock());
 
         return (viewModel, engine);
     }

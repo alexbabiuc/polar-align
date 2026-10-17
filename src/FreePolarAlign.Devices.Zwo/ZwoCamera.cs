@@ -31,13 +31,16 @@ public sealed class ZwoCamera : ICamera
 
     private readonly int _cameraId;
     private readonly string _workingDirectory;
+    private readonly TimeProvider _time;
     private readonly List<(int ImageType, CameraReadoutMode Mode)> _modes = new();
     private int _modeIndex;
     private CameraGainRange? _gainRange;
     private bool _disposed;
 
-    internal unsafe ZwoCamera(AsiNative.CameraInfo info, string deviceId, string workingDirectory)
+    internal unsafe ZwoCamera(
+        AsiNative.CameraInfo info, string deviceId, string workingDirectory, TimeProvider timeProvider)
     {
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _cameraId = info.CameraId;
         _workingDirectory = workingDirectory;
 
@@ -213,7 +216,7 @@ public sealed class ZwoCamera : ICamera
                 _cameraId, AsiNative.ControlExposure, new CLong(checked((nint)ZwoMapping.ExposureMicroseconds(duration))), 0),
             "set the exposure");
 
-        DateTime startUtc = DateTime.UtcNow;
+        DateTime startUtc = _time.GetUtcNow().UtcDateTime;
         Check(AsiNative.ASIStartExposure(_cameraId, 0), "start the exposure");
 
         try
@@ -237,13 +240,13 @@ public sealed class ZwoCamera : ICamera
 
     private async Task WaitForExposureAsync(TimeSpan duration, CancellationToken cancellationToken)
     {
-        DateTime deadline = DateTime.UtcNow + duration + ReadoutAllowance;
+        DateTime deadline = _time.GetUtcNow().UtcDateTime + duration + ReadoutAllowance;
 
         // Most of the wait is the exposure itself, so sleep through it rather
         // than poll through it.
         if (duration > PollInterval)
         {
-            await Task.Delay(duration - PollInterval, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(duration - PollInterval, _time, cancellationToken).ConfigureAwait(false);
         }
 
         while (true)
@@ -259,14 +262,14 @@ public sealed class ZwoCamera : ICamera
                         $"ZWO camera '{Name}' went idle without finishing the exposure. Was it opened by another program?");
             }
 
-            if (DateTime.UtcNow > deadline)
+            if (_time.GetUtcNow().UtcDateTime > deadline)
             {
                 throw new TimeoutException(
                     $"ZWO camera '{Name}' had not finished a {duration.TotalSeconds:0.###} s exposure " +
                     $"{ReadoutAllowance.TotalSeconds:0} s after it should have.");
             }
 
-            await Task.Delay(PollInterval, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(PollInterval, _time, cancellationToken).ConfigureAwait(false);
         }
     }
 

@@ -25,13 +25,25 @@ public sealed unsafe class ToupTekDeviceProvider : IDeviceProvider
         linuxFile: "libtoupcam.so");
 
     private readonly string _workingDirectory;
+    private readonly TimeProvider _time;
 
+    /// <summary>The constructor the plugin loader calls; the system clock.</summary>
     public ToupTekDeviceProvider()
-        : this(NativeFrame.DefaultWorkingDirectory())
+        : this(NativeFrame.DefaultWorkingDirectory(), TimeProvider.System)
     {
     }
 
-    internal ToupTekDeviceProvider(string workingDirectory) => _workingDirectory = workingDirectory;
+    /// <param name="timeProvider">Timestamps frames and paces exposures for every camera this opens.</param>
+    public ToupTekDeviceProvider(TimeProvider timeProvider)
+        : this(NativeFrame.DefaultWorkingDirectory(), timeProvider)
+    {
+    }
+
+    internal ToupTekDeviceProvider(string workingDirectory, TimeProvider timeProvider)
+    {
+        _workingDirectory = workingDirectory;
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+    }
 
     public string Name => "ToupTek";
 
@@ -59,7 +71,7 @@ public sealed unsafe class ToupTekDeviceProvider : IDeviceProvider
         return camera is null
             ? throw new InvalidOperationException(
                 $"No ToupTek camera with id '{deviceId}' is connected. Is it plugged in, and not open in another program?")
-            : new ToupTekCamera(camera.Id, camera.DisplayName, _workingDirectory);
+            : new ToupTekCamera(camera.Id, camera.DisplayName, _workingDirectory, _time);
     }
 
     public IMount OpenMount(string deviceId) =>

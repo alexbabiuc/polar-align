@@ -1,5 +1,6 @@
 using FreePolarAlign.Devices;
 using FreePolarAlign.Session;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.EndToEnd;
@@ -16,12 +17,18 @@ namespace FreePolarAlign.Tests.EndToEnd;
 /// </summary>
 public class AnchoredPlanTests
 {
+    /// <summary>
+    /// The instant every plan here is made for. Plans are made in hour angle and
+    /// do not depend on it, but it is the test's, not the machine's (D37).
+    /// </summary>
+    private static readonly DateTime At = TestClock.DefaultStart.UtcDateTime;
+
     private static readonly GeodeticLocation North = new(45.0, 15.0, 200.0);
     private static readonly GeodeticLocation South = new(-33.9, 151.2, 40.0);
 
     private static TargetPlan PlanFrom(
         GeodeticLocation site, double rotation, double declination, int captures = 6, double sweep = 70.0) =>
-        TargetSelection.PlanFrom(site, rotation, declination, DateTime.UtcNow, captures, sweep);
+        TargetSelection.PlanFrom(site, rotation, declination, At, captures, sweep);
 
     /// <summary>
     /// East of the meridian with room to sweep, the first capture is the current
@@ -318,7 +325,7 @@ public class AnchoredPlanTests
     public void AFreshlyChosenTarget_SitsInTheUsablePoleDistanceBand(double latitude)
     {
         var site = new GeodeticLocation(latitude, 15.0, 200.0);
-        TargetPlan plan = TargetSelection.Plan(site, DateTime.UtcNow, 6, 70.0);
+        TargetPlan plan = TargetSelection.Plan(site, At, 6, 70.0);
 
         Assert.True(plan.Success, plan.Reason);
 
@@ -349,7 +356,7 @@ public class AnchoredPlanTests
     public void AwayFromTheEquator_TheFullSweepIsAvailable(double latitude)
     {
         TargetPlan plan = TargetSelection.Plan(
-            new GeodeticLocation(latitude, 15.0, 200.0), DateTime.UtcNow, 6, 70.0);
+            new GeodeticLocation(latitude, 15.0, 200.0), At, 6, 70.0);
 
         Assert.True(plan.Success, plan.Reason);
         Assert.Equal(70.0, plan.SweepDegrees, tolerance: 1e-9);
@@ -369,7 +376,7 @@ public class AnchoredPlanTests
     [InlineData(-33.9)]
     public void AFreshlyChosenTarget_StartsEastAndSweepsWestToTheMeridian(double latitude)
     {
-        TargetPlan plan = TargetSelection.Plan(new GeodeticLocation(latitude, 15.0, 200.0), DateTime.UtcNow, 6, 70.0);
+        TargetPlan plan = TargetSelection.Plan(new GeodeticLocation(latitude, 15.0, 200.0), At, 6, 70.0);
 
         Assert.True(plan.Success, plan.Reason);
         Assert.False(plan.IsWest);
@@ -392,7 +399,7 @@ public class AnchoredPlanTests
     [InlineData(3, 30.0, 15.0)]
     public void TheSampleSpacingIsTheSweepOverTheGapsBetweenSamples(int captures, double sweep, double spacing)
     {
-        TargetPlan plan = TargetSelection.Plan(North, DateTime.UtcNow, captures, sweep);
+        TargetPlan plan = TargetSelection.Plan(North, At, captures, sweep);
 
         Assert.True(plan.Success, plan.Reason);
         Assert.Equal(spacing, plan.SampleSpacingDegrees, tolerance: 1e-9);

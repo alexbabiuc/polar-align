@@ -29,6 +29,18 @@ public sealed class AscomDeviceProvider : IDeviceProvider
 {
     private const string ProfileProgId = "ASCOM.Utilities.Profile";
 
+    private readonly TimeProvider _time;
+
+    /// <summary>The constructor the plugin loader calls; the system clock.</summary>
+    public AscomDeviceProvider()
+        : this(TimeProvider.System)
+    {
+    }
+
+    /// <param name="timeProvider">Timestamps frames and positions, and paces polling, for every device this opens.</param>
+    public AscomDeviceProvider(TimeProvider timeProvider) =>
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+
     public string Name => "ASCOM";
 
     public string Version => typeof(AscomDeviceProvider).Assembly.GetName().Version?.ToString() ?? "0.0.0";
@@ -38,9 +50,9 @@ public sealed class AscomDeviceProvider : IDeviceProvider
             .Concat(ListRegistered("Telescope", DeviceRole.Mount))
             .ToArray();
 
-    public ICamera OpenCamera(string deviceId) => new AscomCamera(deviceId);
+    public ICamera OpenCamera(string deviceId) => new AscomCamera(deviceId, _time);
 
-    public IMount OpenMount(string deviceId) => new AscomMount(deviceId);
+    public IMount OpenMount(string deviceId) => new AscomMount(deviceId, _time);
 
     /// <summary>
     /// Enumerates registered ASCOM drivers of one device type via the

@@ -32,6 +32,7 @@
     <ProjectReference Include="..\..\src\FreePolarAlign.Devices.Zwo\FreePolarAlign.Devices.Zwo.csproj" />
     <ProjectReference Include="..\..\src\FreePolarAlign.Devices.ToupTek\FreePolarAlign.Devices.ToupTek.csproj" />
     <ProjectReference Include="..\..\src\FreePolarAlign.Devices.Simulated\FreePolarAlign.Devices.Simulated.csproj" />
+    <ProjectReference Include="..\FreePolarAlign.Tests.Support\FreePolarAlign.Tests.Support.csproj" />
   </ItemGroup>
 
 </Project>

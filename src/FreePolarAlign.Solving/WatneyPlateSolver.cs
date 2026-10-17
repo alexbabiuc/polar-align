@@ -23,6 +23,7 @@ namespace FreePolarAlign.Solving;
 public sealed class WatneyPlateSolver : ISolver, IDisposable
 {
     private readonly Lazy<IQuadDatabase> _quadDatabase;
+    private readonly TimeProvider _time;
 
     /// <param name="quadDatabaseDirectory">
     /// Directory holding one or more extracted Watney quad-database packs
@@ -31,8 +32,11 @@ public sealed class WatneyPlateSolver : ISolver, IDisposable
     /// <c>Solver.SolveFieldAsync</c> ("this can take time if the factory
     /// method is actually reading the database files at this moment").
     /// </param>
-    public WatneyPlateSolver(string quadDatabaseDirectory)
+    /// <param name="timeProvider">Runs the solve timeout.</param>
+    public WatneyPlateSolver(string quadDatabaseDirectory, TimeProvider timeProvider)
     {
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+
         if (string.IsNullOrWhiteSpace(quadDatabaseDirectory))
         {
             throw new ArgumentException("Quad database directory must be provided.", nameof(quadDatabaseDirectory));
@@ -60,11 +64,10 @@ public sealed class WatneyPlateSolver : ISolver, IDisposable
         var solver = new Solver();
         solver.UseQuadDatabase(() => _quadDatabase.Value);
 
-        using var timeoutCts = new CancellationTokenSource();
-        if (request.Timeout is { } timeout)
-        {
-            timeoutCts.CancelAfter(timeout);
-        }
+        // The timeout runs on the injected clock, like every other wait.
+        using var timeoutCts = request.Timeout is { } timeout
+            ? new CancellationTokenSource(timeout, _time)
+            : new CancellationTokenSource();
 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
 

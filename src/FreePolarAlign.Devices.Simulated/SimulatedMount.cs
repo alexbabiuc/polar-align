@@ -131,10 +131,15 @@ public sealed class SimulatedMount : IMount
     private Slew? _slew;
     private int _slewGeneration;
 
-    public SimulatedMount(SimulatedMountOptions options)
+    /// <param name="timeProvider">
+    /// The simulated sky's clock. A test's fake clock fixes the instant, which
+    /// fixes the sidereal time and so where the mount and the sky stand (D37).
+    /// </param>
+    public SimulatedMount(SimulatedMountOptions options, TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(options);
         Options = options;
+        Time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _misalignment = options.Misalignment;
         _reportedSite = options.Site;
         _tracking = options.Tracking;
@@ -156,13 +161,22 @@ public sealed class SimulatedMount : IMount
             options.InitialMechanicalRotationDegrees,
             declination);
 
-        _mechanicalEpochUtc = DateTime.UtcNow;
+        _mechanicalEpochUtc = UtcNow;
         (_commandedRaDegrees, _commandedDecDegrees) = TopocentricConverter.FromAltAz(
             ideal, _mechanicalEpochUtc, _observerSite, AtmosphericConditions.Vacuum);
         _hasSlewed = true;
     }
 
     public SimulatedMountOptions Options { get; }
+
+    /// <summary>
+    /// The mount's clock. Anything simulating the same sky -- the camera, for
+    /// one -- reads this one, since a camera on a different clock would render
+    /// the field for a different sidereal time than the mount points at.
+    /// </summary>
+    public TimeProvider Time { get; }
+
+    private DateTime UtcNow => Time.GetUtcNow().UtcDateTime;
 
     public string Name => "Simulated Mount";
 
@@ -218,7 +232,7 @@ public sealed class SimulatedMount : IMount
 
         lock (_gate)
         {
-            DateTime now = DateTime.UtcNow;
+            DateTime now = UtcNow;
 
             if (_slew is { } slew && now < slew.EndUtc)
             {
@@ -276,7 +290,7 @@ public sealed class SimulatedMount : IMount
 
         lock (_gate)
         {
-            DateTime now = DateTime.UtcNow;
+            DateTime now = UtcNow;
             SettleIfArrived(now);
 
             double ra = _commandedRaDegrees;
@@ -328,7 +342,7 @@ public sealed class SimulatedMount : IMount
                 _slew = null;
                 _commandedRaDegrees = raDegrees;
                 _commandedDecDegrees = decDegrees;
-                _mechanicalEpochUtc = DateTime.UtcNow;
+                _mechanicalEpochUtc = UtcNow;
                 _hasSlewed = true;
             }
 
@@ -338,7 +352,7 @@ public sealed class SimulatedMount : IMount
         int generation;
         lock (_gate)
         {
-            DateTime now = DateTime.UtcNow;
+            DateTime now = UtcNow;
             DateTime end = now + Options.SlewDuration;
             (double startRotation, double startDeclination) = MechanicsAt(now);
 
@@ -364,7 +378,7 @@ public sealed class SimulatedMount : IMount
                 TimeSpan remaining;
                 lock (_gate)
                 {
-                    DateTime now = DateTime.UtcNow;
+                    DateTime now = UtcNow;
                     SettleIfArrived(now);
                     if (_slew is null)
                     {
@@ -374,7 +388,7 @@ public sealed class SimulatedMount : IMount
                     remaining = _slew.EndUtc - now;
                 }
 
-                await Task.Delay(remaining, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(remaining, Time, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -383,7 +397,7 @@ public sealed class SimulatedMount : IMount
             {
                 if (_slew?.Generation == generation)
                 {
-                    StopWhereItIs(DateTime.UtcNow);
+                    StopWhereItIs(UtcNow);
                 }
             }
 
@@ -399,7 +413,7 @@ public sealed class SimulatedMount : IMount
         cancellationToken.ThrowIfCancellationRequested();
         RequireConnected();
 
-        return Task.FromResult(Options.SupportsSideOfPier ? ComputeSideOfPier(DateTime.UtcNow) : PierSide.Unknown);
+        return Task.FromResult(Options.SupportsSideOfPier ? ComputeSideOfPier(UtcNow) : PierSide.Unknown);
     }
 
     public Task<GeodeticLocation> GetSiteLocationAsync(CancellationToken cancellationToken = default)
@@ -455,7 +469,7 @@ public sealed class SimulatedMount : IMount
 
         lock (_gate)
         {
-            DateTime now = DateTime.UtcNow;
+            DateTime now = UtcNow;
             StopWhereItIs(now);
 
             if (!Options.CanStopTracking)

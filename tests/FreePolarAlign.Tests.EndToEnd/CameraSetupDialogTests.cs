@@ -5,6 +5,7 @@ using FreePolarAlign.Devices;
 using FreePolarAlign.Devices.Simulated;
 using FreePolarAlign.Session;
 using FreePolarAlign.Solving;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.EndToEnd;
@@ -26,6 +27,9 @@ namespace FreePolarAlign.Tests.EndToEnd;
 /// </summary>
 public class CameraSetupDialogTests
 {
+    /// <summary>The engine's and the cameras' clock (D37).</summary>
+    private readonly TestClock _clock = new();
+
     private static readonly GeodeticLocation Site = new(45.0, 15.0, 200.0);
 
     /// <summary>A camera whose settings window this test opens and closes by hand.</summary>
@@ -33,8 +37,11 @@ public class CameraSetupDialogTests
     {
         private readonly TaskCompletionSource _closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public DialogCamera(bool hasSetupDialog = true, bool blocks = false, Exception? failWith = null)
+        private readonly TimeProvider _time;
+
+        public DialogCamera(TimeProvider time, bool hasSetupDialog = true, bool blocks = false, Exception? failWith = null)
         {
+            _time = time;
             HasSetupDialog = hasSetupDialog;
             Blocks = blocks;
             FailWith = failWith;
@@ -96,7 +103,7 @@ public class CameraSetupDialogTests
 
         public Task<CapturedImage> ExposeAsync(
             TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default) =>
-            StubFrames.ExposeAsync(duration, cancellationToken);
+            StubFrames.ExposeAsync(duration, _time, cancellationToken);
 
         public int ConnectCalls { get; private set; }
 
@@ -127,6 +134,10 @@ public class CameraSetupDialogTests
     /// <summary>A camera with no settings window at all, which is every camera the simulator provides.</summary>
     private sealed class PlainCamera : ICamera
     {
+        private readonly TimeProvider _time;
+
+        public PlainCamera(TimeProvider time) => _time = time;
+
         public string Name => "Plain Camera";
 
         public int SensorWidthPixels => 4000;
@@ -158,7 +169,7 @@ public class CameraSetupDialogTests
 
         public Task<CapturedImage> ExposeAsync(
             TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default) =>
-            StubFrames.ExposeAsync(duration, cancellationToken);
+            StubFrames.ExposeAsync(duration, _time, cancellationToken);
 
         public void Dispose()
         {
@@ -178,18 +189,24 @@ public class CameraSetupDialogTests
     {
         private readonly IDisposable _subscription;
 
-        public Harness(ICamera camera)
+        public Harness(ICamera camera, TestClock clock)
         {
             Camera = camera;
-            Mount = new SimulatedMount(new SimulatedMountOptions(Site, new MountMisalignment(30.0, -25.0)));
+            Clock = clock;
+            Mount = new SimulatedMount(new SimulatedMountOptions(Site, new MountMisalignment(30.0, -25.0)), clock);
             Session = new AlignmentSession(
-                camera, Mount, new UnusedSolver(), new AlignmentSessionOptions(CaptureCount: 5, SweepDegrees: 60.0, ExposureDuration: StubFrames.Exposure));
+                camera, Mount, new UnusedSolver(), clock, new AlignmentSessionOptions(CaptureCount: 5, SweepDegrees: 60.0, ExposureDuration: StubFrames.Exposure));
 
-            Recorder = new Recorder();
+            Recorder = new Recorder(clock);
             _subscription = Session.Events.Subscribe(Recorder);
         }
 
         public ICamera Camera { get; }
+
+        public TestClock Clock { get; }
+
+        /// <summary>A camera command, with time moved on until it returns (see <see cref="TestClock.CompleteAsync"/>).</summary>
+        public Task SendAsync(EngineCommand command) => Clock.CompleteAsync(Session.SendAsync(command).AsTask());
 
         public SimulatedMount Mount { get; }
 
@@ -237,11 +254,11 @@ public class CameraSetupDialogTests
     [Fact]
     public async Task OpeningTheDialog_ShowsItAndBracketsItWithEvents()
     {
-        var camera = new DialogCamera();
-        using var harness = new Harness(camera);
+        var camera = new DialogCamera(_clock);
+        using var harness = new Harness(camera, _clock);
         await harness.ConnectAsync();
 
-        await harness.Session.SendAsync(new OpenCameraSetupDialogCommand());
+        await harness.SendAsync(new OpenCameraSetupDialogCommand());
 
         Assert.Equal(1, camera.DialogsShown);
         Assert.Equal(new[] { true, false }, DialogStates(harness.Recorder));
@@ -254,10 +271,10 @@ public class CameraSetupDialogTests
     [Fact]
     public async Task ConnectingReportsWhetherTheDriverHasASettingsWindow()
     {
-        using var withDialog = new Harness(new DialogCamera());
+        using var withDialog = new Harness(new DialogCamera(_clock), _clock);
         await withDialog.ConnectAsync();
 
-        using var without = new Harness(new PlainCamera());
+        using var without = new Harness(new PlainCamera(_clock), _clock);
         await without.ConnectAsync();
 
         Assert.True(Connected(withDialog).Camera!.HasSetupDialog);
@@ -282,8 +299,8 @@ public class CameraSetupDialogTests
     [Fact]
     public async Task WhileTheDialogIsOpen_NoOtherCommandRuns()
     {
-        var camera = new DialogCamera(blocks: true);
-        using var harness = new Harness(camera);
+        var camera = new DialogCamera(_clock, blocks: true);
+        using var harness = new Harness(camera, _clock);
         await harness.ConnectAsync();
 
         Task opening = harness.Session.SendAsync(new OpenCameraSetupDialogCommand()).AsTask();
@@ -301,7 +318,7 @@ public class CameraSetupDialogTests
 
         // Long enough that it would have run had nothing been holding it. Without
         // this the assertion would pass on a command that simply had not started.
-        await Task.Delay(100);
+        await harness.Clock.PassAsync(TimeSpan.FromMilliseconds(100));
 
         Assert.False(blocked.IsCompleted);
         Assert.Equal(reportsBefore, harness.Recorder.Events.OfType<MountStatusEvent>().Count());
@@ -320,9 +337,9 @@ public class CameraSetupDialogTests
     [Fact]
     public async Task WithNoCameraConnected_TheCommandIsRefused()
     {
-        using var harness = new Harness(new DialogCamera());
+        using var harness = new Harness(new DialogCamera(_clock), _clock);
 
-        await harness.Session.SendAsync(new OpenCameraSetupDialogCommand());
+        await harness.SendAsync(new OpenCameraSetupDialogCommand());
 
         Assert.Empty(DialogStates(harness.Recorder));
         Assert.Contains("Connect a camera", LastRejection(harness.Recorder));
@@ -336,10 +353,10 @@ public class CameraSetupDialogTests
     [Fact]
     public async Task ACameraWithNoSettingsWindow_RefusesToOpenOne()
     {
-        using var harness = new Harness(new PlainCamera());
+        using var harness = new Harness(new PlainCamera(_clock), _clock);
         await harness.ConnectAsync();
 
-        await harness.Session.SendAsync(new OpenCameraSetupDialogCommand());
+        await harness.SendAsync(new OpenCameraSetupDialogCommand());
 
         Assert.Empty(DialogStates(harness.Recorder));
         Assert.Contains("no driver settings window", LastRejection(harness.Recorder));
@@ -353,12 +370,12 @@ public class CameraSetupDialogTests
     [Fact]
     public async Task DuringASequence_TheCommandIsRefused()
     {
-        var camera = new DialogCamera();
-        using var harness = new Harness(camera);
+        var camera = new DialogCamera(_clock);
+        using var harness = new Harness(camera, _clock);
         await harness.ConnectAsync();
         await harness.StartAsync();
 
-        await harness.Session.SendAsync(new OpenCameraSetupDialogCommand());
+        await harness.SendAsync(new OpenCameraSetupDialogCommand());
 
         Assert.Equal(0, camera.DialogsShown);
         Assert.Empty(DialogStates(harness.Recorder));
@@ -373,11 +390,11 @@ public class CameraSetupDialogTests
     [Fact]
     public async Task ADriverThatFails_StillReportsTheDialogClosed()
     {
-        var camera = new DialogCamera(failWith: new InvalidOperationException("COM says no"));
-        using var harness = new Harness(camera);
+        var camera = new DialogCamera(_clock, failWith: new InvalidOperationException("COM says no"));
+        using var harness = new Harness(camera, _clock);
         await harness.ConnectAsync();
 
-        await harness.Session.SendAsync(new OpenCameraSetupDialogCommand());
+        await harness.SendAsync(new OpenCameraSetupDialogCommand());
 
         Assert.Equal(new[] { true, false }, DialogStates(harness.Recorder));
         Assert.Contains("COM says no", LastRejection(harness.Recorder));
@@ -398,10 +415,10 @@ public class CameraSetupDialogTests
     [Fact]
     public async Task WithNothingConnected_ThePickedCamerasWindowOpens_WithoutConnectingIt()
     {
-        var camera = new DialogCamera();
+        var camera = new DialogCamera(_clock);
         DeviceCatalog catalog = DeviceCatalog.Create(new IDeviceProvider[] { new OneCameraProvider(camera) });
-        using var session = new AlignmentSession(catalog, new UnusedSolver(), new AlignmentSessionOptions());
-        var recorder = new Recorder();
+        using var session = new AlignmentSession(catalog, new UnusedSolver(), _clock, new AlignmentSessionOptions());
+        var recorder = new Recorder(_clock);
         using IDisposable subscription = session.Events.Subscribe(recorder);
 
         await session.SendAsync(new OpenCameraSetupDialogCommand("ASCOM", "ASCOM.Test.Camera"));
@@ -419,9 +436,9 @@ public class CameraSetupDialogTests
     [Fact]
     public async Task TheCameraOpenedJustForTheWindow_IsReleasedAfterwards()
     {
-        var camera = new DialogCamera();
+        var camera = new DialogCamera(_clock);
         DeviceCatalog catalog = DeviceCatalog.Create(new IDeviceProvider[] { new OneCameraProvider(camera) });
-        using var session = new AlignmentSession(catalog, new UnusedSolver(), new AlignmentSessionOptions());
+        using var session = new AlignmentSession(catalog, new UnusedSolver(), _clock, new AlignmentSessionOptions());
 
         await session.SendAsync(new OpenCameraSetupDialogCommand("ASCOM", "ASCOM.Test.Camera"));
 
@@ -432,24 +449,17 @@ public class CameraSetupDialogTests
     [Fact]
     public async Task WithACameraConnected_ItIsTheOneConfigured_AndItStaysOpen()
     {
-        var camera = new DialogCamera();
-        using var harness = new Harness(camera);
+        var camera = new DialogCamera(_clock);
+        using var harness = new Harness(camera, _clock);
         await harness.ConnectAsync();
 
-        await harness.Session.SendAsync(new OpenCameraSetupDialogCommand("ASCOM", "some.other.camera"));
+        await harness.SendAsync(new OpenCameraSetupDialogCommand("ASCOM", "some.other.camera"));
 
         Assert.Equal(1, camera.DialogsShown);
         Assert.False(camera.Disposed);
         Assert.True(camera.IsConnected);
     }
 
-    private static async Task WaitUntil(Func<bool> condition)
-    {
-        for (int attempt = 0; attempt < 500 && !condition(); attempt++)
-        {
-            await Task.Delay(10);
-        }
-
-        Assert.True(condition(), "the condition was never met");
-    }
+    private Task WaitUntil(Func<bool> condition) =>
+        _clock.WaitUntilAsync(condition, () => " The condition was never met.");
 }

@@ -39,6 +39,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FreePolarAlign.Devices.Zwo"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FreePolarAlign.Devices.ToupTek", "src\FreePolarAlign.Devices.ToupTek\FreePolarAlign.Devices.ToupTek.csproj", "{496FD18B-1F9E-49FD-9F70-74CFC5A6D3A4}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FreePolarAlign.Tests.Support", "tests\FreePolarAlign.Tests.Support\FreePolarAlign.Tests.Support.csproj", "{684A3D6B-137F-4153-B305-DA103C97E349}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -241,6 +243,18 @@ Global
 		{496FD18B-1F9E-49FD-9F70-74CFC5A6D3A4}.Release|x64.Build.0 = Release|Any CPU
 		{496FD18B-1F9E-49FD-9F70-74CFC5A6D3A4}.Release|x86.ActiveCfg = Release|Any CPU
 		{496FD18B-1F9E-49FD-9F70-74CFC5A6D3A4}.Release|x86.Build.0 = Release|Any CPU
+		{684A3D6B-137F-4153-B305-DA103C97E349}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{684A3D6B-137F-4153-B305-DA103C97E349}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{684A3D6B-137F-4153-B305-DA103C97E349}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{684A3D6B-137F-4153-B305-DA103C97E349}.Debug|x64.Build.0 = Debug|Any CPU
+		{684A3D6B-137F-4153-B305-DA103C97E349}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{684A3D6B-137F-4153-B305-DA103C97E349}.Debug|x86.Build.0 = Debug|Any CPU
+		{684A3D6B-137F-4153-B305-DA103C97E349}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{684A3D6B-137F-4153-B305-DA103C97E349}.Release|Any CPU.Build.0 = Release|Any CPU
+		{684A3D6B-137F-4153-B305-DA103C97E349}.Release|x64.ActiveCfg = Release|Any CPU
+		{684A3D6B-137F-4153-B305-DA103C97E349}.Release|x64.Build.0 = Release|Any CPU
+		{684A3D6B-137F-4153-B305-DA103C97E349}.Release|x86.ActiveCfg = Release|Any CPU
+		{684A3D6B-137F-4153-B305-DA103C97E349}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -262,5 +276,6 @@ Global
 		{F40F2994-CC6B-44A3-B721-BC71E556D4A2} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{2020284F-57C0-40B8-90F0-4ACBD4F2A10F} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{496FD18B-1F9E-49FD-9F70-74CFC5A6D3A4} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{684A3D6B-137F-4153-B305-DA103C97E349} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

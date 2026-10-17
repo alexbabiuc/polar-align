@@ -22,6 +22,7 @@ public sealed class ToupTekCamera : ICamera
 
     private readonly string _cameraId;
     private readonly string _workingDirectory;
+    private readonly TimeProvider _time;
     private readonly object _gate = new();
     private IntPtr _handle;
     private GCHandle _self;
@@ -32,8 +33,10 @@ public sealed class ToupTekCamera : ICamera
     private (uint Minimum, uint Maximum)? _exposureRange;
     private bool _disposed;
 
-    internal ToupTekCamera(string cameraId, string displayName, string workingDirectory)
+    internal ToupTekCamera(
+        string cameraId, string displayName, string workingDirectory, TimeProvider timeProvider)
     {
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _cameraId = cameraId;
         _workingDirectory = workingDirectory;
         Name = displayName;
@@ -193,7 +196,7 @@ public sealed class ToupTekCamera : ICamera
             _frame = frame;
         }
 
-        DateTime startUtc = DateTime.UtcNow;
+        DateTime startUtc = _time.GetUtcNow().UtcDateTime;
         Check(ToupcamNative.Toupcam_Trigger(_handle, 1), "trigger the exposure");
 
         try

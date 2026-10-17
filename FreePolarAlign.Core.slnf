@@ -16,7 +16,8 @@
       "tests\\FreePolarAlign.Tests.Solving\\FreePolarAlign.Tests.Solving.csproj",
       "tests\\FreePolarAlign.Tests.EndToEnd\\FreePolarAlign.Tests.EndToEnd.csproj",
       "tests\\FreePolarAlign.Tests.Devices\\FreePolarAlign.Tests.Devices.csproj",
-      "tests\\FreePolarAlign.Tests.App\\FreePolarAlign.Tests.App.csproj"
+      "tests\\FreePolarAlign.Tests.App\\FreePolarAlign.Tests.App.csproj",
+      "tests\\FreePolarAlign.Tests.Support\\FreePolarAlign.Tests.Support.csproj"
     ]
   }
 }

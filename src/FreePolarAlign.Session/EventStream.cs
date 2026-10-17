@@ -15,6 +15,9 @@ internal sealed class EventStream : IObservable<EngineEvent>, IDisposable
     private readonly List<IObserver<EngineEvent>> _observers = new();
     private readonly object _gate = new();
     private bool _completed;
+    private readonly TimeProvider _time;
+
+    public EventStream(TimeProvider time) => _time = time ?? throw new ArgumentNullException(nameof(time));
 
     public IDisposable Subscribe(IObserver<EngineEvent> observer)
     {
@@ -35,6 +38,14 @@ internal sealed class EventStream : IObservable<EngineEvent>, IDisposable
 
     public void Publish(EngineEvent engineEvent)
     {
+        // Stamped here, from the engine's clock, rather than by the event's own
+        // initializer reading the system clock: a fixed test clock then fixes
+        // the timestamps too, and a caller that set one keeps it.
+        if (engineEvent.TimestampUtc == default)
+        {
+            engineEvent = engineEvent with { TimestampUtc = _time.GetUtcNow() };
+        }
+
         IObserver<EngineEvent>[] snapshot;
         lock (_gate)
         {

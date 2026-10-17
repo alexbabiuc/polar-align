@@ -23,7 +23,10 @@ public sealed partial class App : Application
             // inside the Avalonia lifetime and shows a window explaining what
             // happened, rather than dying to an unhandled exception before any
             // UI exists (see EngineFactory.Create's own doc comment).
-            _startup = EngineFactory.Create();
+            //
+            // This is the composition root, and the one place the system clock
+            // is chosen (D37): everything below receives it.
+            _startup = EngineFactory.Create(TimeProvider.System);
 
             // The window first: its storage provider is what Save frame asks.
             var window = new MainWindow();
@@ -36,6 +39,7 @@ public sealed partial class App : Application
                 _startup.Log,
                 _startup.Warnings,
                 _startup.DefaultConfiguration,
+                _startup.Time,
                 postToUiThread: action => Dispatcher.UIThread.Post(action),
                 saveTarget: new StorageProviderFrameSaveTarget(window),
                 settingsChanged: _startup.Solver.Configure);

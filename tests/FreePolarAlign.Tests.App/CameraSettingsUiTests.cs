@@ -2,6 +2,7 @@ using FreePolarAlign.App.ViewModels;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Devices;
 using FreePolarAlign.Session;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.App;
@@ -130,7 +131,7 @@ public class CameraSettingsUiTests
 
         var viewModel = new MainWindowViewModel(
             engine, catalog, store, settings, log: null, warnings: null,
-            new SessionConfiguration(6, 70.0));
+            new SessionConfiguration(6, 70.0), new TestClock());
 
         return (viewModel, engine, store, catalog);
     }

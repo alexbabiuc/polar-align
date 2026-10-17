@@ -31,8 +31,9 @@ public sealed class PlateSolve3Solver : ExternalProcessSolver
 {
     private const double ArcsecPerRadian = 206264.806;
 
-    public PlateSolve3Solver(string executablePath)
-        : base(executablePath)
+    /// <param name="timeProvider">Runs the solve timeout and times the solve.</param>
+    public PlateSolve3Solver(string executablePath, TimeProvider timeProvider)
+        : base(executablePath, timeProvider)
     {
     }
 

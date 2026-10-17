@@ -2,6 +2,7 @@ using System.Net.Http;
 using FreePolarAlign.Imaging.Fits;
 using FreePolarAlign.Imaging.Wcs;
 using FreePolarAlign.Solving;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.Solving;
@@ -83,7 +84,7 @@ public class WatneyBlindSolveTests
 
         try
         {
-            using var solver = new WatneyPlateSolver(quadDbDir);
+            using var solver = new WatneyPlateSolver(quadDbDir, new TestClock());
             var request = new PlateSolveRequest(
                 ImagePath: imagePath,
                 ApproximateScaleArcsecPerPixel: scaleArcsecPerPixel,
@@ -179,7 +180,7 @@ public class WatneyBlindSolveTests
 
         try
         {
-            using var solver = new WatneyPlateSolver(quadDbDir);
+            using var solver = new WatneyPlateSolver(quadDbDir, new TestClock());
             PlateSolveResult result = await solver.SolveAsync(new PlateSolveRequest(
                 ImagePath: imagePath,
                 ApproximateScaleArcsecPerPixel: scaleArcsecPerPixel,

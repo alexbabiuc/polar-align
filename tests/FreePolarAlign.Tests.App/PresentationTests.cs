@@ -1,6 +1,7 @@
 using FreePolarAlign.App.ViewModels;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Session;
+using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.App;
@@ -156,7 +157,7 @@ public class PresentationTests
 
         Assert.Contains("declination", prompted.GuidanceInstruction!, StringComparison.OrdinalIgnoreCase);
 
-        UiState proceeded = After(prompted, new PointCapturedEvent(new CapturePoint(1, 10.0, 70.0, DateTime.UtcNow)));
+        UiState proceeded = After(prompted, new PointCapturedEvent(new CapturePoint(1, 10.0, 70.0, Noon.UtcDateTime)));
         Assert.Null(proceeded.GuidanceInstruction);
     }
 
@@ -217,7 +218,7 @@ public class PresentationTests
         UiState state = After(
             Fresh(),
             new SessionStartedEvent(new SessionConfiguration(6, 70.0)),
-            new PointCapturedEvent(new CapturePoint(3, 150.0, 68.0, DateTime.UtcNow)),
+            new PointCapturedEvent(new CapturePoint(3, 150.0, 68.0, Noon.UtcDateTime)),
             new AlignmentUpdatedEvent(Estimate(4.0, 3.0, 5.0)),
             invalidating);
 
@@ -240,7 +241,7 @@ public class PresentationTests
         UiState state = After(
             Fresh(),
             new SessionStartedEvent(new SessionConfiguration(6, 70.0)),
-            new PointCapturedEvent(new CapturePoint(3, 150.0, 68.0, DateTime.UtcNow)),
+            new PointCapturedEvent(new CapturePoint(3, 150.0, 68.0, Noon.UtcDateTime)),
             new SequenceRestartedEvent("The mount moved 3.2' in declination."));
 
         Assert.Equal(0, state.CapturedPointCount);
@@ -292,7 +293,7 @@ public class PresentationTests
             Fresh(),
             new SessionStartedEvent(new SessionConfiguration(6, 70.0)),
             new TargetSelectedEvent(70.0, true, 6, 70.0),
-            new PointCapturedEvent(new CapturePoint(1, 10.0, 70.0, DateTime.UtcNow)),
+            new PointCapturedEvent(new CapturePoint(1, 10.0, 70.0, Noon.UtcDateTime)),
             new AlignmentWithheldEvent("Meridian crossed."),
             new SessionCompletedEvent());
 
@@ -495,7 +496,7 @@ public class PresentationTests
         UiState state = After(
             Fresh(),
             new SlewProposedEvent(2, 6, 160.0, 68.0, 26.0, 75.0, true, "Slew."),
-            new PointCapturedEvent(new CapturePoint(2, 160.1, 68.0, DateTime.UtcNow)));
+            new PointCapturedEvent(new CapturePoint(2, 160.1, 68.0, Noon.UtcDateTime)));
 
         Assert.Null(state.Proposal);
     }
@@ -529,7 +530,7 @@ public class PresentationTests
         UiState state = After(
             Fresh(),
             new SessionStartedEvent(new SessionConfiguration(6, 70.0)),
-            new PointCapturedEvent(new CapturePoint(3, 150.0, 68.0, DateTime.UtcNow)),
+            new PointCapturedEvent(new CapturePoint(3, 150.0, 68.0, Noon.UtcDateTime)),
             new SlewConfirmedEvent(150.0, 60.0, WasOverridden: true, ReanchoredReason: "Different declination."));
 
         Assert.Equal(0, state.CapturedPointCount);
@@ -544,7 +545,7 @@ public class PresentationTests
     {
         UiState state = After(
             Fresh(),
-            new PointCapturedEvent(new CapturePoint(3, 150.0, 68.0, DateTime.UtcNow)),
+            new PointCapturedEvent(new CapturePoint(3, 150.0, 68.0, Noon.UtcDateTime)),
             new SlewConfirmedEvent(160.0, 68.0, WasOverridden: false));
 
         Assert.Equal(3, state.CapturedPointCount);
@@ -635,7 +636,7 @@ public class PresentationTests
     {
         UiState state = After(
             Fresh(),
-            new FrameCapturedEvent("/tmp/capture-0001.fits", DateTime.UtcNow, TimeSpan.FromSeconds(2)),
+            new FrameCapturedEvent("/tmp/capture-0001.fits", Noon.UtcDateTime, TimeSpan.FromSeconds(2)),
             new SolveFailedEvent(SampleTrigger.SlewEnded, "Could not solve (NoStarsDetected).", 1));
 
         Assert.Equal("/tmp/capture-0001.fits", state.LatestFramePath);
@@ -672,7 +673,7 @@ public class PresentationTests
         for (int i = 0; i < 50; i++)
         {
             state = EngineEventReducer.Apply(
-                state, new FrameCapturedEvent($"/tmp/frame-{i}.fits", DateTime.UtcNow, TimeSpan.FromSeconds(0.1)));
+                state, new FrameCapturedEvent($"/tmp/frame-{i}.fits", Noon.UtcDateTime, TimeSpan.FromSeconds(0.1)));
         }
 
         Assert.Equal(before.Log.Count, state.Log.Count);
@@ -795,7 +796,7 @@ public class PresentationTests
         UiState state = After(
             Running(),
             new TargetSelectedEvent(60.0, false, 6, 70.0),
-            new PointCapturedEvent(new CapturePoint(2, 150.0, 60.0, DateTime.UtcNow), SampleTrigger.Periodic));
+            new PointCapturedEvent(new CapturePoint(2, 150.0, 60.0, Noon.UtcDateTime), SampleTrigger.Periodic));
 
         Assert.Equal(2, state.CapturedPointCount);
         Assert.Equal(SamplingActivity.Sampled, state.Sampling.Activity);

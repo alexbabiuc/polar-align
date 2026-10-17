@@ -31,6 +31,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FreePolarAlign.App\FreePolarAlign.App.csproj" />
+    <ProjectReference Include="..\FreePolarAlign.Tests.Support\FreePolarAlign.Tests.Support.csproj" />
   </ItemGroup>
 
 </Project>

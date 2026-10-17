@@ -40,11 +40,14 @@ public sealed class AscomMount : IMount
 
     private readonly string _progId;
     private readonly dynamic _telescope;
+    private readonly TimeProvider _time;
     private AscomEquatorialSystem? _equatorialSystem;
     private bool _disposed;
 
-    public AscomMount(string progId)
+    /// <param name="timeProvider">Timestamps positions and paces polling.</param>
+    public AscomMount(string progId, TimeProvider timeProvider)
     {
+        _time = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _progId = progId;
         _telescope = AscomDeviceProvider.CreateComObject(progId,
             $"Is the ASCOM driver for this mount ('{progId}') installed?");
@@ -128,7 +131,7 @@ public sealed class AscomMount : IMount
             pierSide = TryGetSideOfPier();
             tracking = TryGetTracking();
             slewing = IsSlewing();
-            timestampUtc = DateTime.UtcNow;
+            timestampUtc = _time.GetUtcNow().UtcDateTime;
         }
         catch (Exception ex)
         {
@@ -154,7 +157,7 @@ public sealed class AscomMount : IMount
         }
 
         var (commandedRaDegrees, commandedDecDegrees) = FromJ2000(
-            ReadEquatorialSystem(), raDegrees, decDegrees, DateTime.UtcNow);
+            ReadEquatorialSystem(), raDegrees, decDegrees, _time.GetUtcNow().UtcDateTime);
         double raHours = AscomMapping.RaDegreesToHours(commandedRaDegrees);
         try
         {
@@ -169,7 +172,7 @@ public sealed class AscomMount : IMount
         {
             while (IsSlewing())
             {
-                await Task.Delay(PollInterval, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(PollInterval, _time, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)

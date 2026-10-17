@@ -40,6 +40,7 @@ public sealed class SettingsViewModel : ViewModelBase
     private string _astapPath;
     private string _ps3Path;
     private string _sweepText;
+    private string _settleText;
     private string _latitudeText;
     private string _longitudeText;
     private string _heightText;
@@ -68,6 +69,7 @@ public sealed class SettingsViewModel : ViewModelBase
 
         _capturePointsText = (current.DefaultCapturePoints ?? defaults.CapturePoints).ToString(CultureInfo.InvariantCulture);
         _sweepText = (current.SweepDegrees ?? defaults.RequestedSweepDegrees).ToString("G", CultureInfo.InvariantCulture);
+        _settleText = Seconds(current.SettleDelay ?? defaults.SettleDelay ?? AlignmentSessionOptions.DefaultSettleDelay);
         _latitudeText = current.Site?.LatitudeDegrees.ToString("F5", CultureInfo.InvariantCulture) ?? string.Empty;
         _longitudeText = current.Site?.LongitudeDegrees.ToString("F5", CultureInfo.InvariantCulture) ?? string.Empty;
         _heightText = current.Site?.HeightMeters.ToString("F0", CultureInfo.InvariantCulture) ?? string.Empty;
@@ -139,6 +141,13 @@ public sealed class SettingsViewModel : ViewModelBase
     {
         get => _sweepText;
         set => SetField(ref _sweepText, value);
+    }
+
+    /// <summary>The wait after a slew before the sample's frame, in seconds.</summary>
+    public string SettleText
+    {
+        get => _settleText;
+        set => SetField(ref _settleText, value);
     }
 
     public SolverOption BlindSolver
@@ -213,6 +222,13 @@ public sealed class SettingsViewModel : ViewModelBase
             return;
         }
 
+        if (!TryParseDecimal(SettleText, out double settle) || !AppSettings.IsValidSettle(settle))
+        {
+            Error = FormattableString.Invariant(
+                $"The settle time must be between 0 and {AppSettings.MaximumSettleSeconds:G} seconds.");
+            return;
+        }
+
         if (!TryParseSite(out StoredSite? site, out string? siteProblem))
         {
             Error = siteProblem;
@@ -234,6 +250,7 @@ public sealed class SettingsViewModel : ViewModelBase
         {
             DefaultCapturePoints = points,
             SweepDegrees = sweep,
+            SettleSeconds = settle,
             Site = CanChangeSite ? site : _original.Site,
             FocalLengthMillimetres = focalLengthUnchanged ? _original.FocalLengthMillimetres : focalLength,
             IsFocalLengthSolved = focalLengthUnchanged && _original.IsFocalLengthSolved,

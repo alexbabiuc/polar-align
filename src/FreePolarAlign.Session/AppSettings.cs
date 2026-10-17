@@ -115,6 +115,27 @@ public sealed record AppSettings
     public static bool IsValidSweep(double degrees) => double.IsFinite(degrees) && degrees > 0.0;
 
     /// <summary>
+    /// The wait after a slew ends before the sample's frame is exposed, in
+    /// seconds, or null for the engine's built-in two seconds (D26).
+    /// </summary>
+    public double? SettleSeconds { get; init; }
+
+    /// <summary>
+    /// The range the settle time is kept in. Zero is a real choice: a light,
+    /// stiff mount can be still the moment it stops, and waiting then only
+    /// slows every sample. A minute is far past any ringing worth waiting out,
+    /// and a value beyond it is far likelier a typo -- an extra digit -- than
+    /// a mount that needs it, at a cost paid on every sample.
+    /// </summary>
+    public const double MaximumSettleSeconds = 60.0;
+
+    [JsonIgnore]
+    public TimeSpan? SettleDelay => SettleSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null;
+
+    public static bool IsValidSettle(double seconds) =>
+        double.IsFinite(seconds) && seconds >= 0.0 && seconds <= MaximumSettleSeconds;
+
+    /// <summary>
     /// The solver for frames where the pointing is unknown, or null for
     /// <see cref="SolverKind.Internal"/>.
     /// </summary>
@@ -370,6 +391,13 @@ public sealed class JsonFileSettingsStore : ISettingsStore
         {
             complaints.Add("the stored sweep was not a positive number of degrees and has been discarded");
             result = result with { SweepDegrees = null };
+        }
+
+        if (result.SettleSeconds is { } settle && !AppSettings.IsValidSettle(settle))
+        {
+            complaints.Add(FormattableString.Invariant(
+                $"the stored settle time was not between 0 and {AppSettings.MaximumSettleSeconds:G} seconds and has been discarded"));
+            result = result with { SettleSeconds = null };
         }
 
         if (result.BlindSolver is { } blind && !Enum.IsDefined(blind))

@@ -334,6 +334,42 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Contains("blind solve timeout", result.Warning);
     }
 
+    /// <summary>
+    /// Zero is a choice, not "unset": a mount that is still the moment it stops
+    /// should not come back from a restart waiting the default two seconds.
+    /// </summary>
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(4.5)]
+    public void TheSettleTimeSurvivesARestart(double seconds)
+    {
+        string path = PathIn("settle", "settings.json");
+        var settings = new AppSettings { SettleSeconds = seconds };
+
+        Assert.Null(new JsonFileSettingsStore(path).Save(settings));
+        AppSettings loaded = new JsonFileSettingsStore(path).Load().Settings;
+
+        Assert.Equal(settings, loaded);
+        Assert.Equal(TimeSpan.FromSeconds(seconds), loaded.SettleDelay);
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("600")]
+    public void AnOutOfRangeSettleTime_IsDiscarded_AndTheRestKept(string stored)
+    {
+        string path = PathIn("settle-bad.json");
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(path, $"{{\"settleSeconds\": {stored}, \"sweepDegrees\": 80}}");
+
+        SettingsLoadResult result = new JsonFileSettingsStore(path).Load();
+
+        Assert.Null(result.Settings.SettleSeconds);
+        Assert.Null(result.Settings.SettleDelay);
+        Assert.Equal(80.0, result.Settings.SweepDegrees);
+        Assert.Contains("settle time", result.Warning);
+    }
+
     [Fact]
     public void ASolverThisVersionDoesNotKnowCostsOnlyThatSetting()
     {

@@ -50,14 +50,18 @@
 
         <StackPanel Spacing="4">
           <TextBlock FontWeight="Bold" Text="Sequence" />
-          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="4">
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="4">
             <TextBlock Grid.Row="0" Grid.Column="0" Text="Capture points" VerticalAlignment="Center" />
             <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding CapturePointsText, Mode=TwoWay}" />
             <TextBlock Grid.Row="1" Grid.Column="0" Text="Sweep °" VerticalAlignment="Center" />
             <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding SweepText, Mode=TwoWay}" />
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Settle s" VerticalAlignment="Center" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding SettleText, Mode=TwoWay}" />
           </Grid>
           <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
                      Text="Used from the next sequence. Uncertainty falls as the square of the sweep but only as the square root of the number of points, so spend on sweep first." />
+          <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
+                     Text="Settle is the wait after a slew ends before the sample's frame is exposed: a mount still ringing smears the stars. Between 0 and 60 seconds." />
         </StackPanel>
       </StackPanel>
 

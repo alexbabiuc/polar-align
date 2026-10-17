@@ -37,7 +37,9 @@ public sealed record CommandRejectedEvent(string Reason) : EngineEvent;
 /// </param>
 /// <param name="SettleDelay">
 /// How long after a slew ends before a sample is solved (D26). Null is the two
-/// seconds decided there; tests shorten it rather than fake the clock.
+/// seconds decided there; tests shorten it rather than fake the clock. A
+/// sequence started with its own <see cref="SessionConfiguration.SettleDelay"/>
+/// uses that instead.
 /// </param>
 /// <param name="SolveInterval">
 /// How long after a solve's result before the next unconnected solve, and before
@@ -59,7 +61,9 @@ public sealed record AlignmentSessionOptions(
 {
     public TimeSpan EffectiveExposure => ExposureDuration == default ? TimeSpan.FromSeconds(2) : ExposureDuration;
 
-    public TimeSpan EffectiveSettleDelay => SettleDelay ?? TimeSpan.FromSeconds(2);
+    public static TimeSpan DefaultSettleDelay { get; } = TimeSpan.FromSeconds(2);
+
+    public TimeSpan EffectiveSettleDelay => SettleDelay ?? DefaultSettleDelay;
 
     public TimeSpan EffectiveSolveInterval => SolveInterval ?? TimeSpan.FromSeconds(5);
 
@@ -191,6 +195,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
     private int _captureCount;
     private double _sweepDegrees;
+    private TimeSpan? _settleDelay;
     private double _spacingDegrees;
     private SequenceMode _mode;
 
@@ -1349,6 +1354,14 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             ? start.Configuration.RequestedSweepDegrees
             : _options.SweepDegrees;
 
+        // Null rather than a zero sentinel: zero is a real choice, for a mount
+        // that is still the moment it stops.
+        if (start.Configuration.SettleDelay is { } settle && settle < TimeSpan.Zero)
+        {
+            _events.Publish(new CommandRejectedEvent("The settle time after a slew cannot be negative."));
+            return;
+        }
+
         if (_captureCount < SmallCircleFitter.MinimumObservations)
         {
             _events.Publish(new CommandRejectedEvent(
@@ -1396,9 +1409,10 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
             _plan = plan;
             _spacingDegrees = SpacingOf(plan);
+            _settleDelay = start.Configuration.SettleDelay ?? _options.EffectiveSettleDelay;
             _sessionActive = true;
 
-            _events.Publish(new SessionStartedEvent(start.Configuration, _mode));
+            _events.Publish(new SessionStartedEvent(start.Configuration with { SettleDelay = SettleDelay }, _mode));
             _events.Publish(new TargetSelectedEvent(
                 plan.MechanicalDeclinationDegrees, plan.IsWest, plan.Captures.Count, plan.SweepDegrees));
 
@@ -1419,7 +1433,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                     // Nothing needs to move and nothing is moving: the first
                     // sample is taken where the telescope stands, with no click
                     // (D18 as revised).
-                    ScheduleSolve(SampleTrigger.SlewEnded, _options.EffectiveSettleDelay);
+                    ScheduleSolve(SampleTrigger.SlewEnded, SettleDelay);
                 }
             }
         }
@@ -1979,7 +1993,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         {
             // Spacing is a sweep's concern. The live reading only needs the
             // mount to have stopped, and it follows an RA move (D29).
-            ScheduleSolve(SampleTrigger.Tracking, _options.EffectiveSettleDelay);
+            ScheduleSolve(SampleTrigger.Tracking, SettleDelay);
             return;
         }
         double rotation = TargetSelection.MechanicalRotationOf(
@@ -1994,8 +2008,14 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             return;
         }
 
-        ScheduleSolve(SampleTrigger.SlewEnded, _options.EffectiveSettleDelay);
+        ScheduleSolve(SampleTrigger.SlewEnded, SettleDelay);
     }
+
+    /// <summary>
+    /// The wait after a slew ends before the sample's frame is exposed (D26):
+    /// what the sequence was started with, else the constructor's.
+    /// </summary>
+    private TimeSpan SettleDelay => _settleDelay ?? _options.EffectiveSettleDelay;
 
     /// <summary>Whether a position is too near an existing sample to widen the sweep (D27).</summary>
     private bool IsTooClose(double rotation, out double nearestDegrees)
@@ -2073,7 +2093,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         if (plan.AnchoredAtCurrentPointing)
         {
-            ScheduleSolve(SampleTrigger.SlewEnded, _options.EffectiveSettleDelay);
+            ScheduleSolve(SampleTrigger.SlewEnded, SettleDelay);
         }
 
         await Task.CompletedTask.ConfigureAwait(false);

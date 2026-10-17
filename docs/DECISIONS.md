@@ -1201,6 +1201,14 @@ is displayed. Nothing is solved outside a sequence. Within one, a frame is solve
 only when an event says the telescope has stopped somewhere new, after a fixed
 delay. There is never more than one solve pending or running.
 
+**Revised (0.0.26).** The post-slew wait was fixed at 2 s. It
+is now a setting in the Sequence section, 0 to 60 s, still 2 s by default, sent
+with each start and used from the next sequence. A mount still ringing smears
+the stars, and how long it rings depends on the mount and the load, which the
+engine cannot know. Zero is allowed for a mount that is still the moment it
+stops; the 60 s ceiling only catches a typo, since every sample pays it. The
+5 s retry and unconnected intervals stay fixed.
+
 **Why continuous.** Exposure, gain and focus are all judged by looking at the
 frame, and a single capture per click made each adjustment a round trip. This
 also removes the D22 and D25 refusals: the settings apply at the next frame
@@ -1213,7 +1221,8 @@ focus.
 
 **The triggers.**
 
-- **Connected mount.** When a slew ends, wait 2 s, then solve the next frame
+- **Connected mount.** When a slew ends, wait the settle time (2 s unless
+  changed in Settings), then solve the next frame
   whose exposure *starts* after that. "Ends" means one of two things. Either the
   engine's own slew returned, or a status poll finds the mount still after it
   was moving: the driver no longer reports slewing, *and* the reported position

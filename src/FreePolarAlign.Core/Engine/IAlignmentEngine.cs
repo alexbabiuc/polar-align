@@ -57,9 +57,15 @@ public enum MeridianSide
 /// planner shrinks it rather than plan a capture below the altitude floor or
 /// across the meridian, and reports what it actually achieved.
 /// </param>
+/// <param name="SettleDelay">
+/// The wait after a slew ends before the sample's frame is exposed (D26): a
+/// mount still ringing smears the stars. Null leaves it to the engine's own
+/// default. Zero is allowed, for a mount that is still the moment it stops.
+/// </param>
 public sealed record SessionConfiguration(
     int CapturePoints,
-    double RequestedSweepDegrees);
+    double RequestedSweepDegrees,
+    TimeSpan? SettleDelay = null);
 
 /// <summary>
 /// How a sequence reaches its samples, decided by what is connected rather than

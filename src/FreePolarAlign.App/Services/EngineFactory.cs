@@ -129,7 +129,8 @@ public static class EngineFactory
 
         var configuration = new SessionConfiguration(
             CapturePoints: loaded.Settings.DefaultCapturePoints ?? options.CaptureCount,
-            RequestedSweepDegrees: loaded.Settings.SweepDegrees ?? options.SweepDegrees);
+            RequestedSweepDegrees: loaded.Settings.SweepDegrees ?? options.SweepDegrees,
+            SettleDelay: loaded.Settings.SettleDelay);
 
         return new EngineStartupResult(
             session,

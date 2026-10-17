@@ -274,6 +274,44 @@ public class SettingsWindowTests
         Assert.Contains("sweep", window.Error);
     }
 
+    /// <summary>
+    /// The settle time reaches the engine with the next start, which is the
+    /// only way it gets there: the engine is not rebuilt when settings change.
+    /// </summary>
+    [Fact]
+    public void TheSettleTimeIsRememberedAndSentWithTheNextStart()
+    {
+        var (viewModel, engine, store) = BuildMain();
+        engine.Publish(CameraConnected, new SiteConfiguredEvent(44.4268, 26.1025, 85.0, null));
+
+        SettingsViewModel window = viewModel.CreateSettingsViewModel(() => { });
+        Assert.Equal("2", window.SettleText);
+        window.SettleText = "0,5";
+        window.SaveCommand.Execute(null);
+        viewModel.StartCommand.Execute(null);
+
+        Assert.Equal(0.5, store.Saved.SettleSeconds);
+        StartSessionCommand start = Assert.Single(engine.Commands.OfType<StartSessionCommand>());
+        Assert.Equal(TimeSpan.FromSeconds(0.5), start.Configuration.SettleDelay);
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("61")]
+    [InlineData("soon")]
+    [InlineData("")]
+    public void AnUnusableSettleTime_IsRefusedAndNothingIsSaved(string text)
+    {
+        (SettingsViewModel window, List<AppSettings> saved, Func<int> closed) = Build();
+
+        window.SettleText = text;
+        window.SaveCommand.Execute(null);
+
+        Assert.Empty(saved);
+        Assert.Equal(0, closed());
+        Assert.Contains("settle time must be between 0 and 60 seconds", window.Error);
+    }
+
     // ---- Site and focal length in the window ----
 
     [Fact]

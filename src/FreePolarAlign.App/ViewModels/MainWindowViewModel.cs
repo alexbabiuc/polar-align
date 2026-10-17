@@ -44,6 +44,9 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     private DeviceOption? _selectedMount;
     private string _capturePointsText;
     private string _sweepText;
+
+    /// <summary>Null is the engine's own default, so an unset setting stays unset.</summary>
+    private TimeSpan? _settleDelay;
     private string _proposalRaText = string.Empty;
     private string _proposalDecText = string.Empty;
     private string? _entryError;
@@ -126,6 +129,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
         _capturePointsText = defaultConfiguration.CapturePoints.ToString(CultureInfo.InvariantCulture);
         _sweepText = defaultConfiguration.RequestedSweepDegrees.ToString("G", CultureInfo.InvariantCulture);
+        _settleDelay = defaultConfiguration.SettleDelay;
 
         // The remembered exposure wins over the built-in default, which is the
         // point of remembering it. Falling back to the nearest listed value to
@@ -882,7 +886,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         }
 
         EntryError = null;
-        await SendAsync(new StartSessionCommand(new SessionConfiguration(points, sweep))).ConfigureAwait(true);
+        await SendAsync(new StartSessionCommand(new SessionConfiguration(points, sweep, _settleDelay))).ConfigureAwait(true);
     }
 
     /// <summary>
@@ -1265,7 +1269,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     /// none is: that is how the first one entered takes effect. The focal length
     /// is sent only when it was changed, and only to a connected camera; without
     /// one it waits, and is applied when a camera connects. A running sequence
-    /// keeps its count and sweep, which are read only when a sequence starts.
+    /// keeps its count, sweep and settle time, which are read only when a sequence starts.
     /// </summary>
     private void ApplySettings(AppSettings updated)
     {
@@ -1280,6 +1284,11 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         if (updated.SweepDegrees is { } sweep)
         {
             SweepText = sweep.ToString("G", CultureInfo.InvariantCulture);
+        }
+
+        if (updated.SettleDelay is { } settle)
+        {
+            _settleDelay = settle;
         }
 
         if (updated.Site is { } site && !State.SessionActive &&

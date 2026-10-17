@@ -131,6 +131,61 @@ public class LiveSamplingTests
     }
 
     /// <summary>
+    /// The settle time chosen in Settings arrives with the start command, and it
+    /// is that, not the engine's constructor option, that holds the sample's
+    /// solve back. The harness's own option is 30 ms, so a sample inside the
+    /// configured wait would mean the setting was ignored.
+    /// </summary>
+    [Fact]
+    public async Task TheSettleTimeTheSequenceIsStartedWith_IsWhatDelaysThePostSlewSolve()
+    {
+        TimeSpan settle = TimeSpan.FromMilliseconds(600);
+        using var harness = new SessionHarness();
+        await harness.ConnectAsync();
+        await harness.ConfirmSiteAsync();
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        await harness.Session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 60.0, settle)));
+        await Task.Delay(400);
+        Assert.Equal(0, harness.Perfect.Calls);
+
+        await harness.WaitForSampleAsync(1);
+        Assert.True(clock.Elapsed >= settle, $"sampled after {clock.Elapsed.TotalMilliseconds:F0} ms");
+        Assert.Equal(settle, harness.Recorder.All<SolveScheduledEvent>().First(e => e.Trigger == SampleTrigger.SlewEnded).Delay);
+        Assert.Equal(settle, harness.Recorder.Last<SessionStartedEvent>()!.Configuration.SettleDelay);
+    }
+
+    /// <summary>
+    /// Zero is a setting, for a mount that is still the moment it stops, and
+    /// must not be read as "unset" the way a zero sweep is.
+    /// </summary>
+    [Fact]
+    public async Task AZeroSettleTime_IsHonoured_NotReplacedByTheDefault()
+    {
+        using var harness = new SessionHarness(settleDelay: TimeSpan.FromSeconds(5));
+        await harness.ConnectAsync();
+        await harness.ConfirmSiteAsync();
+
+        await harness.Session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 60.0, TimeSpan.Zero)));
+        await harness.WaitForSampleAsync(1);
+
+        Assert.Equal(TimeSpan.Zero, harness.Recorder.All<SolveScheduledEvent>().First(e => e.Trigger == SampleTrigger.SlewEnded).Delay);
+    }
+
+    [Fact]
+    public async Task ANegativeSettleTime_IsRefused()
+    {
+        using var harness = new SessionHarness();
+        await harness.ConnectAsync();
+        await harness.ConfirmSiteAsync();
+
+        await harness.Session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 60.0, TimeSpan.FromSeconds(-1))));
+
+        Assert.NotNull(harness.Recorder.Last<CommandRejectedEvent>());
+        Assert.Null(harness.Recorder.Last<SessionStartedEvent>());
+    }
+
+    /// <summary>
     /// Never two solves at once (D26): a slow solver, and every trigger the user
     /// and the mount can produce while it runs.
     /// </summary>

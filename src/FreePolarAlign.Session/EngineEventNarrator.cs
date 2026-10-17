@@ -68,6 +68,7 @@ public static class EngineEventNarrator
             SessionStartedEvent e => Info(Inv(
                 $"Sequence started: {e.Configuration.CapturePoints} samples, ",
                 $"{e.Configuration.RequestedSweepDegrees:F0}° sweep requested, ",
+                e.Configuration.SettleDelay is { } settle ? (FormattableString)$"{settle.TotalSeconds:G3} s settle after a slew, " : $"",
                 $"{DescribeMode(e.Mode)}.")),
 
             ExposureChangedEvent e => Info(Inv($"Exposure set to {e.Duration.TotalSeconds:G3} s from the next frame.")),

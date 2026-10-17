@@ -108,4 +108,21 @@ public sealed class AscomMappingTests
 
         Assert.Equal(start, AscomMapping.ComputeExposureMidpointUtc(start, TimeSpan.Zero));
     }
+
+    /// <summary>
+    /// D35: a driver refusing a site write has to read as a reason the user can
+    /// act on, whatever exception type it arrived as. The codes are ASCOM's
+    /// PropertyNotImplemented and InvalidValue.
+    /// </summary>
+    [Theory]
+    [InlineData(unchecked((int)0x80040400), "does not let a program set SiteElevation")]
+    [InlineData(unchecked((int)0x80040401), "out of range")]
+    [InlineData(unchecked((int)0x80004005), "the driver refused SiteElevation")]
+    public void ASiteWriteRefusal_IsDescribedInWords_AndKeepsTheDriversMessage(int hresult, string expected)
+    {
+        string described = AscomMapping.DescribeSiteWriteFailure("SiteElevation", hresult, " Not now. ");
+
+        Assert.Contains(expected, described);
+        Assert.EndsWith("(Not now.)", described);
+    }
 }

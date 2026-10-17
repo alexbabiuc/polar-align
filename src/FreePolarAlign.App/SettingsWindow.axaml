@@ -31,6 +31,16 @@
             <TextBlock Grid.Row="2" Grid.Column="0" Text="Altitude m" VerticalAlignment="Center" />
             <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding HeightText, Mode=TwoWay}" />
           </Grid>
+          <!-- Only with a mount that reports a site (D35). "To mount" writes the
+               fields as they stand; neither button saves anything. -->
+          <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" IsVisible="{Binding HasMountSite}">
+            <TextBlock Grid.Column="0" FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
+                       VerticalAlignment="Center" Text="{Binding MountSiteText}" />
+            <Button Grid.Column="1" Content="From mount" Command="{Binding CopyFromMountCommand}" />
+            <Button Grid.Column="2" Content="To mount" Command="{Binding WriteToMountCommand}" />
+          </Grid>
+          <TextBlock FontSize="12" Foreground="#E0C070" TextWrapping="Wrap" Text="{Binding MountSiteStatus}"
+                     IsVisible="{Binding MountSiteStatus, Converter={x:Static ObjectConverters.IsNotNull}}" />
           <TextBlock FontSize="12" Foreground="#E0C070" TextWrapping="Wrap"
                      IsVisible="{Binding !CanChangeSite}"
                      Text="The site cannot change while a sequence is running: every capture already taken was reduced with it." />

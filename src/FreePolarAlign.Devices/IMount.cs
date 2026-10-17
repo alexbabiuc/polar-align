@@ -103,4 +103,14 @@ public interface IMount : IDisposable
     /// currently reports.
     /// </summary>
     Task<GeodeticLocation> GetSiteLocationAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Writes a site to the mount, only ever because the user asked (D35).
+    ///
+    /// Throws when the driver refuses. There is no capability flag to ask
+    /// first, so trying is the only test. Returning normally does not mean the
+    /// mount holds exactly this site, since a driver may round it or keep only
+    /// some of it. Callers read it back with <see cref="GetSiteLocationAsync"/>.
+    /// </summary>
+    Task SetSiteLocationAsync(GeodeticLocation site, CancellationToken cancellationToken = default);
 }

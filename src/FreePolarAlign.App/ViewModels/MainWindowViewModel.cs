@@ -246,6 +246,12 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     /// </summary>
     private bool Ready => _engine is not null && !State.CameraSetupDialogOpen;
 
+    /// <summary>
+    /// The settings window while it is open, told of the engine's events because
+    /// its write to the mount is answered by one (D35).
+    /// </summary>
+    private SettingsViewModel? _openSettings;
+
     public string? LogPath { get; }
 
     public SessionConfiguration DefaultConfiguration { get; }
@@ -993,6 +999,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             }
 
             Remember(engineEvent);
+            _openSettings?.Observe(engineEvent);
         });
     }
 
@@ -1259,8 +1266,29 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>The state for a settings window opened now; <paramref name="close"/> closes that window.</summary>
-    public SettingsViewModel CreateSettingsViewModel(Action close) =>
-        new(_settings, DefaultConfiguration, ApplySettings, close, canChangeSite: !State.SessionActive);
+    public SettingsViewModel CreateSettingsViewModel(Action close)
+    {
+        SettingsViewModel? window = null;
+        window = new SettingsViewModel(
+            _settings,
+            DefaultConfiguration,
+            ApplySettings,
+            () =>
+            {
+                if (ReferenceEquals(_openSettings, window))
+                {
+                    _openSettings = null;
+                }
+
+                close();
+            },
+            canChangeSite: !State.SessionActive,
+            mountSite: State.Mount.IsConnected ? State.MountSite : null,
+            writeToMount: site => _ = SendAsync(
+                new WriteSiteToMountCommand(site.LatitudeDegrees, site.LongitudeDegrees, site.HeightMeters)));
+        _openSettings = window;
+        return window;
+    }
 
     /// <summary>
     /// Takes what the settings window saved, remembers it, and puts it in use.

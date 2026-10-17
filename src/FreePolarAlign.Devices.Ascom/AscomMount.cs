@@ -206,6 +206,44 @@ public sealed class AscomMount : IMount
     }
 
     /// <summary>
+    /// Sets the three ASCOM site properties, each attempted even when an earlier
+    /// one is refused. There is no capability flag for them (D35), so a driver
+    /// whose elevation setter is not implemented is found out only by trying,
+    /// and that should not stop a latitude it would have accepted. What the
+    /// mount kept is the caller's to read back.
+    /// </summary>
+    public Task SetSiteLocationAsync(GeodeticLocation site, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(site);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var refusals = new List<string>();
+        TrySet("SiteLatitude", () => _telescope.SiteLatitude = site.LatitudeDegrees, refusals);
+        TrySet("SiteLongitude", () => _telescope.SiteLongitude = site.LongitudeDegrees, refusals);
+        TrySet("SiteElevation", () => _telescope.SiteElevation = site.HeightMeters, refusals);
+
+        if (refusals.Count > 0)
+        {
+            throw new AscomPlatformNotAvailableException(string.Join("; ", refusals) + ".");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static void TrySet(string property, Action set, List<string> refusals)
+    {
+        try
+        {
+            set();
+        }
+        catch (Exception ex)
+        {
+            Exception cause = ex is System.Reflection.TargetInvocationException { InnerException: { } inner } ? inner : ex;
+            refusals.Add(AscomMapping.DescribeSiteWriteFailure(property, cause.HResult, cause.Message));
+        }
+    }
+
+    /// <summary>
     /// The equatorial system the driver says it speaks, cached for the lifetime
     /// of the connection.
     ///

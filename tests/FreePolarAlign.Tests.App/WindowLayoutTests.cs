@@ -329,4 +329,41 @@ public class WindowLayoutTests
             }
         });
     }
+
+    /// <summary>
+    /// The same limit with the mount's site row and a long answer from a write
+    /// showing (D35), the tallest the left column gets.
+    /// </summary>
+    [Fact]
+    public void TheSettingsWindowFitsWithTheMountSiteRowShowing()
+    {
+        OnUiThread(() =>
+        {
+            var viewModel = new SettingsViewModel(
+                FreePolarAlign.Session.AppSettings.Empty,
+                new SessionConfiguration(6, 70.0),
+                _ => { },
+                () => { },
+                mountSite: new FreePolarAlign.Session.StoredSite(51.47733, -0.00139, 47.0),
+                writeToMount: _ => { });
+            viewModel.Observe(new MountSiteReportedEvent(
+                51.47733, -0.00139, 47.0, AfterWrite: true,
+                WriteProblem: "The mount did not accept the site: the driver does not let a program set SiteElevation " +
+                              "(Property write SiteElevation is not implemented in this driver.). It now reports " +
+                              "51.47733°, -0.00139°, 47 m."));
+
+            var window = new FreePolarAlign.App.SettingsWindow { DataContext = viewModel };
+
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                Assert.True(window.Bounds.Height < 720.0, $"The settings window is {window.Bounds.Height}px tall.");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
 }

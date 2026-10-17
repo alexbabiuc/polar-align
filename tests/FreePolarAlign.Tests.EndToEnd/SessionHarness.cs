@@ -173,6 +173,9 @@ internal sealed class RecordingMount : IMount
     public Task<GeodeticLocation> GetSiteLocationAsync(CancellationToken cancellationToken = default) =>
         _inner.GetSiteLocationAsync(cancellationToken);
 
+    public Task SetSiteLocationAsync(GeodeticLocation site, CancellationToken cancellationToken = default) =>
+        _inner.SetSiteLocationAsync(site, cancellationToken);
+
     public void Dispose() => _inner.Dispose();
 }
 
@@ -406,7 +409,8 @@ internal sealed class SessionHarness : IDisposable
         TimeSpan? slewDuration = null,
         ISolver? solver = null,
         TimeSpan? settleDelay = null,
-        TimeSpan? solveInterval = null)
+        TimeSpan? solveInterval = null,
+        SimulatedSiteWrites siteWrites = SimulatedSiteWrites.Stored)
     {
         Simulated = new SimulatedMount(new SimulatedMountOptions(
             Site,
@@ -416,7 +420,8 @@ internal sealed class SessionHarness : IDisposable
             Tracking: tracking,
             SlewDuration: slewDuration ?? TimeSpan.Zero,
             CanSlewAsync: canSlew,
-            InitialMechanicalRotationDegrees: initialRotationDegrees));
+            InitialMechanicalRotationDegrees: initialRotationDegrees,
+            SiteWrites: siteWrites));
 
         Mount = new RecordingMount(Simulated);
         Camera = new StubCamera();

@@ -30,6 +30,11 @@ public sealed class SettingsViewModel : ViewModelBase
     private readonly AppSettings _original;
     private readonly Action<AppSettings> _save;
     private readonly Action _close;
+    private readonly Action<StoredSite>? _writeToMount;
+
+    private StoredSite? _mountSite;
+    private string? _mountSiteStatus;
+    private bool _mountWritePending;
 
     private string _capturePointsText;
     private SolverOption _blindSolver;
@@ -54,18 +59,24 @@ public sealed class SettingsViewModel : ViewModelBase
     /// False while a sequence runs: every capture already taken was reduced with
     /// the site in use, so the engine refuses a new one until it ends.
     /// </param>
+    /// <param name="mountSite">The site the connected mount reports, or null when there is none (D35).</param>
+    /// <param name="writeToMount">Sends a site to the mount. Null where nothing can be sent.</param>
     public SettingsViewModel(
         AppSettings current,
         SessionConfiguration defaults,
         Action<AppSettings> save,
         Action close,
-        bool canChangeSite = true)
+        bool canChangeSite = true,
+        StoredSite? mountSite = null,
+        Action<StoredSite>? writeToMount = null)
     {
         _original = current ?? throw new ArgumentNullException(nameof(current));
         ArgumentNullException.ThrowIfNull(defaults);
         _save = save ?? throw new ArgumentNullException(nameof(save));
         _close = close ?? throw new ArgumentNullException(nameof(close));
         CanChangeSite = canChangeSite;
+        _mountSite = mountSite;
+        _writeToMount = writeToMount;
 
         _capturePointsText = (current.DefaultCapturePoints ?? defaults.CapturePoints).ToString(CultureInfo.InvariantCulture);
         _sweepText = (current.SweepDegrees ?? defaults.RequestedSweepDegrees).ToString("G", CultureInfo.InvariantCulture);
@@ -92,6 +103,20 @@ public sealed class SettingsViewModel : ViewModelBase
             _close();
             return Task.CompletedTask;
         });
+        CopyFromMountCommand = new RelayCommand(
+            () =>
+            {
+                CopyFromMount();
+                return Task.CompletedTask;
+            },
+            () => CanChangeSite && HasMountSite);
+        WriteToMountCommand = new RelayCommand(
+            () =>
+            {
+                WriteToMount();
+                return Task.CompletedTask;
+            },
+            () => CanChangeSite && HasMountSite && _writeToMount is not null);
     }
 
     public RelayCommand SaveCommand { get; }
@@ -99,6 +124,117 @@ public sealed class SettingsViewModel : ViewModelBase
     public RelayCommand CancelCommand { get; }
 
     public bool CanChangeSite { get; }
+
+    /// <summary>
+    /// Fills the site fields from the mount. Save still decides whether they are
+    /// used, as for anything else typed here (D34, D35).
+    /// </summary>
+    public RelayCommand CopyFromMountCommand { get; }
+
+    /// <summary>
+    /// Writes the site in the fields to the mount, without saving it or putting
+    /// it in use (D35).
+    /// </summary>
+    public RelayCommand WriteToMountCommand { get; }
+
+    /// <summary>A mount is connected and has said where it thinks it is.</summary>
+    public bool HasMountSite => _mountSite is not null;
+
+    public string? MountSiteText => _mountSite is { } site
+        ? FormattableString.Invariant(
+            $"The mount reports {site.LatitudeDegrees:F5}°, {site.LongitudeDegrees:F5}°, {site.HeightMeters:F0} m.")
+        : null;
+
+    /// <summary>What became of the last write to the mount from this window.</summary>
+    public string? MountSiteStatus
+    {
+        get => _mountSiteStatus;
+        private set => SetField(ref _mountSiteStatus, value);
+    }
+
+    /// <summary>
+    /// Keeps the mount's part of the window current while it is open: the
+    /// answer to a write arrives as an event, and so does a mount going away.
+    /// </summary>
+    public void Observe(EngineEvent engineEvent)
+    {
+        switch (engineEvent)
+        {
+            case MountSiteReportedEvent e:
+                SetMountSite(new StoredSite(e.LatitudeDegrees, e.LongitudeDegrees, e.HeightMeters));
+                if (e.AfterWrite)
+                {
+                    _mountWritePending = false;
+                    MountSiteStatus = e.WriteProblem ?? "Written. Save to use this site here as well.";
+                }
+
+                break;
+
+            case DeviceDisconnectedEvent { Kind: DeviceKind.Mount }:
+                SetMountSite(null);
+                _mountWritePending = false;
+                MountSiteStatus = null;
+                break;
+
+            // Only a refusal that answers this window's own write is shown here;
+            // anything else belongs to the main window.
+            case CommandRejectedEvent e when _mountWritePending:
+                _mountWritePending = false;
+                MountSiteStatus = e.Reason;
+                break;
+        }
+    }
+
+    private void SetMountSite(StoredSite? site)
+    {
+        _mountSite = site;
+        OnPropertyChanged(nameof(HasMountSite));
+        OnPropertyChanged(nameof(MountSiteText));
+        CopyFromMountCommand.RaiseCanExecuteChanged();
+        WriteToMountCommand.RaiseCanExecuteChanged();
+    }
+
+    private void CopyFromMount()
+    {
+        if (_mountSite is not { } site)
+        {
+            return;
+        }
+
+        LatitudeText = site.LatitudeDegrees.ToString("F5", CultureInfo.InvariantCulture);
+        LongitudeText = site.LongitudeDegrees.ToString("F5", CultureInfo.InvariantCulture);
+        HeightText = site.HeightMeters.ToString("F0", CultureInfo.InvariantCulture);
+        MountSiteStatus = "Copied from the mount. Save to use it.";
+    }
+
+    /// <summary>
+    /// Validated exactly as Save validates, so the mount is never handed a site
+    /// this window would refuse to keep.
+    /// </summary>
+    private void WriteToMount()
+    {
+        if (_writeToMount is null)
+        {
+            return;
+        }
+
+        if (!TryParseSite(out StoredSite? site, out string? problem))
+        {
+            Error = problem;
+            return;
+        }
+
+        if (site is null)
+        {
+            Error = "Enter a site before writing it to the mount.";
+            return;
+        }
+
+        Error = null;
+        _mountWritePending = true;
+        MountSiteStatus = "Writing the site to the mount...";
+        _writeToMount(site);
+    }
 
     public string LatitudeText
     {

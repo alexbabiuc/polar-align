@@ -369,6 +369,9 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 case ConfigureSiteCommand site:
                     await ConfigureSiteAsync(site, cancellationToken).ConfigureAwait(false);
                     break;
+                case WriteSiteToMountCommand write:
+                    await WriteSiteToMountAsync(write, cancellationToken).ConfigureAwait(false);
+                    break;
                 case ConfigureFocalLengthCommand focalLength:
                     ConfigureFocalLength(focalLength);
                     break;
@@ -572,6 +575,16 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             Camera: null,
             CanSlew: mount.CanSlewAsync));
 
+        // Read now rather than only when a site is set: the site is usually set
+        // at startup, before any mount is connected, and the disagreement is
+        // worth knowing the moment there is a mount to disagree.
+        if (await TryReadMountSiteAsync(cancellationToken).ConfigureAwait(false) is { } reported)
+        {
+            _events.Publish(new MountSiteReportedEvent(
+                reported.LatitudeDegrees, reported.LongitudeDegrees, reported.HeightMeters,
+                DescribeSiteDisagreement(_site, reported)));
+        }
+
         await RefreshMountStatusAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -773,19 +786,32 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     /// is also the clearest early sign that one of the two is wrong, so it is
     /// reported rather than resolved.
     /// </summary>
-    private async Task<string?> DescribeSiteDisagreementAsync(GeodeticLocation confirmed, CancellationToken cancellationToken)
+    private async Task<string?> DescribeSiteDisagreementAsync(GeodeticLocation confirmed, CancellationToken cancellationToken) =>
+        await TryReadMountSiteAsync(cancellationToken).ConfigureAwait(false) is { } reported
+            ? DescribeSiteDisagreement(confirmed, reported)
+            : null;
+
+    /// <summary>The mount's site, or null when there is no mount or its driver reports none.</summary>
+    private async Task<GeodeticLocation?> TryReadMountSiteAsync(CancellationToken cancellationToken)
     {
         if (!MountConnected)
         {
             return null;
         }
 
-        GeodeticLocation reported;
         try
         {
-            reported = await _mount!.GetSiteLocationAsync(cancellationToken).ConfigureAwait(false);
+            return await _mount!.GetSiteLocationAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+    private static string? DescribeSiteDisagreement(GeodeticLocation? confirmed, GeodeticLocation reported)
+    {
+        if (confirmed is null)
         {
             return null;
         }
@@ -817,6 +843,98 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         return message;
     }
+
+    /// <summary>
+    /// Writes a site to the mount and reports what the mount holds afterwards,
+    /// which is not always what was written (D35). The site in use is not
+    /// touched: only <see cref="ConfigureSiteCommand"/> changes that.
+    /// </summary>
+    private async Task WriteSiteToMountAsync(WriteSiteToMountCommand command, CancellationToken cancellationToken)
+    {
+        if (!MountConnected)
+        {
+            _events.Publish(new CommandRejectedEvent("Connect a mount first: there is nothing to write the site to."));
+            return;
+        }
+
+        if (_sessionActive)
+        {
+            _events.Publish(new CommandRejectedEvent(
+                "Cannot write the site to the mount while a sequence is running -- the mount turns coordinates into " +
+                "motor angles with its site, so the positions it reports would stop agreeing with the captures " +
+                "already taken. Cancel the sequence first."));
+            return;
+        }
+
+        if (Math.Abs(command.LatitudeDegrees) > 90.0 || Math.Abs(command.LongitudeDegrees) > 180.0 ||
+            command.HeightMeters < MinimumMountSiteElevationMeters || command.HeightMeters > MaximumMountSiteElevationMeters)
+        {
+            _events.Publish(new CommandRejectedEvent(FormattableString.Invariant(
+                $"A mount takes a latitude within ±90°, a longitude within ±180° and an altitude from {MinimumMountSiteElevationMeters:F0} to {MaximumMountSiteElevationMeters:F0} m; that site is outside them.")));
+            return;
+        }
+
+        var requested = new GeodeticLocation(command.LatitudeDegrees, command.LongitudeDegrees, command.HeightMeters);
+
+        string? refusal = null;
+        try
+        {
+            await _mount!.SetSiteLocationAsync(requested, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            refusal = ex.Message;
+        }
+
+        // Read back whatever happened. A driver may keep part of a refused write,
+        // or round an accepted one, and the only thing worth reporting is what
+        // the mount now holds.
+        if (await TryReadMountSiteAsync(cancellationToken).ConfigureAwait(false) is not { } reported)
+        {
+            _events.Publish(new CommandRejectedEvent(refusal is null
+                ? "The site was written, but the mount then reported none, so whether it kept it is unknown."
+                : $"The mount did not accept the site: {refusal}"));
+            return;
+        }
+
+        string? problem = null;
+        if (refusal is not null)
+        {
+            problem = $"The mount did not accept the site: {refusal} It now reports {DescribeSite(reported)}.";
+        }
+        else if (!SameSite(requested, reported))
+        {
+            problem = $"The mount accepted the site but kept {DescribeSite(reported)}, not {DescribeSite(requested)}.";
+        }
+
+        _events.Publish(new MountSiteReportedEvent(
+            reported.LatitudeDegrees, reported.LongitudeDegrees, reported.HeightMeters,
+            DescribeSiteDisagreement(_site, reported),
+            AfterWrite: true,
+            problem));
+    }
+
+    /// <summary>
+    /// The range ASCOM's <c>SiteElevation</c> documents (D35). Checked here so a
+    /// value outside it is explained in this software's words rather than in
+    /// whatever a driver's InvalidValueException says.
+    /// </summary>
+    private const double MinimumMountSiteElevationMeters = -300.0;
+
+    private const double MaximumMountSiteElevationMeters = 10000.0;
+
+    /// <summary>
+    /// A read-back within an arcsecond and a metre is the site that was written.
+    /// Below that it is the driver's number format, and an arcsecond of latitude
+    /// is a sixth of the 0.1' this measurement aims for.
+    /// </summary>
+    private static bool SameSite(GeodeticLocation a, GeodeticLocation b) =>
+        Math.Abs(a.LatitudeDegrees - b.LatitudeDegrees) <= 1.0 / 3600.0 &&
+        Math.Abs(a.LongitudeDegrees - b.LongitudeDegrees) <= 1.0 / 3600.0 &&
+        Math.Abs(a.HeightMeters - b.HeightMeters) <= 1.0;
+
+    private static string DescribeSite(GeodeticLocation site) => FormattableString.Invariant(
+        $"{site.LatitudeDegrees:F5}°, {site.LongitudeDegrees:F5}°, {site.HeightMeters:F0} m");
 
     // ---- Camera settings ----
 

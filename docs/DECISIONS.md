@@ -784,6 +784,13 @@ of latitude, 0.05° of longitude or 200 m of height is surfaced with the
 latitude's consequence spelled out, because a disagreement is usually the first
 sign that one of the two figures is simply wrong.
 
+**Revised (0.0.26, D35).** The comparison is made when a mount connects as well as when
+the site is set. Before, it was made only when the site was set, and the site is
+set at startup, before any mount connects, so the warning almost never appeared.
+Settling a disagreement is also easier now: the settings window can copy the
+mount's site into its fields, or write the entered site to the mount. Both
+happen only when the user presses the button, and the user's site still wins.
+
 Also remembered: the focal length, and which devices were last used. The focal
 length is worth carrying because the first solve of a session is the expensive
 one and it measures the value. It is applied when a camera connects, the
@@ -1719,3 +1726,71 @@ only when a sequence starts.
 **Cost.** Changing any of them takes one more click than before. The dialog is
 1000px wide to keep its height at 497px, below the main window's 720px minimum,
 and the layout test holds it there.
+
+---
+
+## D35 — The site can be copied from the mount or written to it, on request
+
+While a mount is connected and reports a site, the settings window offers two
+buttons under the site fields. **From mount** copies the mount's latitude,
+longitude and altitude into the fields. **To mount** writes the fields to the
+mount. Neither runs unless the user presses it, and the site in use is still the
+user's (D19).
+
+**Why.** The user asked for it. D19 reports a disagreement but leaves the user to
+retype one figure or the other, and the mount's is often a leftover. Settling it
+is now one click either way.
+
+**From mount only fills the fields.** Save applies them, like everything else in
+the window (D34). The mount's site is read when it connects and published as an
+event, so the window copies it without asking the mount again. The same reading
+now carries the disagreement. Before, the comparison was made only when the site
+was set, which is at startup, before any mount connects, so the warning almost
+never appeared.
+
+**To mount writes the fields as typed, without Save.** They are checked the way
+Save checks them, so the mount is never sent a site the window would refuse to
+keep. Writing does not apply the site to the engine or store it.
+
+- Requiring Save first would not work: Save closes the window, and the button
+  is in it.
+- Saving as a side effect would make the button a second Save.
+
+A user who writes and then cancels has a mount holding a site the application is
+not using. The disagreement warning then says so, which is the guard D19 relies
+on anyway.
+
+**Through the engine, refused during a sequence.** `WriteSiteToMountCommand`
+goes through the command gate like every other device action. It is refused
+while a sequence runs: the mount turns coordinates into motor angles with its
+site, and ASCOM requires `SiderealTime` to follow `SiteLongitude`. A write would
+make the positions it reports stop agreeing with the captures already taken. It
+is also refused for an altitude outside ASCOM's −300 to 10000 m, in this
+application's words rather than a driver's.
+
+**What the mount holds is read back and reported.**
+
+- **No way to ask first.** ASCOM has no `CanSet…` flag for the site, and writing
+  is optional: a driver may throw PropertyNotImplementedException. A mount with
+  GPS is told to refuse that way on purpose.
+- **Each property is tried.** `AscomMount` attempts all three even when one is
+  refused, because an elevation setter alone can be missing (a ZWO AM5 report).
+- **A failure is a sentence.** It names the property and the reason, from the
+  HRESULT, followed by the driver's own message. It never reaches the user as an
+  exception.
+- **What the mount keeps can differ.** EQMOD refuses writes until the user ticks
+  "Allow Site Writes". SynScan's protocol stores whole arcseconds and no
+  elevation. iOptron's stores 0.01″ and no elevation.
+- **The read-back is what counts.** `MountSiteReportedEvent` carries the
+  read-back with any problem. A read-back within 1″ and 1 m is the written site:
+  1″ of latitude is a sixth of the 0.1′ this measurement aims for. The event
+  replaces the disagreement warning, which clears once the mount agrees with
+  the site in use.
+
+Sources and tags are in docs/DEVICE-COMPATIBILITY.md. None of it has been
+tried on hardware.
+
+**Cost.** Two buttons and a status line. The settings window is 508px with them
+showing, still under the 720px limit D34 set, and the layout test holds that. The
+simulated mount now keeps a reported site apart from where it physically stands,
+so a wrong site written to it changes the warning and not the sky.

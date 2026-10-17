@@ -64,6 +64,18 @@ public static class EngineEventReducer
                     : "Site set, but the mount disagrees -- see the note under it.",
             },
 
+            // Replaces the disagreement as well, since it is the newer reading:
+            // a write the mount kept is what makes the warning go away.
+            MountSiteReportedEvent e => withLog with
+            {
+                MountSite = new StoredSite(e.LatitudeDegrees, e.LongitudeDegrees, e.HeightMeters),
+                SiteDisagreement = e.DisagreementWithSiteInUse,
+                RejectionReason = e.AfterWrite ? null : withLog.RejectionReason,
+                StatusMessage = !e.AfterWrite ? withLog.StatusMessage
+                    : e.WriteProblem is null ? "Site written to the mount."
+                    : "The mount does not hold the site as written -- see the log.",
+            },
+
             EquipmentConfiguredEvent e => withLog with
             {
                 FocalLengthMillimetres = e.FocalLengthMillimetres,
@@ -432,6 +444,7 @@ public static class EngineEventReducer
             MountTracking = MountTrackingState.Unknown,
             MountPierSide = MeridianSide.Unknown,
             MountIsMoving = false,
+            MountSite = null,
             StatusMessage = e.Reason ?? "Mount disconnected.",
         };
     }

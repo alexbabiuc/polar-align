@@ -60,6 +60,32 @@ internal static class AscomMapping
     /// </summary>
     public static DateTime ComputeExposureMidpointUtc(DateTime startUtc, TimeSpan commandedDuration) =>
         startUtc + TimeSpan.FromTicks(commandedDuration.Ticks / 2);
+
+    /// <summary>
+    /// Why a driver refused to set one of the site properties, in words a user
+    /// can act on, followed by the driver's own message.
+    ///
+    /// Read from the exception's HRESULT, since that is what survives late
+    /// binding whichever way the driver threw. The numbers are ASCOM's
+    /// <c>ErrorCodes</c>; a driver that throws something else gets only its own
+    /// message (D35).
+    /// </summary>
+    public static string DescribeSiteWriteFailure(string property, int hresult, string driverMessage)
+    {
+        string reason = unchecked((uint)hresult) switch
+        {
+            // ASCOM tells a mount that knows its site from GPS to refuse this
+            // way on purpose, so the refusal is not necessarily a fault.
+            0x80040400 => $"the driver does not let a program set {property}, as a mount that takes its site from GPS is meant to refuse",
+            0x80040401 => $"the driver says the value for {property} is out of range",
+            0x80040407 => "the driver says the mount is not connected",
+            0x80040408 => $"the driver will not set {property} while the mount is parked",
+            0x8004040B => $"the driver will not set {property} in the mount's current state",
+            _ => $"the driver refused {property}",
+        };
+
+        return string.IsNullOrWhiteSpace(driverMessage) ? reason : $"{reason} ({driverMessage.Trim()})";
+    }
 }
 
 /// <summary>

@@ -57,6 +57,10 @@ public static class EngineEventNarrator
                     $"Site set: latitude {e.LatitudeDegrees:F5}°, longitude {e.LongitudeDegrees:F5}°, ",
                     $"height {e.HeightMeters:F0} m. {e.MountReportedDisagreement}")),
 
+            MountSiteReportedEvent e => e.WriteProblem is not null || e.DisagreementWithSiteInUse is not null
+                ? new NarratedEvent(LogSeverity.Warning, DescribeMountSite(e))
+                : Info(DescribeMountSite(e)),
+
             EquipmentConfiguredEvent e => Info(DescribeEquipment(e)),
 
             // Deliberately not logged: mount status is polled continuously, and
@@ -168,6 +172,24 @@ public static class EngineEventNarrator
 
             _ => Info(engineEvent.GetType().Name),
         };
+    }
+
+    private static string DescribeMountSite(MountSiteReportedEvent e)
+    {
+        string text = Inv(
+            $"{(e.AfterWrite ? "Site written to the mount; it now reports" : "The mount reports its site as")} ",
+            $"latitude {e.LatitudeDegrees:F5}°, longitude {e.LongitudeDegrees:F5}°, height {e.HeightMeters:F0} m.");
+        if (e.WriteProblem is not null)
+        {
+            text += " " + e.WriteProblem;
+        }
+
+        if (e.DisagreementWithSiteInUse is not null)
+        {
+            text += " " + e.DisagreementWithSiteInUse;
+        }
+
+        return text;
     }
 
     private static string DescribeConnection(DeviceConnectedEvent e)

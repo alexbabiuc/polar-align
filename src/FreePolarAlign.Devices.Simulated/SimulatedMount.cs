@@ -39,6 +39,11 @@ namespace FreePolarAlign.Devices.Simulated;
 /// stars detected", which is a confusing way to discover a test-data
 /// limitation.
 /// </param>
+/// <param name="Site">
+/// Where the mount physically stands, which the sky and the mechanics follow.
+/// It is also the site the mount reports until a client writes another (D35).
+/// </param>
+/// <param name="SiteWrites">How the mount answers a client writing a site to it.</param>
 public sealed record SimulatedMountOptions(
     GeodeticLocation Site,
     MountMisalignment Misalignment,
@@ -49,7 +54,32 @@ public sealed record SimulatedMountOptions(
     bool SupportsSideOfPier = true,
     bool CanSlewAsync = true,
     double InitialMechanicalRotationDegrees = 12.0,
-    double InitialPoleDistanceDegrees = 22.0);
+    double InitialPoleDistanceDegrees = 22.0,
+    SimulatedSiteWrites SiteWrites = SimulatedSiteWrites.Stored);
+
+/// <summary>
+/// The ways a driver answers a client writing a site, as far as D35's reading
+/// of the ASCOM documentation found them. There is no flag to ask in advance.
+/// </summary>
+public enum SimulatedSiteWrites
+{
+    /// <summary>Kept exactly as written.</summary>
+    Stored,
+
+    /// <summary>
+    /// Thrown back, as a driver whose setters raise PropertyNotImplementedException
+    /// does.
+    /// </summary>
+    Refused,
+
+    /// <summary>
+    /// Accepted, then kept to whole arcminutes and metres. No driver is known to
+    /// round this coarsely: the SynScan protocol carries whole arcseconds and
+    /// iOptron's 0.01". It is coarse so the difference is unmistakable, and it
+    /// stands for any driver whose read-back is not what was written.
+    /// </summary>
+    StoredToWholeArcminutes,
+}
 
 /// <summary>
 /// A German equatorial mount with a genuinely misaligned polar axis.
@@ -87,6 +117,7 @@ public sealed class SimulatedMount : IMount
     private readonly ObserverSite _observerSite;
 
     private MountMisalignment _misalignment;
+    private GeodeticLocation _reportedSite;
     private double _commandedRaDegrees;
     private double _commandedDecDegrees;
     private DateTime _mechanicalEpochUtc;
@@ -99,6 +130,7 @@ public sealed class SimulatedMount : IMount
         ArgumentNullException.ThrowIfNull(options);
         Options = options;
         _misalignment = options.Misalignment;
+        _reportedSite = options.Site;
         _observerSite = new ObserverSite(options.Site.LatitudeDegrees, options.Site.LongitudeDegrees, options.Site.HeightMeters);
 
         // Switched on already pointing somewhere, like the real thing. The
@@ -366,7 +398,41 @@ public sealed class SimulatedMount : IMount
     public Task<GeodeticLocation> GetSiteLocationAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(Options.Site);
+        lock (_gate)
+        {
+            return Task.FromResult(_reportedSite);
+        }
+    }
+
+    /// <summary>
+    /// Changes the site the mount reports and nothing else. A real mount would
+    /// also use it to turn coordinates into motor angles, but the simulator
+    /// keeps doing that from where it physically stands, so a wrong site written
+    /// here shows up only as the disagreement it causes (D19).
+    /// </summary>
+    public Task SetSiteLocationAsync(GeodeticLocation site, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(site);
+        cancellationToken.ThrowIfCancellationRequested();
+        RequireConnected();
+
+        GeodeticLocation stored = Options.SiteWrites switch
+        {
+            SimulatedSiteWrites.Refused => throw new NotSupportedException(
+                "Property write SiteLatitude is not implemented in this driver."),
+            SimulatedSiteWrites.StoredToWholeArcminutes => new GeodeticLocation(
+                Math.Round(site.LatitudeDegrees * 60.0) / 60.0,
+                Math.Round(site.LongitudeDegrees * 60.0) / 60.0,
+                Math.Round(site.HeightMeters)),
+            _ => site,
+        };
+
+        lock (_gate)
+        {
+            _reportedSite = stored;
+        }
+
+        return Task.CompletedTask;
     }
 
     /// <summary>

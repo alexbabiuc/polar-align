@@ -223,6 +223,12 @@ public sealed record UiState
     /// </summary>
     public bool MountIsMoving { get; init; }
 
+    /// <summary>
+    /// The site the connected mount holds, or null when there is no mount or its
+    /// driver reports none. Offered for copying and overwriting, never used (D35).
+    /// </summary>
+    public StoredSite? MountSite { get; init; }
+
     // ---- Site and equipment ----
 
     /// <summary>

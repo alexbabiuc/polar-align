@@ -170,9 +170,11 @@ public sealed class SimulatedCamera : ICamera
         // lands on the sensor. The catalogue position of the star at the centre
         // is the *unrefracted* one, so the inverse transform runs with the
         // atmosphere in place (D15).
+        // Where the mount physically stands, not the site it reports: a client
+        // can write a different one to it (D35), and the sky does not move.
         HorizontalCoordinates pointing = _mount.PhysicalPointingAt(midpoint);
         (double ra, double dec) = TopocentricConverter.FromAltAz(
-            pointing, midpoint, ToObserverSite(await _mount.GetSiteLocationAsync(cancellationToken).ConfigureAwait(false)), _atmosphere);
+            pointing, midpoint, ToObserverSite(_mount.Options.Site), _atmosphere);
 
         TanWcsSolution trueWcs = SkyRenderer.BuildWcs(
             ra, dec, Options.WidthPixels, Options.HeightPixels,

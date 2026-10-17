@@ -529,4 +529,142 @@ public class SettingsWindowTests
 
         Assert.Equal("400.0 mm (as entered)", viewModel.FocalLengthSummary);
     }
+
+    // ---- The mount's site (D35) ----
+
+    private static readonly DeviceConnectedEvent MountConnected = new(
+        DeviceKind.Mount, "Simulated", "mount", "Simulated mount", "Simulator", CanSlew: true);
+
+    private static readonly MountSiteReportedEvent MountAtLondon = new(51.47733, -0.00139, 47.0);
+
+    [Fact]
+    public void WithoutAMountReportingASite_NeitherButtonIsOffered()
+    {
+        var (viewModel, engine, _) = BuildMain(new AppSettings { Site = Bucharest });
+        engine.Publish(MountConnected);
+
+        SettingsViewModel window = viewModel.CreateSettingsViewModel(() => { });
+
+        Assert.False(window.HasMountSite);
+        Assert.False(window.CopyFromMountCommand.CanExecute(null));
+        Assert.False(window.WriteToMountCommand.CanExecute(null));
+    }
+
+    /// <summary>"From mount" only fills the fields: Save is still what puts a site in use (D34).</summary>
+    [Fact]
+    public void FromMount_FillsTheFields_AndOnlySaveAppliesThem()
+    {
+        var (viewModel, engine, store) = BuildMain(new AppSettings { Site = Bucharest });
+        engine.Publish(MountConnected, MountAtLondon);
+        engine.Commands.Clear();
+
+        SettingsViewModel window = viewModel.CreateSettingsViewModel(() => { });
+        window.CopyFromMountCommand.Execute(null);
+
+        Assert.Equal("51.47733", window.LatitudeText);
+        Assert.Equal("-0.00139", window.LongitudeText);
+        Assert.Equal("47", window.HeightText);
+        Assert.Empty(engine.Commands);
+        Assert.Equal(Bucharest, store.Saved.Site);
+
+        window.SaveCommand.Execute(null);
+
+        Assert.Equal(new StoredSite(51.47733, -0.00139, 47.0), store.Saved.Site);
+        Assert.Equal(new ConfigureSiteCommand(51.47733, -0.00139, 47.0), Assert.Single(engine.Commands.OfType<ConfigureSiteCommand>()));
+    }
+
+    /// <summary>
+    /// "To mount" writes what is typed, without Save: it changes the mount, not
+    /// the site in use or what is remembered.
+    /// </summary>
+    [Fact]
+    public void ToMount_WritesTheFieldsAsTyped_WithoutSavingOrApplyingThem()
+    {
+        var (viewModel, engine, store) = BuildMain(new AppSettings { Site = Bucharest });
+        engine.Publish(MountConnected, MountAtLondon);
+        engine.Commands.Clear();
+
+        SettingsViewModel window = viewModel.CreateSettingsViewModel(() => { });
+        window.LatitudeText = "44,5";
+        window.WriteToMountCommand.Execute(null);
+
+        Assert.Equal(new WriteSiteToMountCommand(44.5, 26.1025, 85.0), Assert.Single(engine.Commands));
+        Assert.Equal(Bucharest, store.Saved.Site);
+    }
+
+    [Fact]
+    public void ToMount_RefusesASiteSaveWouldRefuse()
+    {
+        var (viewModel, engine, _) = BuildMain();
+        engine.Publish(MountConnected, MountAtLondon);
+        engine.Commands.Clear();
+
+        SettingsViewModel window = viewModel.CreateSettingsViewModel(() => { });
+        window.LatitudeText = "91";
+        window.LongitudeText = "10";
+        window.WriteToMountCommand.Execute(null);
+
+        Assert.Empty(engine.Commands);
+        Assert.Contains("Latitude", window.Error);
+    }
+
+    [Fact]
+    public void TheMountsAnswerToAWrite_IsShownInTheOpenWindow()
+    {
+        var (viewModel, engine, _) = BuildMain(new AppSettings { Site = Bucharest });
+        engine.Publish(MountConnected, MountAtLondon);
+
+        SettingsViewModel window = viewModel.CreateSettingsViewModel(() => { });
+        window.WriteToMountCommand.Execute(null);
+        engine.Publish(new CommandRejectedEvent("The driver is having a bad night."));
+
+        Assert.Equal("The driver is having a bad night.", window.MountSiteStatus);
+
+        window.WriteToMountCommand.Execute(null);
+        engine.Publish(new MountSiteReportedEvent(44.4268, 26.1025, 85.0, AfterWrite: true));
+
+        Assert.Contains("44.42680", window.MountSiteText);
+        Assert.StartsWith("Written.", window.MountSiteStatus);
+    }
+
+    [Fact]
+    public void AMountThatDisconnectsWhileTheWindowIsOpen_TakesItsButtonsWithIt()
+    {
+        var (viewModel, engine, _) = BuildMain();
+        engine.Publish(MountConnected, MountAtLondon);
+        SettingsViewModel window = viewModel.CreateSettingsViewModel(() => { });
+        Assert.True(window.HasMountSite);
+
+        engine.Publish(new DeviceDisconnectedEvent(DeviceKind.Mount));
+
+        Assert.False(window.HasMountSite);
+        Assert.False(window.WriteToMountCommand.CanExecute(null));
+    }
+
+    /// <summary>The engine refuses the write during a sequence, so the button does not offer it.</summary>
+    [Fact]
+    public void DuringASequence_NeitherButtonIsOffered()
+    {
+        var window = new SettingsViewModel(
+            new AppSettings { Site = Bucharest }, Defaults, _ => { }, () => { }, canChangeSite: false,
+            mountSite: new StoredSite(51.47733, -0.00139, 47.0), writeToMount: _ => { });
+
+        Assert.False(window.CopyFromMountCommand.CanExecute(null));
+        Assert.False(window.WriteToMountCommand.CanExecute(null));
+    }
+
+    /// <summary>A write the mount kept is what takes the disagreement warning away.</summary>
+    [Fact]
+    public void AMountNowAgreeing_ClearsTheDisagreementInTheMainWindow()
+    {
+        var (viewModel, engine, _) = BuildMain(new AppSettings { Site = Bucharest });
+        engine.Publish(
+            MountConnected,
+            new SiteConfiguredEvent(44.4268, 26.1025, 85.0, "The mount reports its site as somewhere else."));
+        Assert.True(viewModel.HasSiteDisagreement);
+
+        engine.Publish(new MountSiteReportedEvent(44.4268, 26.1025, 85.0, null, AfterWrite: true));
+
+        Assert.False(viewModel.HasSiteDisagreement);
+    }
 }

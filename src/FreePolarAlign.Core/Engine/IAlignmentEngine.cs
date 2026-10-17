@@ -229,6 +229,17 @@ public sealed record ConfigureSiteCommand(
     double HeightMeters) : EngineCommand;
 
 /// <summary>
+/// Write a site to the connected mount, because the user pressed the button
+/// that says so (D35). It changes what the mount holds, not the site in use:
+/// only <see cref="ConfigureSiteCommand"/> does that. Refused during a sequence
+/// for the same reason that command is.
+/// </summary>
+public sealed record WriteSiteToMountCommand(
+    double LatitudeDegrees,
+    double LongitudeDegrees,
+    double HeightMeters) : EngineCommand;
+
+/// <summary>
 /// Tell the engine the focal length the user believes they have. Null clears it,
 /// forcing fully blind solves. A solve replaces this figure with the measured
 /// one (<see cref="EquipmentConfiguredEvent.IsFocalLengthSolved"/>), which is
@@ -397,6 +408,30 @@ public sealed record SiteConfiguredEvent(
     double LongitudeDegrees,
     double HeightMeters,
     string? MountReportedDisagreement = null) : EngineEvent;
+
+/// <summary>
+/// The site the mount holds, read from it when it connects and again after
+/// every attempt to write one. Not published when the driver reports no site,
+/// which is how the UI knows not to offer copying it or writing to it (D35).
+/// </summary>
+/// <param name="DisagreementWithSiteInUse">
+/// The same warning as <see cref="SiteConfiguredEvent.MountReportedDisagreement"/>,
+/// compared against the site in use, or null when they agree or there is no
+/// site yet. It replaces the earlier one, since this is the newer reading.
+/// </param>
+/// <param name="AfterWrite">True when this reading answers a <see cref="WriteSiteToMountCommand"/>.</param>
+/// <param name="WriteProblem">
+/// After a write, why the mount does not now hold what was written: the
+/// driver refused some of it, or kept a different value. Null when it holds
+/// what was written.
+/// </param>
+public sealed record MountSiteReportedEvent(
+    double LatitudeDegrees,
+    double LongitudeDegrees,
+    double HeightMeters,
+    string? DisagreementWithSiteInUse = null,
+    bool AfterWrite = false,
+    string? WriteProblem = null) : EngineEvent;
 
 /// <param name="IsFocalLengthSolved">
 /// False while this is still the user's own figure, true once a solve measured

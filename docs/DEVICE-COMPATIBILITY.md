@@ -246,6 +246,87 @@ whether the end of one is visible at all.
   read as not slewing (`AscomMount.IsSlewing`), leaving the position check
   to carry the whole load.
 
+### Writing the site to the mount (all three drivers, D35)
+
+"To mount" in the settings window sets `SiteLatitude`, `SiteLongitude` and
+`SiteElevation`, then reads them back. Nothing below has been tried on a real
+mount. `AscomMount.SetSiteLocationAsync` is compiled but **untested**.
+
+**The ASCOM interface**
+
+- All three properties are read/write in ITelescopeV3 and V4 (V2 and later),
+  and Alpaca has a PUT for each. **[DOC]**
+  [ASCOM Telescope interface](https://ascom-standards.org/newdocs/telescope.html),
+  [ITelescopeV3.cs](https://github.com/ASCOMInitiative/ASCOMPlatform/blob/master/ASCOM.DeviceInterface/ITelescopeV3.cs),
+  [Alpaca API](https://ascom-standards.org/api/AlpacaDeviceAPI_v1.yaml).
+  The old `Help/Developer/...ITelescopeV3_Site*.htm` pages now return 404.
+- **Writing is optional, and there is no flag to ask.** PropertyNotImplementedException
+  is thrown "if the property is not implemented at all, or if writing to the
+  property is not implemented". The `CanSet…` flags cover declination rate,
+  guide rates, park, pier side, RA rate and tracking, and nothing for the site.
+  The only test is to write and catch. **[DOC]** (telescope.html)
+- **A mount with GPS is told to refuse.** It "should refuse to accept writing to
+  SiteLatitude, SiteLongitude, and SiteElevation, and instead raise a
+  PropertyNotImplementedException". **[DOC]**
+  [Mount time and place FAQ](https://ascom-standards.org/newdocs/mount-time-place-faq.html).
+  The application's message for that refusal says so, since there it is not a
+  fault.
+- **Other exceptions:** InvalidValueException out of range, NotConnectedException,
+  and DriverException for anything else, communication errors included.
+  InvalidOperationException applies to *reading* a site that was never set.
+  **[DOC]**
+- **Ranges:** latitude −90 to +90, longitude −180 to +180 (east positive,
+  "West is negative!"), elevation −300 to +10000 m. **[DOC]** The V4 page's
+  longitude exception text repeats the latitude range by mistake. The V3
+  source and ConformU both use ±180. The engine checks the elevation range
+  itself, so the user gets its message rather than a driver's.
+- **Connected, slewing, tracking:** a write needs a connected device. Nothing is
+  said about slewing, tracking, or the mount's pointing model. `SiderealTime`
+  must be computed from `SiteLongitude`, so a longitude write changes LST.
+  **[DOC]** That is why the engine refuses a write during a sequence. **[INFER]**
+- **Read-back:** ConformU's default extended site test writes a value and
+  compares the read-back with exact equality, so a driver that quantises the
+  value is flagged there. **[DOC]**
+  [TelescopeTester.cs](https://github.com/ASCOMInitiative/ConformU/blob/main/ConformU/Conform/TelescopeTester.cs).
+  NINA also reads back after writing, with a tolerance of 0.001° and 10 m.
+  **[DOC]** (its source,
+  [TelescopeVM.cs](https://github.com/isbeorn/nina/blob/master/NINA.WPF.Base/ViewModel/Equipment/Telescope/TelescopeVM.cs)).
+  This application treats a read-back within 1″ and 1 m as the written value.
+
+**Per driver**
+
+- **EQMOD/EQASCOM.** EQMOD's compliance table marks `SiteLongitude` and
+  `SiteElevation` as not writable, and has no row for `SiteLatitude`. **[DOC]**
+  [EQASCOM compliancy PDF (2021)](https://eq-mod.sourceforge.net/docs/EQASCOM_compliancy.pdf).
+  Users report an "Allow Site Writes" checkbox in the driver's ASCOM options,
+  off by default. With it off, a write fails with "SiteLongitude SET is not
+  implemented in this driver". **[USER]**
+  [NINA EQMOD troubleshooting](https://nighttime-imaging.eu/docs/master/site/troubleshooting/eqmod/),
+  [Cloudy Nights thread](https://www.cloudynights.com/forums/topic/808309-nina-unable-to-set-mount-latitude-and-longitude-to-the-mount/).
+  The site is kept in the Windows registry and restored when the driver starts.
+  **[DOC]** [EQMOD GPS FAQ](https://eq-mod.sourceforge.net/faqs/gps.html).
+  An EQMOD developer reportedly warns that several clients writing the site can
+  overwrite each other. **[USER]** [APT forum](https://aptforum.com/phpbb/viewtopic.php?t=2592),
+  seen only in a search snippet.
+- **SynScan.** The hand controller's serial set-location command carries whole
+  degrees, minutes and seconds plus hemisphere flags, and no elevation. **[DOC]**
+  [SynScan protocol v3.3](https://inter-static.skywatcher.com/downloads/synscanserialcommunicationprotocol_version33.pdf).
+  So if the driver passes a write through, expect arcsecond resolution, which is
+  inside this application's 1″ tolerance, and an elevation that stays in the
+  driver. **[INFER]** Whether the SynScan ASCOM driver or the SynScan App
+  driver accepts the writes at all: **[UNKNOWN]**.
+- **iOptron.** The RS-232 language sets latitude and longitude at 0.01″
+  resolution, north and east positive, and has no elevation command. **[DOC]**
+  [iOptron RS-232 v3.10](https://www.ioptron.com/v/ASCOM/RS-232_Command_Language2014V310.pdf).
+  Commander's release notes say nothing about site writes, rounding or parking.
+  [Update history](https://www.ioptron.com/v/ASCOM/ASCOM9_UpdateHistory.txt).
+  Whether the ASCOM driver accepts the setters: **[UNKNOWN]**. A mount with GPS
+  is expected to refuse, as above. **[INFER]**
+- **Others.** A ZWO AM5 reportedly threw PropertyNotImplementedException on
+  `SiteElevation` only, which NINA reported as a latitude/longitude failure.
+  **[USER]** (NINA issue 1216, now gone, seen in a search snippet). That case is
+  why `AscomMount` attempts all three properties even after one is refused.
+
 ---
 
 ## What this means for D9/D8 in this project
@@ -295,6 +376,9 @@ whether the end of one is visible at all.
   described in the INDI forum thread.
 - Whether the SynScan ASCOM driver reports site latitude/longitude at all,
   and if so from what source.
+- **[UNKNOWN]** Whether the SynScan and iOptron ASCOM drivers accept site
+  writes, and what any of the three keep after one. **VERIFY** with "To mount"
+  on each, and compare the read-back the log reports with what was written (D35).
 - Any meridian-flip firmware behaviour specific to the SynScan driver
   analogous to iOptron's "Meridian Treatment" setting.
 - **[UNKNOWN]** Whether any of the three drivers reports hand-controller or

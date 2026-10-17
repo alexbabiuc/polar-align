@@ -1,0 +1,66 @@
+name: Release
+
+# Started by hand from the Actions tab (D40). Once a version is marked past
+# beta, switch this to run on pushed v* tags and drop --prerelease (D40). Releases the version in
+# Directory.Build.props from main, and refuses one already released: every
+# build handed over has its own version.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Read the version
+        id: version
+        shell: pwsh
+        run: |
+          $version = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version |
+              Where-Object { $_ } | Select-Object -First 1
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Refuse a version already released
+        shell: bash
+        run: |
+          if gh release view "v${{ steps.version.outputs.version }}" > /dev/null 2>&1; then
+            echo "::error::v${{ steps.version.outputs.version }} is already released. Bump <Version> in Directory.Build.props."
+            exit 1
+          fi
+
+      - name: Test
+        run: dotnet test FreePolarAlign.sln -c Release
+
+      - name: Publish
+        shell: bash
+        run: scripts/publish-windows.sh "$RUNNER_TEMP/app"
+
+      - name: Build the installer
+        shell: pwsh
+        run: ./scripts/build-installer.ps1 -PublishDir "$env:RUNNER_TEMP\app" -OutputDir "$env:RUNNER_TEMP\installer"
+
+      - name: Create the release
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          gh release create "v$version" "$RUNNER_TEMP/installer/FreePolarAlign-$version-win-x64-setup.exe" \
+            --target "$GITHUB_SHA" --title "FreePolarAlign $version" --prerelease --notes-file - <<NOTES
+          Windows 10 or later, 64-bit. Download \`FreePolarAlign-$version-win-x64-setup.exe\` and run it. No administrator rights are needed.
+
+          - The installer downloads the star index for the frame widths you choose, from Watney's own release. With none chosen, it asks which other plate solver to use (ASTAP, ASPS or PlateSolve 3).
+          - It is not code-signed yet, so Windows SmartScreen will warn about an unknown publisher. Choose "More info", then "Run anyway".
+          - ToupTek cameras need ToupTek's \`toupcam.dll\`, which is not included. Copy it into \`plugins\\ToupTek\` in the installation folder.
+
+          Built from $GITHUB_SHA.
+          NOTES

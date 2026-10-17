@@ -92,9 +92,16 @@ public static class EngineFactory
         string quadDatabaseDirectory = ResolveQuadDatabaseDirectory();
         if (!HasUsableQuadDatabase(quadDatabaseDirectory))
         {
-            string warning = BuildMissingDatabaseWarning(quadDatabaseDirectory);
-            warnings.Add(warning);
-            log.Write(LogSeverity.Warning, warning);
+            if (UsesInternalSolver(loaded.Settings))
+            {
+                string warning = BuildMissingDatabaseWarning(quadDatabaseDirectory);
+                warnings.Add(warning);
+                log.Write(LogSeverity.Warning, warning);
+            }
+            else
+            {
+                log.Write(LogSeverity.Info, "No Watney quad database is installed; none is needed while another solver is chosen for both jobs.");
+            }
         }
 
         log.Write(LogSeverity.Info, $"Quad database directory: {quadDatabaseDirectory}");
@@ -256,12 +263,21 @@ public static class EngineFactory
         return Path.Combine(userProfileDirectory, ".free-polar-align", "quaddb");
     }
 
+    /// <summary>
+    /// Whether Watney does either job. A missing database is a problem only
+    /// then: an installation that chose ASTAP instead of downloading packs
+    /// (D39) would otherwise be told on every start that something is broken.
+    /// </summary>
+    internal static bool UsesInternalSolver(AppSettings settings) =>
+        (settings.BlindSolver ?? SolverKind.Internal) == SolverKind.Internal ||
+        (settings.NearSolver ?? SolverKind.Internal) == SolverKind.Internal;
+
     private static bool HasUsableQuadDatabase(string directory) =>
         Directory.Exists(directory) && Directory.EnumerateFiles(directory, "*.qdb", SearchOption.AllDirectories).Any();
 
     private static string BuildMissingDatabaseWarning(string directory) =>
         $"No Watney quad database found at '{directory}'. Plate solves will fail until one is installed. " +
-        "Download the bundled core packs (D13) and extract each one -- including its .qdbindex sidecar, " +
+        "Run the installer again and choose the packs for your field, or download the core packs (D13) and extract each one -- including its .qdbindex sidecar, " +
         "which Watney requires alongside the .qdb files -- into that directory:" +
         Environment.NewLine + string.Join(Environment.NewLine, CorePackUrls) +
         Environment.NewLine + "Download-QuadDatabase.ps1, beside the application, does this for you. " +

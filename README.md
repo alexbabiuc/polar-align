@@ -122,8 +122,20 @@ demonstrate the entire alignment loop.
 
 ```powershell
 dotnet build FreePolarAlign.sln
-dotnet publish src/FreePolarAlign.App -r win-x64 -c Release --self-contained
 ```
+
+**A Windows build to hand over** (`dist/`, or the installer's input), from
+either platform:
+
+```bash
+scripts/publish-windows.sh dist/FreePolarAlign-win-x64   # the app self-contained, plugins in plugins/
+```
+
+**Releases** are started by hand from the repository's Actions tab ("Release"),
+from `main`. They test, publish, build the installer (`installer/`, Inno Setup)
+and attach it to a GitHub Release named after the version in
+`Directory.Build.props`. A version that is already released is refused (D40). CI
+runs on every push and keeps each installer it builds for a week.
 
 Requires the ASCOM Platform installed for the ASCOM provider to load.
 
@@ -132,7 +144,9 @@ Requires the ASCOM Platform installed for the ASCOM provider to load.
 installs the two bundled packs (about 759 MB to download, 1.55 GB extracted)
 into `quaddb/`, where the application looks first. `-UserProfile` installs into
 `~/.free-polar-align/quaddb` instead, which every build finds.
-The installer will bundle no packs; it offers them as downloads (D39).
+The installer bundles no packs. It downloads the ones chosen on its own page, or,
+with none chosen, sets another solver (D39). The script takes `-Pack` for any
+of `00-07`, `08-09`, `10-11` and `12-13`.
 
 **Native camera SDKs.** The ZWO and ToupTek plugins call their vendor's native
 library.
@@ -161,8 +175,8 @@ information: for anyone without that brand of camera it is the normal state. A
 library that is present but unloadable (a 32-bit DLL beside a 64-bit build, say)
 is logged as a warning (D28).
 
-Cross-publishing a Windows binary from macOS works, but installer packaging and
-code signing need a real Windows machine.
+Cross-publishing a Windows binary from macOS works, but the installer compiles
+only on Windows, which is why CI builds it.
 
 ---
 

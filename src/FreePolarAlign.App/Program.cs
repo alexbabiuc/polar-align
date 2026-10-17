@@ -1,4 +1,6 @@
 using Avalonia;
+using FreePolarAlign.App.Services;
+using FreePolarAlign.Session;
 
 namespace FreePolarAlign.App;
 
@@ -9,7 +11,9 @@ internal static class Program
     // headless test hosts (see FreePolarAlign.Tests.App) can call
     // BuildAvaloniaApp() without side effects.
     [STAThread]
-    public static void Main(string[] args) => BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    public static int Main(string[] args) =>
+        SetSolverCommand.TryRun(args, new JsonFileSettingsStore(), Console.Error)
+        ?? BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
 
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<App>()

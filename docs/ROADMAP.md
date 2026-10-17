@@ -550,6 +550,12 @@ prior setup, the installer downloaded from the GitHub Release:
 *Revised 2026-10-17:* it asked for "no internet" throughout. D39 stopped
 bundling the packs, so a Watney install now needs a download.
 
+**Built, not yet run (2026-10-17, 0.0.29):** the installer (D39), the
+`--set-solver` switch, the missing-database warning only when Watney is chosen,
+the release workflow started by hand, and CI (D40). The installer has never been
+compiled. CI's first Windows run is the first compile, and the exit criterion
+needs a clean Windows machine. The diagnostic bundle is not started. Releases stay manual until a version is marked past beta, then become automatic (D40).
+
 ---
 
 ## Phase 6 — Breadth

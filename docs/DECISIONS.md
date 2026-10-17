@@ -2034,7 +2034,8 @@ stale only when code changes:
 
 ## D39 — The installer bundles no index: it downloads Watney's packs, or sets another solver
 
-*Decided 2026-10-17. Design only; not yet built (Phase 5).*
+*Decided and built 2026-10-17 (0.0.29), in `installer/FreePolarAlign.iss`. Not yet
+run on Windows: the first CI or release run is the first compile.*
 
 The Windows installer carries the application and its plugins and no quad
 database. One of its pages offers Watney's packs as downloads, fetched during
@@ -2052,8 +2053,9 @@ and the page states the frame width as the real criterion. The on-disk sizes
 other than `00-07` are estimates from D13's measured 2.08× unpacking. `14-20`
 (below about 0.6°) is not offered. Frames that narrow need another solver.
 
-`00-07` and `08-09` are ticked by default. They are what D13 bundled, and they
-covered 1.2° to 7.4° frames when measured.
+On a first install `00-07` and `08-09` are ticked. They are what D13 bundled,
+and they covered 1.2° to 7.4° frames when measured. When any pack is already
+installed, exactly those are ticked instead, so an upgrade adds nothing unasked.
 
 **Why nothing is bundled.**
 - **Size.** Bundling decided the installer's size. The pair alone made the
@@ -2076,8 +2078,9 @@ with its `.qdbindex` and every `.qdb` its zip contained, the same rule as
 not downloaded again, so an upgrade costs no bandwidth. The free-space check
 uses the unpacked size plus the zip. A failed download offers retry or skip. The
 final page lists the packs actually installed, never the ones ticked.
-Uninstalling asks before deleting the packs, because they are gigabytes to fetch
-again.
+Uninstalling asks whether to delete the packs, with Yes as the default (the
+user's choice): an uninstall should give back the gigabytes it downloaded.
+Someone about to reinstall answers No and keeps them.
 
 **No pack ticked: the installer asks for another solver.** The choices are
 ASTAP, ASPS and PlateSolve 3 (D30). All run on Windows, and each needs its own
@@ -2086,18 +2089,31 @@ page looks in the same default locations as the adapters and says plainly when
 it cannot find the program, without refusing to continue. The choice is set as
 both the blind and the near solver.
 
-The installer does not edit `settings.json` itself. It runs the application
-with a switch (planned as `--set-solver <name>`). The switch loads the settings,
-changes only the two solver choices, and saves through `JsonFileSettingsStore`.
-That keeps D30's validation and the store's atomic write, and leaves the site,
-the optics and everything else the user set alone. When packs are ticked, the
+The installer does not edit `settings.json` itself. It runs
+`FreePolarAlign.App.exe --set-solver <name>`, which opens no window. The switch
+loads the settings, changes only the two solver choices, and saves through
+`JsonFileSettingsStore`. That keeps D30's validation and the store's atomic
+write, and leaves the site, the optics and everything else the user set alone.
+A settings file that exists but cannot be read is left untouched and the switch
+exits with 3. Saving defaults over it would wipe a site and optics that may only
+be from a newer version. The installer then tells the user to choose the solver
+in the Settings window. When packs are ticked, the
 solver settings are not touched. A new install then uses Internal (Watney) by
 default. A reinstall keeps whatever the settings window last chose.
 
-**What the application must change for this.** It warns about a missing quad
-database on every start (`EngineFactory`). That warning must fire only when
-Internal is chosen for at least one job. Otherwise a user who chose ASTAP here
-is told something is broken when it is not.
+**The application warns about a missing database only when Watney does a
+job.** Before this it warned on every start (`EngineFactory`), so a user who
+chose ASTAP here would have been told something was broken when it was not.
+
+**How packs are installed.** The installer downloads each ticked pack into its
+temporary folder before installing any files, with Inno Setup's own download
+page (progress, retry, or go on without that pack). After the files are in, it
+runs the installed `Download-QuadDatabase.ps1 -UserProfile -Pack <range>
+-ZipDirectory <temp>` once per pack. Extraction and the completeness rule then
+live in one place, the script, which also works by hand. The installer is per
+user, with no administrator rights, because the index and the settings live in
+the user's profile anyway. An upgrade deletes the old `plugins` folder first, so
+no older plugin file is left beside a new one (D24).
 
 **Without internet.** The installer itself needs none. A machine that never sees
 the internet chooses another solver, or gets packs copied into the folder above,
@@ -2111,3 +2127,41 @@ URL. Watney's release has not changed since February 2022 (D13), which makes
 the last of these unlikely. If it does move, every installer already published
 breaks with it. Hosting copies would remove that risk and bring back the
 redistribution question, so that waits until it happens.
+
+---
+
+## D40 — Releases are cut by hand; CI runs on every push
+
+*Decided 2026-10-17.*
+
+A release is started from the Actions tab (`.github/workflows/release.yml`),
+not by pushing a tag. It runs only from `main`. It reads the version from
+`Directory.Build.props` and refuses a version that already has a release, so
+every build handed over keeps its own version (CLAUDE.md). It tests, publishes
+with `scripts/publish-windows.sh`, compiles the installer with
+`scripts/build-installer.ps1`, and creates the GitHub Release `v<version>` with
+the installer attached. Releases are marked pre-release while the version is a
+0.0.x counter.
+
+**Why by hand.** The user's choice for now. A tag trigger would release whatever
+was tagged. By hand, a release is a decision someone makes after looking at the
+build.
+
+**Switch to automatic releases once a version is marked past beta** (the user's
+instruction). That is the same moment CLAUDE.md moves the version from a counter
+to SemVer. Then: trigger `release.yml` on a pushed `v*` tag instead of, or as
+well as, `workflow_dispatch`; check that the tag matches `<Version>`; and drop
+`--prerelease`. Revise this entry when it happens.
+
+**CI** (`.github/workflows/ci.yml`) runs on every push to `main` and every pull
+request. It runs the whole solution on Windows, where the application ships, and
+`FreePolarAlign.Core.slnf` on macOS, where most of it is developed (D1). The
+Windows job also builds the installer and keeps it for 7 days as a workflow
+artifact. Nothing else can compile `installer/FreePolarAlign.iss` before a
+release does, and a release is the wrong place to find out it does not compile.
+
+**What a release does not contain.** ToupTek's `toupcam.dll`, because it is not
+in the repository (D25). ToupTek users copy their own into `plugins\ToupTek`,
+and the release notes say so. ZWO's library is included with its notice. The
+installer is not code-signed, so SmartScreen warns about an unknown publisher.
+Signing costs money every year and waits until there are users to justify it.

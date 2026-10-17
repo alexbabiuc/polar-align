@@ -1,0 +1,49 @@
+name: CI
+
+# Every push to main and every pull request: the whole solution on Windows,
+# where it ships, and the cross-platform part on macOS, where most of it is
+# developed (D1). The Windows job also builds the installer, because nothing
+# else can compile it before a release does.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Test
+        run: dotnet test FreePolarAlign.sln -c Release
+
+      - name: Publish
+        shell: bash
+        run: scripts/publish-windows.sh "$RUNNER_TEMP/app"
+
+      - name: Build the installer
+        shell: pwsh
+        run: ./scripts/build-installer.ps1 -PublishDir "$env:RUNNER_TEMP\app" -OutputDir "$env:RUNNER_TEMP\installer"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: ${{ runner.temp }}/installer/*.exe
+          retention-days: 7
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Test
+        run: dotnet test FreePolarAlign.Core.slnf -c Release

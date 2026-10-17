@@ -34,25 +34,30 @@
     No notice is copied with them because the SDK carries none: no licence
     file, and no terms in its documentation or header. Bundling them was the
     user's decision with that known (D25).
+
+    The DLLs are not in source control (D25), so every item is conditional on
+    the file being there: a fresh clone builds a plugin without the library,
+    which reports itself unavailable at run time, rather than failing the build
+    on a copy of a file that is not present.
   -->
   <PropertyGroup>
     <ToupTekNativeRoot>$(MSBuildThisFileDirectory)..\..\resources\touptek\camera\</ToupTekNativeRoot>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
-    <None Include="$(ToupTekNativeRoot)x64\toupcam.dll" Link="toupcam.dll"
+    <None Include="$(ToupTekNativeRoot)x64\toupcam.dll" Condition="Exists('$(ToupTekNativeRoot)x64\toupcam.dll')" Link="toupcam.dll"
           CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x86'">
-    <None Include="$(ToupTekNativeRoot)x86\toupcam.dll" Link="toupcam.dll"
+    <None Include="$(ToupTekNativeRoot)x86\toupcam.dll" Condition="Exists('$(ToupTekNativeRoot)x86\toupcam.dll')" Link="toupcam.dll"
           CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(RuntimeIdentifier)' == ''">
-    <None Include="$(ToupTekNativeRoot)x64\toupcam.dll" Link="runtimes\win-x64\native\toupcam.dll"
+    <None Include="$(ToupTekNativeRoot)x64\toupcam.dll" Condition="Exists('$(ToupTekNativeRoot)x64\toupcam.dll')" Link="runtimes\win-x64\native\toupcam.dll"
           CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <None Include="$(ToupTekNativeRoot)x86\toupcam.dll" Link="runtimes\win-x86\native\toupcam.dll"
+    <None Include="$(ToupTekNativeRoot)x86\toupcam.dll" Condition="Exists('$(ToupTekNativeRoot)x86\toupcam.dll')" Link="runtimes\win-x86\native\toupcam.dll"
           CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 

@@ -234,7 +234,8 @@ whether the end of one is visible at all.
   therefore up to each driver. I found nothing stating it either way for
   the iOptron driver, EQMOD/EQASCOM or the SynScan driver.
 - **[FIELD]** On the user's mount, a manual move is reported as `Slewing`
-  (2026-10-17). Which driver it was, and whether the move was a hand-controller
+  (2026-10-17). It was either the iOptron driver or GSS (see "Equipment
+  behind the field reports"), not recorded which. Whether the move was a hand-controller
   goto or a held direction button, is not recorded. The other drivers, and a
   slew from a second ASCOM client, are still **[UNKNOWN]**. **VERIFY** on
   each: start a slew from the hand controller while polling `Slewing`, and
@@ -388,6 +389,23 @@ mount. `AscomMount.SetSiteLocationAsync` is compiled but **untested**.
    on any of the three drivers — all three are documented or strongly implied
    to support it. The open question is entirely about `SideOfPier` and site
    location trust, not about whether the core D9 slewing mechanism works.
+
+## Equipment behind the field reports
+
+Every **[FIELD]** claim dated 2026-10-17 comes from this setup **[FIELD]**:
+
+- **Mounts:** an iOptron through iOptron's ASCOM driver, and a Sky-Watcher
+  through **GSS** (GS Server), not EQMOD/EQASCOM or the SynScan driver. GSS is
+  outside the three drivers researched above, so none of their findings carry
+  over to it.
+- **Cameras:** ZWO and ToupTek, through the native plugins (D25) and the
+  vendors' ASCOM drivers.
+- **Drivers:** the latest each vendor offered on that date, on ASCOM Platform
+  7.x. Exact driver versions, mount and camera models, and the build are not
+  recorded.
+
+Which of the two mounts reported a manual move as `Slewing` is still not
+recorded.
 
 ## Gaps — genuinely unknown, not to be guessed at
 

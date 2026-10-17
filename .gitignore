@@ -10,3 +10,7 @@ obj/
 
 # Frames dropped here for diagnosis, replaced whenever something needs looking at.
 /test_data/
+
+# ToupTek's native library. Kept locally so builds and dist/ still carry it, but
+# out of source control: the SDK states no redistribution terms (D25).
+/resources/touptek/camera/

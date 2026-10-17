@@ -458,6 +458,10 @@ narrow fields need far denser star data.
 
 ### Revised decision (resolves O5)
 
+*Superseded 2026-10-17 by D39:* the installer bundles no packs and offers them
+as downloads. The pack facts in this entry still hold. Only the bundling below
+is replaced.
+
 The bundled envelope moves, not the installer size.
 
 - **Bundled in the installer** — `00-07-20-v3` + `08-09-20-v3`, about **759 MB**.
@@ -1189,7 +1193,24 @@ left out for that reason. It is now in `resources/touptek/camera/` (x64 and x86,
 byte-identical to that SDK's `win/` builds) and copied exactly as ZWO's is, with
 no notice since there is none to copy (*revised 2026-10-04*). That was the
 user's decision, made with the gap known; the terms should be confirmed with
-ToupTek before the repository goes public. Either way, each plugin looks
+ToupTek before the repository goes public.
+
+*Revised 2026-10-17:* the repository turned out to be public already. The DLLs
+are now out of source control. `resources/touptek/camera/` is in `.gitignore`
+and kept only on the user's machine, so their builds and `dist/` still carry
+the library. Every build item for it is conditional on the file existing, so a
+fresh clone builds a plugin without the library, which reports itself
+unavailable (below). The packaging tests for it skip, rather than fail, when it
+is not in `resources/`. The commits from 2026-10-04 to 2026-10-17 still contain
+it. Removing it from history means rewriting published history, which has not
+been done. A search on 2026-10-17 found no
+published terms from ToupTek. Other astronomy software does bundle the library:
+SharpCap, NINA, INDIGO, and SharpAstro's `ToupTek.SDK`, which calls the SDK
+"closed source and proprietary to ToupTek" and cites only INDIGO's precedent.
+That shows the practice is common and tolerated. It does not show permission.
+A NINA developer's account was that ToupTek authorises only the brands it makes
+cameras for to distribute the SDK, which would mean permission has to come from
+ToupTek or one of those brands, in writing. Either way, each plugin looks
 for its library beside itself, then in `runtimes/<rid>/native` under the running
 process's own architecture, then on the system path. Absent everywhere is
 reported as `ProviderUnavailableException`, which the catalogue logs as
@@ -1720,6 +1741,8 @@ verification. Covering the stated 0.6°–7.6° diagonal envelope offline costs 
 3.1 GB, against a "low hundreds of MB" target and Phase 5's "installer, offline
 in full".~~
 **Resolved:** bundle `00-07` + `08-09`, about 759 MB. See D13.
+*Superseded 2026-10-17 by D39:* nothing bundled. The installer offers the packs
+as downloads.
 
 ---
 
@@ -2006,3 +2029,85 @@ stale only when code changes:
   fixture, which their key does not include. Nothing detects this; delete
   `Renders/` and record again after such a change. The renderer's own tests (in
   Imaging) still render live, so the renderer itself stays tested.
+
+---
+
+## D39 — The installer bundles no index: it downloads Watney's packs, or sets another solver
+
+*Decided 2026-10-17. Design only; not yet built (Phase 5).*
+
+The Windows installer carries the application and its plugins and no quad
+database. One of its pages offers Watney's packs as downloads, fetched during
+installation from Watney's own release (D13's URLs, tag `watneyqdb3`):
+
+| Pack | Shown as | Frames | Download | On disk |
+|---|---|---|---|---|
+| `00-07` | **Wide field**: guide scopes up to about 200 mm, camera lenses | about 1.6° across and wider | 369 MB | 768 MB, measured |
+| `08-09` | **Medium field**: guide scopes of about 200–300 mm | about 1.2° to 1.6° | 390 MB | ~0.8 GB |
+| `10-11` | **Narrow field**: about 300–450 mm, or a small sensor | about 0.8° to 1.2° | 780 MB | ~1.6 GB |
+| `12-13` | **Very narrow field**: about 450–600 mm | about 0.6° to 0.8° | 1.56 GB | ~3.2 GB |
+
+The focal lengths assume a 6.4 mm sensor diagonal, typical of a guide camera,
+and the page states the frame width as the real criterion. The on-disk sizes
+other than `00-07` are estimates from D13's measured 2.08× unpacking. `14-20`
+(below about 0.6°) is not offered. Frames that narrow need another solver.
+
+`00-07` and `08-09` are ticked by default. They are what D13 bundled, and they
+covered 1.2° to 7.4° frames when measured.
+
+**Why nothing is bundled.**
+- **Size.** Bundling decided the installer's size. The pair alone made the
+  build 1.0 GB unpacked, against about 250 MB without them (`dist/`,
+  0.0.27). The full set is past GitHub's 2 GiB limit per release file. With no
+  packs inside, one installer serves everyone, and the light and full flavours
+  that were considered are unnecessary.
+- **Nobody downloads what they will not use.** A wide-field user does not pay
+  for 3.6 GB of narrow packs, and a narrow-field user is offered the packs they
+  need instead of finding out at the telescope (the open long-focal-length
+  issue).
+- **No redistribution question.** The packs come from Watney's own release, so
+  this project does not redistribute them.
+
+**Where the packs go.** `%USERPROFILE%\.free-polar-align\quaddb`, not beside
+the executable. It survives uninstalling, reinstalling and upgrading, and every
+build finds it (EngineFactory's lookup order). A pack counts as installed only
+with its `.qdbindex` and every `.qdb` its zip contained, the same rule as
+`Download-QuadDatabase.ps1` (D13 says why the index matters). A complete pack is
+not downloaded again, so an upgrade costs no bandwidth. The free-space check
+uses the unpacked size plus the zip. A failed download offers retry or skip. The
+final page lists the packs actually installed, never the ones ticked.
+Uninstalling asks before deleting the packs, because they are gigabytes to fetch
+again.
+
+**No pack ticked: the installer asks for another solver.** The choices are
+ASTAP, ASPS and PlateSolve 3 (D30). All run on Windows, and each needs its own
+installation and its own star data, which this installer does not provide. The
+page looks in the same default locations as the adapters and says plainly when
+it cannot find the program, without refusing to continue. The choice is set as
+both the blind and the near solver.
+
+The installer does not edit `settings.json` itself. It runs the application
+with a switch (planned as `--set-solver <name>`). The switch loads the settings,
+changes only the two solver choices, and saves through `JsonFileSettingsStore`.
+That keeps D30's validation and the store's atomic write, and leaves the site,
+the optics and everything else the user set alone. When packs are ticked, the
+solver settings are not touched. A new install then uses Internal (Watney) by
+default. A reinstall keeps whatever the settings window last chose.
+
+**What the application must change for this.** It warns about a missing quad
+database on every start (`EngineFactory`). That warning must fire only when
+Internal is chosen for at least one job. Otherwise a user who chose ASTAP here
+is told something is broken when it is not.
+
+**Without internet.** The installer itself needs none. A machine that never sees
+the internet chooses another solver, or gets packs copied into the folder above,
+for instance with `Download-QuadDatabase.ps1` run elsewhere. D13's "offline for
+the common hardware" no longer describes the installer. Offline setup is now
+something the user does, and this entry says how.
+
+**Cost.** First use needs a download for anyone using Watney, and the installer
+now has failure modes it lacked: a slow link, a dropped connection, a moved
+URL. Watney's release has not changed since February 2022 (D13), which makes
+the last of these unlikely. If it does move, every installer already published
+breaks with it. Hosting copies would remove that risk and bring back the
+redistribution question, so that waits until it happens.

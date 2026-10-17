@@ -132,6 +132,7 @@ Requires the ASCOM Platform installed for the ASCOM provider to load.
 installs the two bundled packs (about 759 MB to download, 1.55 GB extracted)
 into `quaddb/`, where the application looks first. `-UserProfile` installs into
 `~/.free-polar-align/quaddb` instead, which every build finds.
+The installer will bundle no packs; it offers them as downloads (D39).
 
 **Native camera SDKs.** The ZWO and ToupTek plugins call their vendor's native
 library.
@@ -150,8 +151,10 @@ library.
   running process. The `.lib` import libraries beside them are for C code
   linking at build time and are not copied.
 - **ToupTek** — `toupcam.dll`, x64 and x86 from ToupTek's SDK
-  60.32549.20260908, is in `resources/touptek/camera/`, and the build copies it
-  the same way as ZWO's. The SDK states no redistribution terms (D25).
+  60.32549.20260908, is not in the repository, because the SDK states no
+  redistribution terms (D25). Put it in `resources/touptek/camera/x64/` and
+  `x86/` (ignored by git) and the build copies it the same way as ZWO's.
+  Without it everything still builds, and the plugin lists no cameras.
 
 A plugin whose library is missing lists no cameras and says so in the log as
 information: for anyone without that brand of camera it is the normal state. A

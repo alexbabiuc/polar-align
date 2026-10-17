@@ -53,6 +53,25 @@ public class PluginPackagingTests
         { "FreePolarAlign.Devices.ToupTek", "net10.0" },
     };
 
+    private static void SkipUnlessToupTekLibraryIsInResources(string runtimeIdentifier)
+    {
+        string architecture = runtimeIdentifier == "win-x86" ? "x86" : "x64";
+        string source = Path.Combine(RepositoryRoot(), "resources", "touptek", "camera", architecture, "toupcam.dll");
+        Skip.IfNot(File.Exists(source), $"ToupTek's library is not in this checkout ('{source}'); it is kept out of source control (D25).");
+    }
+
+    private static string RepositoryRoot()
+    {
+        DirectoryInfo? directory = new(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "FreePolarAlign.sln")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+        return directory!.FullName;
+    }
+
     /// <summary>
     /// The ASCOM plugin's build output for the configuration these tests were
     /// built in.
@@ -222,11 +241,19 @@ public class PluginPackagingTests
     /// The ToupTek plugin ships ToupTek's library, from resources/touptek, the
     /// same way and checked the same way as ZWO's.
     /// </summary>
-    [Theory]
+    /// <remarks>
+    /// Skipped, not failed, on a checkout without the library: it is kept out of
+    /// source control (D25), so a fresh clone has nothing to ship. The skip asks
+    /// whether the library is in resources/, not in the output, so a library
+    /// that is present and still not copied fails as before.
+    /// </remarks>
+    [SkippableTheory]
     [InlineData("win-x64", (ushort)0x8664)]
     [InlineData("win-x86", (ushort)0x014C)]
     public void TheToupTekPluginShipsEachArchitecturesLibrary_InItsOwnFolder(string runtimeIdentifier, ushort machine)
     {
+        SkipUnlessToupTekLibraryIsInResources(runtimeIdentifier);
+
         string library = Path.Combine(
             PluginOutputDirectory("FreePolarAlign.Devices.ToupTek", "net10.0"),
             "runtimes", runtimeIdentifier, "native", "toupcam.dll");
@@ -251,10 +278,15 @@ public class PluginPackagingTests
     /// architectures, so an SDK update that renames or drops a function is
     /// caught here, and so is a declaration typed wrong.
     /// </summary>
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(ShippedLibraries))]
     public void EveryDeclaredFunction_IsExportedByTheShippedLibrary(string plugin, string libraryFile, string runtimeIdentifier)
     {
+        if (plugin.EndsWith("ToupTek", StringComparison.Ordinal))
+        {
+            SkipUnlessToupTekLibraryIsInResources(runtimeIdentifier);
+        }
+
         string library = Path.Combine(PluginOutputDirectory(plugin, "net10.0"), "runtimes", runtimeIdentifier, "native", libraryFile);
         Type bindings = plugin.EndsWith("ToupTek", StringComparison.Ordinal)
             ? typeof(FreePolarAlign.Devices.ToupTek.ToupTekDeviceProvider).Assembly.GetType("FreePolarAlign.Devices.ToupTek.ToupcamNative", throwOnError: true)!

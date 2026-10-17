@@ -207,9 +207,11 @@ fixed turns checked against the truth after each one, so that its frames can be
 rendered once and replayed.
 
 **Hardware half: met (reported 2026-10-17).** The user ran the sequence on their
-own equipment and reports it worked. Which build, mounts and drivers were used is
-not recorded here, so the per-driver questions in
-`docs/DEVICE-COMPATIBILITY.md` stay open until someone records them.
+own equipment and reports it worked: an iOptron through its ASCOM driver and a
+Sky-Watcher through GSS, on ASCOM Platform 7.x with the latest drivers of the
+day. The driver versions and the build are not recorded, and most per-driver
+questions in `docs/DEVICE-COMPATIBILITY.md` stay open, since the run did not
+target them.
 
 ---
 
@@ -526,17 +528,27 @@ because it also treats a changing position as motion.
 
 ## Phase 5 — Shipping
 
-- Index pack manager: bundled core pack, optional downloads (D13)
-- Installer, offline in full
-- CI: Windows and macOS build and test jobs, release artifact publishing
+- Installer with no bundled index: a page offering Watney's `00-07`, `08-09`,
+  `10-11` and `12-13` packs as downloads, or, with none chosen, another solver
+  set in the installed settings (D39)
+- The application warns about a missing quad database only when Watney is the
+  chosen solver (D39)
+- CI: Windows and macOS build and test jobs, and the installer published as a
+  GitHub Release download
 - Logging, and a one-click diagnostic bundle containing failed frames, solve logs,
   mount telemetry and the fit state
 
 Build the diagnostic bundle properly. Debugging someone else's telescope, at
 night, remotely, without it is close to impossible.
 
-**Exit criterion.** A clean Windows machine with no ASCOM Platform, no internet
-and no prior setup installs the package and reaches a working simulated alignment.
+**Exit criterion.** On a clean Windows machine with no ASCOM Platform and no
+prior setup, the installer downloaded from the GitHub Release:
+- with internet and the default packs, reaches a working simulated alignment;
+- with no internet, finishes with no packs and another solver chosen, and the
+  application starts naming that solver, with no missing-database warning.
+
+*Revised 2026-10-17:* it asked for "no internet" throughout. D39 stopped
+bundling the packs, so a Watney install now needs a download.
 
 ---
 
@@ -606,7 +618,9 @@ for the Windows `toupcam.dll`. ZWO's library is now shipped from `resources/`
 with its notice. ToupTek's Windows `toupcam.dll` is shipped as well
 (`resources/touptek/`). That was the user's decision, made knowing the SDK states
 no redistribution terms, and D25 records that they should be confirmed with
-ToupTek before the repository goes public.
+ToupTek before the repository goes public. A search on 2026-10-17 found no
+published terms, only other projects bundling it too (D25). That leaves asking
+ToupTek in writing.
 
 **Watney's library API.** D3 assumes it is usable as an embedded library with
 manageable database tiers. If that assumption fails, the fallback is subprocessing

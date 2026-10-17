@@ -20,7 +20,7 @@ public sealed class NativeFrameTests : IDisposable
         {
             Directory.Delete(_directory, recursive: true);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
         }
     }

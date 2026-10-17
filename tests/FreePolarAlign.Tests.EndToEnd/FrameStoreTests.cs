@@ -34,7 +34,7 @@ public sealed class FrameStoreTests : IDisposable
                 Directory.Delete(_directory, recursive: true);
             }
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // A leftover temp directory is not worth failing a test over.
         }

@@ -24,9 +24,12 @@ public sealed class PluginLoaderTests : IDisposable
         {
             Directory.Delete(_root, recursive: true);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Best-effort cleanup; a locked file on some platform must not fail the test run.
+            // Windows locks a loaded assembly, and refuses to delete it with
+            // UnauthorizedAccessException rather than IOException; catching only
+            // the latter failed every test here on the first Windows CI run.
         }
     }
 

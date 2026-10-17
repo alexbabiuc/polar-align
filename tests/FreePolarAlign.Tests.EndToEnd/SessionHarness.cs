@@ -259,6 +259,9 @@ internal sealed class StubCamera : ICamera
         return Task.CompletedTask;
     }
 
+    /// <summary>The cable pulled: gone without being told to go.</summary>
+    public void SimulateDisconnection() => IsConnected = false;
+
     public async Task<CapturedImage> ExposeAsync(
         TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default)
     {

@@ -82,13 +82,14 @@ public class Phase2ExitCriterionTests
     /// instead, which is the honest test given what ships.
     /// </summary>
     [SkippableTheory]
-    [InlineData("7.4deg rich", 100.0, 2737, 2053, 300.0, 35.0)]
-    [InlineData("7.4deg medium density", 100.0, 2737, 2053, 83.6, 22.0)]
-    [InlineData("2.3deg", 200.0, 1684, 1263, 300.0, 35.0)]
-    [InlineData("1.6deg", 300.0, 1684, 1263, 300.0, 35.0)]
-    [InlineData("1.2deg", 400.0, 1684, 1263, 300.0, 35.0)]
+    [InlineData("7.4deg rich", 100.0, 2737, 2053, 300.0, 35.0, true)]
+    [InlineData("7.4deg medium density", 100.0, 2737, 2053, 83.6, 22.0, true)]
+    [InlineData("2.3deg", 200.0, 1684, 1263, 300.0, 35.0, true)]
+    [InlineData("1.6deg", 300.0, 1684, 1263, 300.0, 35.0, true)]
+    // Sixteen bits: the narrowest field has too few bright stars to survive eight (D38).
+    [InlineData("1.2deg", 400.0, 1684, 1263, 300.0, 35.0, false)]
     public void RenderedField_SolvesBlind_AndRecoversFocalLength(
-        string label, double focalLengthMm, int width, int height, double raDegrees, double decDegrees)
+        string label, double focalLengthMm, int width, int height, double raDegrees, double decDegrees, bool eightBit)
     {
         RequireQuadDatabase();
 
@@ -96,7 +97,7 @@ public class Phase2ExitCriterionTests
         TanWcsSolution truth = SkyRenderer.BuildWcs(
             raDegrees, decDegrees, width, height, pitchMicrons, focalLengthMm, rotationDegrees: 23.0);
 
-        FitsImage frame = SkyRenderer.Render(Catalog, truth, width, height, ObservingConditions.Nominal, new Random(101));
+        FitsImage frame = RecordedRenders.Render(() => Catalog, truth, width, height, ObservingConditions.Nominal, 101, eightBit);
         string path = WriteFrameWithoutWcs(frame);
 
         try
@@ -136,7 +137,7 @@ public class Phase2ExitCriterionTests
         RequireQuadDatabase();
 
         TanWcsSolution truth = SkyRenderer.BuildWcs(192.86, 27.13, 947, 711, 3.8, 400.0);
-        FitsImage frame = SkyRenderer.Render(Catalog, truth, 947, 711, ObservingConditions.Nominal, new Random(103));
+        FitsImage frame = RecordedRenders.Render(() => Catalog, truth, 947, 711, ObservingConditions.Nominal, 103);
         string path = WriteFrameWithoutWcs(frame);
 
         try
@@ -242,7 +243,7 @@ public class Phase2ExitCriterionTests
             (double ra, double dec) = TopocentricConverter.FromAltAz(trueDirections[i], timestamp, site, atmosphere);
 
             TanWcsSolution truth = SkyRenderer.BuildWcs(ra, dec, width, height, pitchMicrons, focalLengthMm, rotationDegrees: 23.0);
-            FitsImage frame = SkyRenderer.Render(Catalog, truth, width, height, ObservingConditions.Nominal, new Random(200 + i));
+            FitsImage frame = RecordedRenders.Render(() => Catalog, truth, width, height, ObservingConditions.Nominal, 200 + i);
 
             var detected = StarDetector.Detect(frame);
             Skip.If(detected.Count < 60, $"capture {i} yielded only {detected.Count} stars, too few to solve reliably");
@@ -313,7 +314,7 @@ public class Phase2ExitCriterionTests
             _ => throw new ArgumentOutOfRangeException(nameof(degradation)),
         };
 
-        FitsImage frame = SkyRenderer.Render(Catalog, truth, 2737, 2053, conditions, new Random(307));
+        FitsImage frame = RecordedRenders.Render(() => Catalog, truth, 2737, 2053, conditions, 307);
         string path = WriteFrameWithoutWcs(frame);
 
         try

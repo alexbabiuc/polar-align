@@ -89,7 +89,7 @@ and INDI will.
 | `FreePolarAlign.Devices.ToupTek` | `net10.0` | ToupTek cameras through ToupTek's own SDK. Needs the vendor library; see below. |
 | `FreePolarAlign.Session` | `net10.0` | Orchestration state machine. |
 | `FreePolarAlign.App` | `net10.0` | Avalonia UI. |
-| `FreePolarAlign.Tests.*` | `net10.0` | Unit and end-to-end tests. Must pass on macOS. |
+| `FreePolarAlign.Tests.*` | `net10.0` | Unit and end-to-end tests. Must pass on macOS. All run on a fake clock (D37) and replay kept frames (D38); `FPA_RECORD_FRAMES=1` records what is missing. `Tests.Support` holds the shared test clock and recorded renders. |
 
 ### The virtual observatory
 

@@ -11,5 +11,9 @@
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.10.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\FreePolarAlign.Imaging\FreePolarAlign.Imaging.csproj" />
+    <ProjectReference Include="..\..\src\FreePolarAlign.Devices.Simulated\FreePolarAlign.Devices.Simulated.csproj" />
+  </ItemGroup>
 
 </Project>

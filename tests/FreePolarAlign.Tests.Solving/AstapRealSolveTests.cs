@@ -133,7 +133,9 @@ public class AstapRealSolveTests
     private static (string Path, TanWcsSolution Truth) RenderFrame(double raDegrees, double decDegrees)
     {
         TanWcsSolution truth = SkyRenderer.BuildWcs(raDegrees, decDegrees, Width, Height, PitchMicrons, FocalLengthMm, RotationDegrees);
-        FitsImage rendered = SkyRenderer.Render(Catalog, truth, Width, Height, ObservingConditions.Nominal, new Random(1));
+        // Sixteen bits: at eight, ASTAP found too few stars in three of these four fields.
+        FitsImage rendered = RecordedRenders.Render(
+            () => Catalog, truth, Width, Height, ObservingConditions.Nominal, 1, eightBit: false);
 
         var header = new FitsHeader();
         header.Set("EXPTIME", ObservingConditions.Nominal.ExposureSeconds);

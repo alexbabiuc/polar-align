@@ -1,0 +1,62 @@
+[
+  {
+    "File": "frame-001.fits.gz",
+    "RaDegrees": 172.31839791856257,
+    "DecDegrees": 69.03026063060862
+  },
+  {
+    "File": "frame-002.fits.gz",
+    "RaDegrees": 136.84255256651167,
+    "DecDegrees": 68.17846995581769
+  },
+  {
+    "File": "frame-003.fits.gz",
+    "RaDegrees": 102.66677982629488,
+    "DecDegrees": 67.37170202844445
+  },
+  {
+    "File": "frame-004.fits.gz",
+    "RaDegrees": 173.86765198290126,
+    "DecDegrees": 68.60977166517075
+  },
+  {
+    "File": "frame-005.fits.gz",
+    "RaDegrees": 150.26634338579137,
+    "DecDegrees": 68.43345090114549
+  },
+  {
+    "File": "frame-006.fits.gz",
+    "RaDegrees": 126.86921402093901,
+    "DecDegrees": 68.22988691279541
+  },
+  {
+    "File": "frame-007.fits.gz",
+    "RaDegrees": 103.68289759751652,
+    "DecDegrees": 68.03339331312942
+  },
+  {
+    "File": "frame-008.fits.gz",
+    "RaDegrees": 174.40825508890887,
+    "DecDegrees": 68.45220209650523
+  },
+  {
+    "File": "frame-009.fits.gz",
+    "RaDegrees": 156.7707484569502,
+    "DecDegrees": 68.42367688070946
+  },
+  {
+    "File": "frame-010.fits.gz",
+    "RaDegrees": 139.16332590903576,
+    "DecDegrees": 68.38009330687021
+  },
+  {
+    "File": "frame-011.fits.gz",
+    "RaDegrees": 121.59577700710935,
+    "DecDegrees": 68.32594730413727
+  },
+  {
+    "File": "frame-012.fits.gz",
+    "RaDegrees": 104.0766961684689,
+    "DecDegrees": 68.26656690040663
+  }
+]

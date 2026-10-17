@@ -201,6 +201,11 @@ D11's residual check caught all three: it rejected the fits and named
 declination movement as the likely cause, which is exactly what two of them
 were. The safety net earned its place before any hardware existed.
 
+**Since 0.0.27 the simulated half is tested on recorded frames (D38).** The
+closed loop above, which turned the bolts by whatever the engine reported, became
+fixed turns checked against the truth after each one, so that its frames can be
+rendered once and replayed.
+
 **Hardware half: met (reported 2026-10-17).** The user ran the sequence on their
 own equipment and reports it worked. Which build, mounts and drivers were used is
 not recorded here, so the per-driver questions in

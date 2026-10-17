@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Net.Http;
+using System.Runtime.CompilerServices;
 using FreePolarAlign.Imaging.Fits;
 using FreePolarAlign.Imaging.Wcs;
+using FreePolarAlign.Tests.Support;
 
 namespace FreePolarAlign.Tests.Solving;
 
@@ -31,7 +33,37 @@ internal static class RealSkyFitsFixture
     /// stars around a field center. Plain HTTPS, no authentication, same
     /// pattern as D13's index-pack downloads.
     /// </summary>
+    /// <remarks>
+    /// Downloaded once and kept beside this file (D38), so the tests neither
+    /// wait on the network nor depend on it. Without a kept answer, and without
+    /// recording, this fails and says how to record.
+    /// </remarks>
     public static async Task<IReadOnlyList<CatalogStar>> FetchTycho2StarsAsync(double centerRaDegrees, double centerDecDegrees, double radiusDegrees)
+    {
+        string kept = Path.Combine(
+            CatalogFolder(),
+            string.Create(CultureInfo.InvariantCulture, $"tycho2-{centerRaDegrees}-{centerDecDegrees}-{radiusDegrees}.tsv"));
+        if (File.Exists(kept))
+        {
+            return Parse(await File.ReadAllTextAsync(kept).ConfigureAwait(false));
+        }
+
+        if (!FrameRecording.Enabled)
+        {
+            throw new InvalidOperationException($"No kept VizieR answer at '{kept}'. {FrameRecording.HowToRecord}");
+        }
+
+        string tsv = await DownloadAsync(centerRaDegrees, centerDecDegrees, radiusDegrees).ConfigureAwait(false);
+        Directory.CreateDirectory(CatalogFolder());
+        await File.WriteAllTextAsync(kept, tsv).ConfigureAwait(false);
+        return Parse(tsv);
+    }
+
+    /// <summary><c>Catalogs/</c> beside this file in the source tree, where recording writes.</summary>
+    private static string CatalogFolder([CallerFilePath] string thisFile = "") =>
+        Path.Combine(Path.GetDirectoryName(thisFile)!, "Catalogs");
+
+    private static Task<string> DownloadAsync(double centerRaDegrees, double centerDecDegrees, double radiusDegrees)
     {
         string url = "https://vizier.cds.unistra.fr/viz-bin/asu-tsv" +
                      "?-source=I/239/tyc_main" +
@@ -41,8 +73,11 @@ internal static class RealSkyFitsFixture
                      "&-out.max=99999" +
                      "&-sort=VTmag";
 
-        string tsv = await HttpClient.GetStringAsync(url).ConfigureAwait(false);
+        return HttpClient.GetStringAsync(url);
+    }
 
+    private static IReadOnlyList<CatalogStar> Parse(string tsv)
+    {
         var stars = new List<CatalogStar>();
         foreach (string rawLine in tsv.Split('\n'))
         {

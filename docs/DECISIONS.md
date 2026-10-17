@@ -1932,3 +1932,77 @@ Two places still meet real time, and neither can change a result:
   when the test moves the clock. Awaited bare, such a command hangs whenever an
   exposure happens to be running; two tests did, intermittently. Send it
   through `TestClock.CompleteAsync`.
+
+---
+
+## D38 — Tests replay frames rendered once
+
+Tests that solve rendered frames replay frames rendered once and committed,
+instead of rendering on every run. Catalogue answers downloaded from VizieR are
+kept the same way.
+
+**Why.** Rendering, not solving, was the cost: 3.7 s to render a full frame
+against 0.3 s to solve it. The real-pixel tests took 50–75 s each, almost all of
+it drawing pictures, and two Solving tests also waited on the network. The suite
+went from about 5½ minutes to 1 min 10 s; what is left is real solver work, such
+as blind searches that are meant to fail and ASTAP.
+
+### Two kinds of kept frame
+
+- **Scenarios (Phase 3).** A scenario is a fixed start on the test clock (D37), a
+  sweep the engine plans from it, and bolt turns fixed in advance.
+  `ScenarioCamera` serves the kept frame whose field centre is within 3″ of where
+  the telescope physically points when the exposure ends. Kept in
+  `tests/FreePolarAlign.Tests.EndToEnd/Scenarios/`.
+- **Renders (Phase 2, ASTAP).** `RecordedRenders` keys a frame by everything
+  that fixes it: field, size, conditions, seed and bit depth. Kept in
+  `tests/FreePolarAlign.Tests.Support/Renders/`.
+- **VizieR answers.** Kept in `tests/FreePolarAlign.Tests.Solving/Catalogs/`.
+
+### Eight bits where it is enough, sixteen where it is not
+
+Frames are kept as the simulated camera's eight-bit readout delivers them,
+gzipped, at full resolution: about 24 KB each.
+- **Where eight bits is enough:** the rich fields solve exactly as at sixteen.
+- **Where it is not:** eight bits loses the faint stars, and a sparse field
+  needs them. Measured, the 1.2° field at 400 mm stopped solving ("no index
+  match"), and so did three of the four ASTAP fields ("not enough stars"). Those
+  five frames are kept at sixteen bits, about 2 MB each.
+- **Totals:** the scenarios are 668 KB (25 frames), the renders about 10 MB, of
+  which the five sixteen-bit frames are nearly all.
+
+Binning 2×2 was tried and dropped. Binned frames would not blind-solve at four
+of five sweep positions, and binning would only have saved rendering, which now
+happens once.
+
+### What changed in what the scenarios test
+
+The bolts are no longer turned by what the engine reports: that closed loop
+cannot be recorded, since each frame would depend on the previous run's answer.
+The claim the loop made -- that the reported correction has the right sign and
+scale -- is now checked directly against the truth after every sweep and every
+turn, to 1′ per axis. The scenarios:
+- a 5-point sweep two degrees out with 90′ of cone error, then three live
+  readings after fixed turns;
+- three sweeps of 3, 4 and 5 points with fixed turns between them;
+- a hand-turned 5-point sweep with no mount connected.
+
+The cable-pull test needs no real pixels and moved to the fast harness.
+
+### Recording
+
+`FPA_RECORD_FRAMES=1` renders or downloads anything a test asks for that is not
+already kept, and keeps it. Without it, a test that finds nothing kept fails and
+says to record, so nothing can quietly fall back to minutes of rendering or to
+the network. Delete a folder to record it afresh.
+
+The site, the start instant and everything else a scenario or render is made of
+are constants in the tests; nothing about the run changes them. Kept frames go
+stale only when code changes:
+- **Scenarios** go stale with an edit to the scenario's definition, a planner or
+  engine change that proposes different positions, or a renderer change. A stale
+  scenario fails by name.
+- **Renders** go stale only with a change to the renderer or the catalogue
+  fixture, which their key does not include. Nothing detects this; delete
+  `Renders/` and record again after such a change. The renderer's own tests (in
+  Imaging) still render live, so the renderer itself stays tested.

@@ -329,6 +329,36 @@ public class ConfirmBeforeSlewTests
         Assert.Empty(harness.Mount.Slews);
     }
 
+    /// <summary>
+    /// The cable pull. A device vanishing mid-sequence must produce a reported
+    /// fault and a session that can simply be started again -- not an unhandled
+    /// exception, and not a wedged engine. Moved here from the real-pixel tests:
+    /// it is about recovery, and a solver that cannot fail keeps it about that.
+    /// </summary>
+    [Fact]
+    public async Task DeviceLostMidSequence_LeavesARecoverableSession()
+    {
+        using var harness = new SessionHarness();
+        await harness.ReadyAsync();
+        await harness.WaitForSampleAsync(1);
+
+        harness.Simulated.SimulateDisconnection();
+        harness.Camera.SimulateDisconnection();
+
+        SessionFaultedEvent fault = await harness.Recorder.WaitForAsync<SessionFaultedEvent>(poll: harness.PollAsync);
+        Assert.False(string.IsNullOrWhiteSpace(fault.Reason));
+
+        // Reconnected as the UI would, a new sequence starts and samples again.
+        await harness.Simulated.ConnectAsync();
+        await harness.Camera.ConnectAsync();
+        int from = harness.Recorder.Count;
+        await harness.ReadyAsync();
+
+        Assert.True(harness.Recorder.Last<SessionStartedEvent>() is not null, harness.Recorder.Trail());
+        await harness.Recorder.WaitForAsync<PointCapturedEvent>(fromIndex: from, poll: harness.PollAsync);
+        Assert.DoesNotContain(harness.Recorder.Events.Skip(from), e => e is SessionFaultedEvent or CommandRejectedEvent);
+    }
+
     // ---- Preconditions ----
 
     /// <summary>

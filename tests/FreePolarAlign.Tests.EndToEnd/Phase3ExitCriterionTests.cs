@@ -1,28 +1,36 @@
 using FreePolarAlign.Core.Alignment;
-using FreePolarAlign.Core.Astrometry;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Devices;
 using FreePolarAlign.Devices.Simulated;
 using FreePolarAlign.Devices.Simulated.SyntheticSky;
 using FreePolarAlign.Session;
 using FreePolarAlign.Solving;
+using FreePolarAlign.Tests.EndToEnd.Scenarios;
 using FreePolarAlign.Tests.Support;
 using Xunit;
 
 namespace FreePolarAlign.Tests.EndToEnd;
 
 /// <summary>
-/// Phase 3 exit criterion: the virtual observatory must converge from an
-/// injected 2° error to below 10′, then below 2′, without operator
-/// intervention — and pulling a cable mid-sequence must leave a recoverable
-/// state rather than a crash.
+/// The whole pipeline on real pixels: rendered frames, the real Watney solver,
+/// the engine's sweep and its live reading, measured against the misalignment
+/// the simulated mount actually has.
 ///
-/// "Without operator intervention" is taken literally: the loop below reads the
-/// error the software reports, turns the simulated bolts by exactly that much,
-/// and measures again. Nothing anywhere is told the injected value, so if the
-/// reported correction were wrong in sign or scale the loop would diverge
-/// instead of converge, which is a far stronger check than comparing one
-/// measurement against ground truth.
+/// Each test is a recorded scenario (see <see cref="ScenarioCamera"/>). It
+/// starts at a fixed instant on the test clock, the engine plans its own sweep
+/// from there, and the bolts are turned by amounts fixed in advance rather than
+/// by what the engine reports. That makes every frame the same on every run, so
+/// each is rendered once and kept, and a run costs only its solves. What is
+/// checked is unchanged: after every sweep and every turn, the engine's figure
+/// must match the truth.
+///
+/// Turning by fixed amounts gives up the earlier closed loop, in which the
+/// bolts were turned by whatever the engine said. That loop's real claim -- the
+/// reported correction has the right sign and scale -- is checked here
+/// directly, against the truth, after each turn.
+///
+/// The cable-pull test that also lived here needs no real pixels and is now
+/// with the fast tests (<see cref="ConfirmBeforeSlewTests"/>).
 /// </summary>
 public class Phase3ExitCriterionTests
 {
@@ -30,17 +38,12 @@ public class Phase3ExitCriterionTests
         Environment.GetEnvironmentVariable("FPA_QUADDB_DIR")
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".free-polar-align", "quaddb");
 
-    private static StarCatalog? _catalog;
-
-    private static StarCatalog Catalog => _catalog ??= StarCatalog.LoadCsv(
-        Path.Combine(AppContext.BaseDirectory, "fixtures", "tycho2_subset.csv"));
-
-    private static void RequireQuadDatabase() => Skip.IfNot(
-        Directory.Exists(QuadDatabaseDirectory) && Directory.EnumerateFiles(QuadDatabaseDirectory, "*.qdb").Any(),
-        $"No Watney quad database at '{QuadDatabaseDirectory}'. Set FPA_QUADDB_DIR, or download " +
-        "watneyqdb-00-07-20-v3 per D13. Skipping the convergence test.");
-
     private const double Latitude = 45.0;
+
+    private static readonly GeodeticLocation Site = new(Latitude, 15.0, 200.0);
+
+    /// <summary>Phase 2's end-to-end standard, per axis.</summary>
+    private const double ToleranceArcminutes = 1.0;
 
     /// <summary>
     /// How much fake time a sweep may take before the test gives up. Generous:
@@ -49,28 +52,30 @@ public class Phase3ExitCriterionTests
     /// </summary>
     private static readonly TimeSpan SequenceLimit = TimeSpan.FromMinutes(10);
 
+    private static void RequireQuadDatabase() => Skip.IfNot(
+        Directory.Exists(QuadDatabaseDirectory) && Directory.EnumerateFiles(QuadDatabaseDirectory, "*.qdb").Any(),
+        $"No Watney quad database at '{QuadDatabaseDirectory}'. Set FPA_QUADDB_DIR, or download " +
+        "watneyqdb-00-07-20-v3 per D13.");
+
     /// <summary>
-    /// The mount, camera and engine all run on <paramref name="clock"/>, which
-    /// starts at <see cref="TestClock.DefaultStart"/>. That fixes the sidereal
-    /// time, so the sky each sequence walks across is the same on every run (#13).
+    /// D26's delays, shortened: on the test clock they cost nothing either way,
+    /// but they keep a scenario's fake timeline short.
     /// </summary>
-    private static SimulatedDeviceProvider BuildProvider(
-        TestClock clock, MountMisalignment injected, double coneErrorArcminutes = 20.0) =>
-        new(
-            Catalog,
-            new SimulatedMountOptions(
-                new GeodeticLocation(Latitude, 15.0, 200.0),
-                injected,
-                ConeErrorArcminutes: coneErrorArcminutes,
-                ConePhaseDegrees: 35.0,
-                Tracking: true),
-            clock,
-            new SimulatedCameraOptions(FocalLengthMillimetres: 100.0));
+    internal static AlignmentSessionOptions LiveOptions(int captureCount, string failedSolvesDirectory) => new(
+        CaptureCount: captureCount,
+        SweepDegrees: 70.0,
+        ExposureDuration: TimeSpan.FromMilliseconds(100),
+        ExpectedSolveNoiseArcseconds: 3.0,
+        SettleDelay: TimeSpan.FromMilliseconds(50),
+        SolveInterval: TimeSpan.FromMilliseconds(200),
+        FailedSolvesDirectory: failedSolvesDirectory);
+
+    internal static string TempDirectory() => Path.Combine(Path.GetTempPath(), $"fpa-failed-{Guid.NewGuid():N}");
 
     /// <summary>
     /// Counts the solves in flight. A real solve takes real seconds, and fake
-    /// time must not run on while one does, or the sky would turn for minutes
-    /// between a frame and its result.
+    /// time must not run on while one does, or the sky would turn between a
+    /// frame and its result -- and a replay would no longer match its recording.
     /// </summary>
     private sealed class CountingSolver(ISolver inner) : ISolver, IDisposable
     {
@@ -96,404 +101,244 @@ public class Phase3ExitCriterionTests
         public void Dispose() => (inner as IDisposable)?.Dispose();
     }
 
-    private static CountingSolver Watney(TestClock clock) =>
-        new(new WatneyPlateSolver(QuadDatabaseDirectory, clock));
-
-    private static Recorder NewRecorder(TestClock clock, CountingSolver solver) =>
-        new(clock) { Busy = () => solver.Busy };
-
-    private static readonly GeodeticLocation Site = new(Latitude, 15.0, 200.0);
-
-    /// <summary>
-    /// Connects the devices and confirms the site, which the engine now requires
-    /// as explicit acts before a sequence can start (D18, D19). A program driving
-    /// the engine has to do exactly what the UI does, which is the point of the
-    /// boundary being message-shaped.
-    /// </summary>
-    private static async Task ConnectAndConfirmSiteAsync(AlignmentSession session)
+    /// <summary>One scenario's simulated mount, kept frames, solver and engine, all on one test clock.</summary>
+    private sealed class Rig : IDisposable
     {
-        await session.SendAsync(new ConnectDeviceCommand(
-            DeviceKind.Camera, AlignmentSession.AttachedProviderName, "camera"));
-        await session.SendAsync(new ConnectDeviceCommand(
-            DeviceKind.Mount, AlignmentSession.AttachedProviderName, "mount"));
-        await session.SendAsync(new ConfigureSiteCommand(
-            Site.LatitudeDegrees, Site.LongitudeDegrees, Site.HeightMeters));
-    }
+        private readonly IDisposable _subscription;
 
-    /// <summary>
-    /// D26's delays, shortened: the simulated camera renders a frame in a
-    /// fraction of a second and the simulated mount settles instantly, so the
-    /// seconds a real mount needs would only make the suite slow.
-    /// </summary>
-    internal static AlignmentSessionOptions LiveOptions(int captureCount, string failedSolvesDirectory) => new(
-        CaptureCount: captureCount,
-        SweepDegrees: 70.0,
-        ExposureDuration: TimeSpan.FromMilliseconds(100),
-        ExpectedSolveNoiseArcseconds: 3.0,
-        SettleDelay: TimeSpan.FromMilliseconds(50),
-        SolveInterval: TimeSpan.FromMilliseconds(200),
-        FailedSolvesDirectory: failedSolvesDirectory);
-
-    internal static string TempDirectory() => Path.Combine(Path.GetTempPath(), $"fpa-failed-{Guid.NewGuid():N}");
-
-    /// <summary>
-    /// Runs one sequence the way a user at the mount would: confirm each slew the
-    /// engine proposes, and otherwise wait while it samples (D26). "Without
-    /// operator intervention" is what that looks like from the engine's side:
-    /// the caller is a program, and the engine only ever answers with events (D6).
-    /// </summary>
-    private static async Task<(AlignmentEstimate? Estimate, Recorder Recorder)> RunSequenceAsync(
-        AlignmentSession session, int captureCount, TestClock clock, CountingSolver solver)
-    {
-        Recorder recorder = NewRecorder(clock, solver);
-        using IDisposable subscription = session.Events.Subscribe(recorder);
-
-        await session.SendAsync(new StartSessionCommand(new SessionConfiguration(
-            CapturePoints: captureCount,
-            RequestedSweepDegrees: 70.0)));
-
-        if (recorder.Last<SessionFaultedEvent>() is not null || recorder.Last<CommandRejectedEvent>() is not null)
+        public Rig(string scenario, MountMisalignment injected, double coneErrorArcminutes, int captureCount, bool connectMount)
         {
-            return (null, recorder);
+            RequireQuadDatabase();
+
+            Clock = new TestClock();
+            Mount = new SimulatedMount(
+                new SimulatedMountOptions(
+                    Site, injected,
+                    ConeErrorArcminutes: coneErrorArcminutes,
+                    ConePhaseDegrees: 35.0,
+                    Tracking: true,
+                    InitialMechanicalRotationDegrees: -70.0),
+                Clock);
+            Camera = ScenarioCamera.Open(
+                scenario, Mount, new SimulatedCameraOptions(FocalLengthMillimetres: 100.0),
+                () => StarCatalog.LoadCsv(Path.Combine(AppContext.BaseDirectory, "fixtures", "tycho2_subset.csv")));
+            Skip.If(!Camera.HasFrames && !ScenarioCamera.Recording,
+                $"Scenario '{scenario}' has no recorded frames. {FrameRecording.HowToRecord}");
+
+            Solver = new CountingSolver(new WatneyPlateSolver(QuadDatabaseDirectory, Clock));
+            Session = new AlignmentSession(
+                Camera, connectMount ? Mount : null, Solver, Clock, LiveOptions(captureCount, TempDirectory()));
+            Recorder = new Recorder(Clock) { Busy = () => Solver.Busy || Camera.Busy };
+            _subscription = Session.Events.Subscribe(Recorder);
         }
 
-        int seen = 0;
-        DateTimeOffset deadline = clock.GetUtcNow() + SequenceLimit;
-        while (clock.GetUtcNow() < deadline)
+        public TestClock Clock { get; }
+
+        public SimulatedMount Mount { get; }
+
+        public ScenarioCamera Camera { get; }
+
+        public CountingSolver Solver { get; }
+
+        public AlignmentSession Session { get; }
+
+        public Recorder Recorder { get; }
+
+        public Task PollAsync() => Session.SendAsync(new RefreshMountStatusCommand()).AsTask();
+
+        /// <summary>
+        /// Connects what the engine is to know about and confirms the site,
+        /// which it requires before a sequence (D18, D19).
+        /// </summary>
+        public async Task ConnectAsync(bool mount)
         {
-            IReadOnlyList<EngineEvent> events = recorder.Events;
-            for (; seen < events.Count; seen++)
+            await Mount.ConnectAsync();
+            await Session.SendAsync(new ConnectDeviceCommand(DeviceKind.Camera, AlignmentSession.AttachedProviderName, "camera"));
+            if (mount)
             {
-                switch (events[seen])
+                await Session.SendAsync(new ConnectDeviceCommand(DeviceKind.Mount, AlignmentSession.AttachedProviderName, "mount"));
+            }
+
+            await Session.SendAsync(new ConfigureSiteCommand(Site.LatitudeDegrees, Site.LongitudeDegrees, Site.HeightMeters));
+        }
+
+        /// <summary>
+        /// Runs one connected sweep the way a user at the mount would: confirm
+        /// each slew the engine proposes, otherwise wait while it samples (D26),
+        /// until the live reading takes over (D29).
+        /// </summary>
+        public async Task<AlignmentEstimate> SweepAsync(int captureCount)
+        {
+            int seen = Recorder.Count;
+            await Session.SendAsync(new StartSessionCommand(new SessionConfiguration(captureCount, 70.0)));
+
+            DateTimeOffset deadline = Clock.GetUtcNow() + SequenceLimit;
+            while (true)
+            {
+                Assert.True(Clock.GetUtcNow() < deadline, $"the sweep never finished.{Recorder.Trail()}");
+                Assert.Empty(Camera.Misses);
+
+                IReadOnlyList<EngineEvent> events = Recorder.Events;
+                for (; seen < events.Count; seen++)
                 {
-                    // The sweep ends where the live reading takes over (D29);
-                    // each round here re-measures with a fresh sweep instead.
-                    case TrackingStartedEvent:
-                    case SessionCompletedEvent:
-                    case SessionFaultedEvent:
-                        return (recorder.Last<AlignmentUpdatedEvent>()?.Estimate, recorder);
-                    case SlewProposedEvent { RequiresMotion: true }:
-                        await session.SendAsync(new CaptureNextPointCommand());
-                        break;
+                    switch (events[seen])
+                    {
+                        case TrackingStartedEvent:
+                            AlignmentUpdatedEvent? updated = Recorder.Last<AlignmentUpdatedEvent>();
+                            Assert.True(updated is not null, Recorder.Trail());
+                            return updated!.Estimate;
+                        case SessionFaultedEvent fault:
+                            Assert.Fail($"the sweep faulted: {fault.Reason}{Recorder.Trail()}");
+                            break;
+                        case SlewProposedEvent { RequiresMotion: true }:
+                            await Session.SendAsync(new CaptureNextPointCommand());
+                            break;
+                    }
                 }
-            }
 
-            await session.SendAsync(new RefreshMountStatusCommand());
-            await clock.PassAsync(TimeSpan.FromMilliseconds(50), busy: recorder.Busy);
-        }
-
-        return (null, recorder);
-    }
-
-    private static double AxisErrorArcminutes(SimulatedMount mount)
-    {
-        HorizontalCoordinates axis = mount.TruePolarAxis;
-        HorizontalCoordinates pole = MountForwardModel.NominalPole(Latitude);
-        return SeparationArcminutes(axis, pole);
-    }
-
-    /// <summary>
-    /// The exit criterion. Start two degrees out, and converge by acting only on
-    /// what the software reports.
-    /// </summary>
-    [SkippableFact]
-    public async Task VirtualObservatory_ConvergesFromTwoDegrees_BelowTenThenTwoArcminutes()
-    {
-        RequireQuadDatabase();
-
-        // Two degrees of total error, split across both axes. Note the azimuth
-        // figure is larger than the altitude one for an even split: an azimuth
-        // *angle* subtends less on the sky by cos(axis altitude) (D12), so 120'
-        // of azimuth is only 85' of pointing error at this latitude.
-        var injected = new MountMisalignment(AltitudeErrorArcminutes: 84.85, AzimuthErrorArcminutes: 120.0);
-        var clock = new TestClock();
-        SimulatedDeviceProvider provider = BuildProvider(clock, injected);
-        SimulatedMount mount = provider.MountInstance;
-
-        double startingError = AxisErrorArcminutes(mount);
-        Assert.InRange(startingError, 115.0, 125.0);
-
-        using ICamera camera = provider.OpenCamera("sim-camera");
-        using CountingSolver solver = Watney(clock);
-        using var session = new AlignmentSession(camera, mount, solver, clock, LiveOptions(6, TempDirectory()));
-
-        await ConnectAndConfirmSiteAsync(session);
-
-        var errors = new List<double> { startingError };
-        bool below10 = false;
-        bool below2 = false;
-
-        for (int round = 0; round < 4; round++)
-        {
-            var (estimate, recorder) = await RunSequenceAsync(session, 6, clock, solver);
-
-            Assert.True(estimate is not null, recorder.Trail());
-            Assert.Null(recorder.Last<AlignmentWithheldEvent>());
-
-            // Turn the bolts by exactly what the software asked for.
-            mount.AdjustAxis(-estimate!.AltitudeErrorArcminutes, -estimate.AzimuthErrorArcminutes);
-
-            double remaining = AxisErrorArcminutes(mount);
-            errors.Add(remaining);
-
-            if (remaining < 10.0)
-            {
-                below10 = true;
-            }
-
-            if (below10 && remaining < 2.0)
-            {
-                below2 = true;
-                break;
+                await PollAsync();
+                await Clock.PassAsync(TimeSpan.FromMilliseconds(50), busy: Recorder.Busy);
             }
         }
 
-        string trail = string.Join(" -> ", errors.Select(e => $"{e:F2}'"));
-        Assert.True(below10, $"never reached 10': {trail}");
-        Assert.True(below2, $"never reached 2': {trail}");
-
-        // Convergence, not luck: the error must have shrunk monotonically.
-        for (int i = 1; i < errors.Count; i++)
+        /// <summary>
+        /// A live reading wholly from after now. The first one published after
+        /// it is skipped, because its solve may have looked at the sky a moment
+        /// before.
+        /// </summary>
+        public async Task<AlignmentTrackedEvent> FreshReadingAsync()
         {
-            Assert.True(errors[i] < errors[i - 1],
-                $"round {i} made the alignment worse, not better: {trail}");
-        }
-    }
-
-    /// <summary>
-    /// The same two degrees, closed with one sweep and the live reading (D29):
-    /// the bolts are turned by what each frame says, and nothing is swept
-    /// again. Through the real solver on rendered frames, so the reading is as
-    /// noisy as a solve is, and checked against the simulated mount's true axis.
-    ///
-    /// A live reading carries the sweep's own error along with it -- it
-    /// measures bolt turns, not the axis -- so where this ends up is the sweep's
-    /// accuracy, and that is why the bar is the same 2′.
-    /// </summary>
-    [SkippableFact]
-    public async Task VirtualObservatory_OneSweepThenTheLiveReading_ReachesTwoArcminutes()
-    {
-        RequireQuadDatabase();
-
-        var injected = new MountMisalignment(AltitudeErrorArcminutes: 84.85, AzimuthErrorArcminutes: 120.0);
-        var clock = new TestClock();
-        SimulatedDeviceProvider provider = BuildProvider(clock, injected);
-        SimulatedMount mount = provider.MountInstance;
-
-        using ICamera camera = provider.OpenCamera("sim-camera");
-        using CountingSolver solver = Watney(clock);
-        using var session = new AlignmentSession(camera, mount, solver, clock, LiveOptions(6, TempDirectory()));
-
-        Recorder recorder = NewRecorder(clock, solver);
-        using IDisposable subscription = session.Events.Subscribe(recorder);
-        Task PollAsync() => session.SendAsync(new RefreshMountStatusCommand()).AsTask();
-
-        await ConnectAndConfirmSiteAsync(session);
-        await session.SendAsync(new StartSessionCommand(new SessionConfiguration(6, 70.0)));
-
-        int seen = 0;
-        DateTimeOffset deadline = clock.GetUtcNow() + SequenceLimit;
-        while (recorder.Last<TrackingStartedEvent>() is null)
-        {
-            Assert.True(clock.GetUtcNow() < deadline && recorder.Last<SessionFaultedEvent>() is null, recorder.Trail());
-            IReadOnlyList<EngineEvent> events = recorder.Events;
-            for (; seen < events.Count; seen++)
-            {
-                if (events[seen] is SlewProposedEvent { RequiresMotion: true })
-                {
-                    await session.SendAsync(new CaptureNextPointCommand());
-                }
-            }
-
-            await PollAsync();
-            await clock.PassAsync(TimeSpan.FromMilliseconds(50), busy: recorder.Busy);
-        }
-
-        // A reading wholly from after the last turn: the first one published
-        // after it may have come from a frame exposed before.
-        async Task<AlignmentTrackedEvent> FreshReadingAsync()
-        {
-            // The engine's clock, not the system's: events are stamped by it.
-            DateTimeOffset turnedAt = clock.GetUtcNow();
-            AlignmentTrackedEvent straddling = await recorder.WaitForAsync<AlignmentTrackedEvent>(
+            DateTimeOffset turnedAt = Clock.GetUtcNow();
+            AlignmentTrackedEvent straddling = await Recorder.WaitForAsync<AlignmentTrackedEvent>(
                 e => e.TimestampUtc > turnedAt, poll: PollAsync, timeout: TimeSpan.FromMinutes(1));
-            return await recorder.WaitForAsync<AlignmentTrackedEvent>(
+            return await Recorder.WaitForAsync<AlignmentTrackedEvent>(
                 e => e.TimestampUtc > straddling.TimestampUtc && e.IsReliable, poll: PollAsync, timeout: TimeSpan.FromMinutes(1));
         }
 
-        var errors = new List<double> { AxisErrorArcminutes(mount) };
-        AlignmentTrackedEvent reading = await FreshReadingAsync();
-
-        for (int turn = 0; turn < 3 && reading.Estimate.TotalErrorArcminutes >= 1.0; turn++)
+        /// <summary>The engine's figure must be the mount's real misalignment, per axis.</summary>
+        public void AssertMatchesTruth(AlignmentEstimate estimate, string when)
         {
-            mount.AdjustAxis(-reading.Estimate.AltitudeErrorArcminutes, -reading.Estimate.AzimuthErrorArcminutes);
-            errors.Add(AxisErrorArcminutes(mount));
-            reading = await FreshReadingAsync();
+            MountMisalignment truth = Mount.CurrentMisalignment;
+            Assert.True(
+                Math.Abs(estimate.AltitudeErrorArcminutes - truth.AltitudeErrorArcminutes) < ToleranceArcminutes &&
+                Math.Abs(estimate.AzimuthErrorArcminutes - truth.AzimuthErrorArcminutes) < ToleranceArcminutes,
+                $"{when}: read {estimate.AltitudeErrorArcminutes:F2}' / {estimate.AzimuthErrorArcminutes:F2}', " +
+                $"truth {truth.AltitudeErrorArcminutes:F2}' / {truth.AzimuthErrorArcminutes:F2}'");
         }
 
-        string trail = string.Join(" -> ", errors.Select(e => $"{e:F2}'"));
-        Assert.True(AxisErrorArcminutes(mount) < 2.0, $"the live reading left {trail}{recorder.Trail()}");
-
-        // And what the screen says is what is left, not an optimistic figure.
-        Assert.Equal(AxisErrorArcminutes(mount), reading.Estimate.TotalErrorArcminutes, tolerance: 1.0);
-        Assert.Single(recorder.All<TrackingStartedEvent>());
+        public void Dispose()
+        {
+            _subscription.Dispose();
+            Session.Dispose();
+            Solver.Dispose();
+            Camera.Dispose();
+            Mount.Dispose();
+        }
     }
 
     /// <summary>
-    /// Cone error must not affect convergence any more than it affects a single
-    /// fit. A guide scope squared up by hand can be a degree off.
+    /// One sweep, then the live reading through three bolt turns. Two degrees
+    /// out, with 90' of cone error, which must make no difference (D11).
+    ///
+    /// The azimuth figure is larger than the altitude one for an even split: an
+    /// azimuth *angle* subtends less on the sky by cos(axis altitude) (D12), so
+    /// 120' of azimuth is only 85' of pointing error at this latitude.
     /// </summary>
     [SkippableFact]
-    public async Task Convergence_IsUnaffectedByLargeConeError()
+    public async Task SweepThenLiveAdjustments_ReadTheTruthAfterEveryTurn()
     {
-        RequireQuadDatabase();
+        var injected = new MountMisalignment(AltitudeErrorArcminutes: 84.85, AzimuthErrorArcminutes: 120.0);
+        using var rig = new Rig("sweep-then-live", injected, coneErrorArcminutes: 90.0, captureCount: 5, connectMount: true);
+        await rig.ConnectAsync(mount: true);
 
-        var injected = new MountMisalignment(60.0, -80.0);
-        var clock = new TestClock();
-        SimulatedDeviceProvider provider = BuildProvider(clock, injected, coneErrorArcminutes: 90.0);
-        SimulatedMount mount = provider.MountInstance;
+        AlignmentEstimate sweep = await rig.SweepAsync(5);
+        rig.AssertMatchesTruth(sweep, "after the sweep");
 
-        using ICamera camera = provider.OpenCamera("sim-camera");
-        using CountingSolver solver = Watney(clock);
-        using var session = new AlignmentSession(camera, mount, solver, clock, LiveOptions(6, TempDirectory()));
+        // Turns fixed in advance, as fractions of what was injected: most of it,
+        // then most of the rest, then nearly all that is left.
+        foreach (double fraction in new[] { 0.6, 0.3, 0.09 })
+        {
+            rig.Mount.AdjustAxis(
+                -fraction * injected.AltitudeErrorArcminutes, -fraction * injected.AzimuthErrorArcminutes);
 
-        await ConnectAndConfirmSiteAsync(session);
+            AlignmentTrackedEvent reading = await rig.FreshReadingAsync();
+            rig.AssertMatchesTruth(reading.Estimate, $"after turning {fraction:P0} of the error out");
+        }
 
-        var (estimate, recorder) = await RunSequenceAsync(session, 6, clock, solver);
-        Assert.True(estimate is not null, recorder.Trail());
-
-        mount.AdjustAxis(-estimate!.AltitudeErrorArcminutes, -estimate.AzimuthErrorArcminutes);
-        Assert.True(AxisErrorArcminutes(mount) < 10.0,
-            $"one round with 90' of cone error left {AxisErrorArcminutes(mount):F2}'");
+        Assert.Empty(rig.Camera.Misses);
+        Assert.Single(rig.Recorder.All<TrackingStartedEvent>());
     }
 
     /// <summary>
-    /// The cable-pull test. A device vanishing mid-sequence must produce a
-    /// reported fault and a session that can simply be started again — not an
-    /// unhandled exception, and not a wedged engine.
+    /// Three sweeps, of three, four and five points, with the bolts turned
+    /// between them. Each sweep must measure what is left. Three points is the
+    /// fewest a fit takes (D7), and the sweep is the same 70°, so the smaller
+    /// sweeps are the harder ones.
     /// </summary>
     [SkippableFact]
-    public async Task DeviceLostMidSequence_LeavesARecoverableSession()
+    public async Task RepeatedSweeps_OfThreeFourAndFivePoints_EachMeasureWhatIsLeft()
     {
-        RequireQuadDatabase();
+        var injected = new MountMisalignment(AltitudeErrorArcminutes: 60.0, AzimuthErrorArcminutes: -80.0);
+        using var rig = new Rig("repeated-sweeps", injected, coneErrorArcminutes: 20.0, captureCount: 5, connectMount: true);
+        await rig.ConnectAsync(mount: true);
 
-        var clock = new TestClock();
-        SimulatedDeviceProvider provider = BuildProvider(clock, new MountMisalignment(30.0, -25.0));
-        SimulatedMount mount = provider.MountInstance;
+        int[] points = { 3, 4, 5 };
+        double[] turnedOutAfter = { 0.7, 0.25 };
+        for (int round = 0; round < points.Length; round++)
+        {
+            AlignmentEstimate estimate = await rig.SweepAsync(points[round]);
+            rig.AssertMatchesTruth(estimate, $"sweep {round + 1}, of {points[round]} points");
 
-        using ICamera camera = provider.OpenCamera("sim-camera");
-        using CountingSolver solver = Watney(clock);
-        using var session = new AlignmentSession(camera, mount, solver, clock, LiveOptions(6, TempDirectory()));
+            if (round < turnedOutAfter.Length)
+            {
+                rig.Mount.AdjustAxis(
+                    -turnedOutAfter[round] * injected.AltitudeErrorArcminutes,
+                    -turnedOutAfter[round] * injected.AzimuthErrorArcminutes);
+            }
+        }
 
-        Recorder recorder = NewRecorder(clock, solver);
-        using IDisposable subscription = session.Events.Subscribe(recorder);
-
-        await ConnectAndConfirmSiteAsync(session);
-        await session.SendAsync(new StartSessionCommand(new SessionConfiguration(6, 70.0)));
-        await session.SendAsync(new CaptureNextPointCommand());
-        await recorder.WaitForAsync<PointCapturedEvent>(timeout: TimeSpan.FromMinutes(1));
-
-        // Pull the cable.
-        mount.SimulateDisconnection();
-        ((SimulatedCamera)camera).SimulateDisconnection();
-
-        SessionFaultedEvent fault = await recorder.WaitForAsync<SessionFaultedEvent>(
-            poll: () => session.SendAsync(new RefreshMountStatusCommand()).AsTask());
-        Assert.False(string.IsNullOrWhiteSpace(fault.Reason));
-
-        // Recoverable: reconnect as the UI would, and a new sequence must start
-        // and sample again rather than finding the engine wedged.
-        //
-        // Deliberately not driven to a full six-point solution. This test is
-        // about a device vanishing, and requiring a whole sequence to solve
-        // would import the solver's reliability into it -- which, with the
-        // committed sample catalogue, depends on which patch of sky the current
-        // sidereal time happens to select (see the note in ROADMAP.md). A test
-        // that fails depending on the hour tells you nothing about the thing it
-        // is named after.
-        await mount.ConnectAsync();
-        await camera.ConnectAsync();
-
-        Recorder recovered = NewRecorder(clock, solver);
-        using IDisposable recoveredSubscription = session.Events.Subscribe(recovered);
-
-        await ConnectAndConfirmSiteAsync(session);
-        await session.SendAsync(new StartSessionCommand(new SessionConfiguration(6, 70.0)));
-
-        Assert.True(recovered.Last<SessionStartedEvent>() is not null, recovered.Trail());
-        Assert.Null(recovered.Last<CommandRejectedEvent>());
-
-        await session.SendAsync(new CaptureNextPointCommand());
-        await recovered.WaitForAsync<PointCapturedEvent>(timeout: TimeSpan.FromMinutes(1));
-        Assert.Null(recovered.Last<SessionFaultedEvent>());
+        Assert.Empty(rig.Camera.Misses);
     }
 
     /// <summary>
     /// Phase 4d, exit criterion 2: with no mount connected (D10 as revised), a
-    /// sequence turned by hand is measured through blind solves of rendered
-    /// frames, and the result is good enough to act on. The engine is never told
-    /// the mount exists; the "operator" turns it by driving the simulated mount
-    /// directly, which is what a real one does with the RA clutch.
+    /// sequence turned by hand is measured through blind solves, and the result
+    /// is good enough to act on. The engine is never told the mount exists; the
+    /// "operator" turns it by driving the simulated mount directly, which is
+    /// what a real one does with the RA clutch.
     /// </summary>
     [SkippableFact]
     public async Task Unconnected_AHandTurnedSweepMeasuresTheMisalignment()
     {
-        RequireQuadDatabase();
-
         var injected = new MountMisalignment(40.0, -30.0);
-        var clock = new TestClock();
-        SimulatedDeviceProvider provider = BuildProvider(clock, injected);
-        SimulatedMount mount = provider.MountInstance;
-        await mount.ConnectAsync();
+        using var rig = new Rig("unconnected", injected, coneErrorArcminutes: 20.0, captureCount: 5, connectMount: false);
+        await rig.ConnectAsync(mount: false);
 
-        using ICamera camera = provider.OpenCamera("sim-camera");
-        using CountingSolver solver = Watney(clock);
-        using var session = new AlignmentSession(camera, mount: null, solver, clock, LiveOptions(5, TempDirectory()));
+        await rig.Session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 70.0)));
 
-        Recorder recorder = NewRecorder(clock, solver);
-        using IDisposable subscription = session.Events.Subscribe(recorder);
-
-        await session.SendAsync(new ConnectDeviceCommand(DeviceKind.Camera, AlignmentSession.AttachedProviderName, "camera"));
-        await session.SendAsync(new ConfigureSiteCommand(Site.LatitudeDegrees, Site.LongitudeDegrees, Site.HeightMeters));
-        await session.SendAsync(new StartSessionCommand(new SessionConfiguration(5, 70.0)));
-
-        Assert.Equal(SequenceMode.Unconnected, recorder.Last<SessionStartedEvent>()!.Mode);
-        ManualActionRequiredEvent prompt = recorder.Last<ManualActionRequiredEvent>()!;
+        Assert.Equal(SequenceMode.Unconnected, rig.Recorder.Last<SessionStartedEvent>()!.Mode);
+        ManualActionRequiredEvent prompt = rig.Recorder.Last<ManualActionRequiredEvent>()!;
         Assert.Contains("declination", prompt.Instruction, StringComparison.OrdinalIgnoreCase);
 
         // The operator sets declination as told, then turns RA a spacing at a
         // time, waiting for each sample before moving on.
-        double declination = recorder.Last<TargetSelectedEvent>()!.DeclinationDegrees;
-        double rotation = recorder.Last<SlewProposedEvent>()!.MechanicalRotationDegrees;
+        double declination = rig.Recorder.Last<TargetSelectedEvent>()!.DeclinationDegrees;
+        double rotation = rig.Recorder.Last<SlewProposedEvent>()!.MechanicalRotationDegrees;
         double spacing = 70.0 / 4;
 
         for (int point = 1; point <= 5; point++)
         {
-            (double ra, double dec) = TargetSelection.ResolveCommand(Site, rotation, declination, clock.GetUtcNow().UtcDateTime);
-            await mount.SlewToCoordinatesAsync(ra, dec);
+            (double ra, double dec) = TargetSelection.ResolveCommand(Site, rotation, declination, rig.Clock.UtcNow);
+            await rig.Mount.SlewToCoordinatesAsync(ra, dec);
 
-            await recorder.WaitForAsync<PointCapturedEvent>(e => e.Point.Index == point, timeout: TimeSpan.FromMinutes(1));
+            await rig.Recorder.WaitForAsync<PointCapturedEvent>(e => e.Point.Index == point, timeout: TimeSpan.FromMinutes(1));
             rotation += spacing;
         }
 
-        await recorder.WaitForAsync<TrackingStartedEvent>();
-        AlignmentUpdatedEvent? updated = recorder.Last<AlignmentUpdatedEvent>();
-        Assert.True(updated is not null, recorder.Trail());
-
-        // Within 1', Phase 2's end-to-end standard -- the Phase 4d bar.
-        Assert.Equal(injected.AltitudeErrorArcminutes, updated!.Estimate.AltitudeErrorArcminutes, tolerance: 1.0);
-        Assert.Equal(injected.AzimuthErrorArcminutes, updated.Estimate.AzimuthErrorArcminutes, tolerance: 1.0);
-    }
-
-    private static double SeparationArcminutes(HorizontalCoordinates a, HorizontalCoordinates b)
-    {
-        double d2r = Math.PI / 180.0;
-        double lat1 = a.AltitudeDegrees * d2r, lat2 = b.AltitudeDegrees * d2r;
-        double dLat = lat2 - lat1;
-        double dLon = (b.AzimuthDegrees - a.AzimuthDegrees) * d2r;
-
-        double h = Math.Sin(dLat / 2.0) * Math.Sin(dLat / 2.0)
-                 + Math.Cos(lat1) * Math.Cos(lat2) * Math.Sin(dLon / 2.0) * Math.Sin(dLon / 2.0);
-        return 2.0 * Math.Asin(Math.Sqrt(Math.Clamp(h, 0.0, 1.0))) * 180.0 / Math.PI * 60.0;
+        await rig.Recorder.WaitForAsync<TrackingStartedEvent>();
+        AlignmentUpdatedEvent? updated = rig.Recorder.Last<AlignmentUpdatedEvent>();
+        Assert.True(updated is not null, rig.Recorder.Trail());
+        rig.AssertMatchesTruth(updated!.Estimate, "after the hand-turned sweep");
+        Assert.Empty(rig.Camera.Misses);
     }
 }

@@ -216,11 +216,16 @@ public sealed class SimulatedCamera : ICamera
     private FitsImage AtReadoutDepth(FitsImage rendered)
     {
         CameraReadoutMode mode = ReadoutModes[_readoutModeIndex];
-        if (mode.BitDepth is not 8)
-        {
-            return rendered;
-        }
+        return mode.BitDepth is 8 ? QuantiseToEightBit(rendered) : rendered;
+    }
 
+    /// <summary>
+    /// A rendered frame as this camera's eight-bit readout delivers it. Public
+    /// because tests keep their rendered frames in exactly this form (D38), and
+    /// two copies of the conversion could drift apart.
+    /// </summary>
+    public static FitsImage QuantiseToEightBit(FitsImage rendered)
+    {
         // The renderer works in the full sixteen-bit well, so the whole range
         // maps onto 256 levels. That is what a camera switching to an eight-bit
         // readout does: the well is unchanged and the steps between levels get

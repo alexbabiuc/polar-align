@@ -1,0 +1,27 @@
+[
+  {
+    "File": "frame-001.fits.gz",
+    "RaDegrees": 172.72838989520983,
+    "DecDegrees": 70.56927399802703
+  },
+  {
+    "File": "frame-002.fits.gz",
+    "RaDegrees": 155.08233964682492,
+    "DecDegrees": 70.32985277488679
+  },
+  {
+    "File": "frame-003.fits.gz",
+    "RaDegrees": 137.64807938761544,
+    "DecDegrees": 70.08562676308658
+  },
+  {
+    "File": "frame-004.fits.gz",
+    "RaDegrees": 120.41106809183047,
+    "DecDegrees": 69.85931027986207
+  },
+  {
+    "File": "frame-005.fits.gz",
+    "RaDegrees": 103.34156824197527,
+    "DecDegrees": 69.6711842991692
+  }
+]

@@ -116,18 +116,17 @@ public class QuadDatabaseResolutionTests
 
     /// <summary>
     /// D39: an installation that chose another solver instead of downloading
-    /// packs has no database, and that is not a fault. Watney doing either job
+    /// packs has no database, and that is not a fault. Watney as the solver
     /// makes it one.
     /// </summary>
     [Theory]
-    [InlineData(null, null, true)]
-    [InlineData(SolverKind.Astap, SolverKind.Astap, false)]
-    [InlineData(SolverKind.Astap, null, true)]
-    [InlineData(null, SolverKind.Ps3, true)]
-    [InlineData(SolverKind.Internal, SolverKind.Asps, true)]
-    public void AMissingDatabaseMatters_OnlyWhenWatneyDoesAJob(SolverKind? blind, SolverKind? near, bool matters)
+    [InlineData(null, true)]
+    [InlineData(SolverKind.Internal, true)]
+    [InlineData(SolverKind.Astap, false)]
+    [InlineData(SolverKind.Ps3, false)]
+    public void AMissingDatabaseMatters_OnlyWhenWatneyIsTheSolver(SolverKind? solver, bool matters)
     {
-        var settings = AppSettings.Empty with { BlindSolver = blind, NearSolver = near };
+        var settings = AppSettings.Empty with { Solver = solver };
 
         Assert.Equal(matters, EngineFactory.UsesInternalSolver(settings));
     }

@@ -4,13 +4,16 @@ using FreePolarAlign.Solving;
 namespace FreePolarAlign.App.Services;
 
 /// <summary>
-/// The solver the session sees: whichever the settings chose for the kind of
-/// frame in hand, and only that one. A frame the chosen solver cannot solve is
-/// reported as not solved, not handed to another (D31).
+/// The solver the session sees: the one the settings chose, for every frame,
+/// and only that one. A frame it cannot solve is reported as not solved, not
+/// handed to another (D31). Blind and near frames share it because solvers give
+/// slightly different answers for the same frame, and a reading built from two
+/// of them moves with the solver rather than the mount (D42).
 ///
 /// A frame is "near" when the request carries a position hint -- the session
 /// adds one exactly when a mount is connected and reporting -- and "blind"
-/// otherwise. That is the same line the settings window draws.
+/// otherwise. The two differ only in their timeout (D33), chosen here from the
+/// blind or near setting, which replaces whatever the request carried.
 ///
 /// Reconfigured in place rather than rebuilt, because the session holds this
 /// instance for the life of the application: a choice saved in the settings
@@ -18,10 +21,6 @@ namespace FreePolarAlign.App.Services;
 ///
 /// Every result is stamped with the name of the solver that produced it, so
 /// the session log says which solver each sample and reading came from.
-///
-/// The timeout is chosen the same way, from the blind or near setting, and
-/// replaces whatever the request carried: the line between the two jobs is
-/// drawn here, so this is where each job's limit is applied (D33).
 ///
 /// A scale from a typed focal length that finds no match is tried again without
 /// one, for every solver alike (D41).
@@ -34,8 +33,8 @@ public sealed class SelectedSolver : ISolver, IDisposable
     private readonly bool _canRunWindowsSolvers;
     private readonly TimeProvider _time;
 
-    private volatile Routes _routes;
-    private (SolverKind Blind, SolverKind Near, string? AstapPath, string? AspsPath, string? Ps3Path, TimeSpan BlindTimeout, TimeSpan NearTimeout)? _configuredFrom;
+    private volatile Route _route;
+    private (SolverKind Solver, string? AstapPath, string? AspsPath, string? Ps3Path, TimeSpan BlindTimeout, TimeSpan NearTimeout)? _configuredFrom;
 
     /// <param name="internalSolver">
     /// The built-in solver, used when it is the choice. Owned, and disposed
@@ -63,23 +62,22 @@ public sealed class SelectedSolver : ISolver, IDisposable
         _log = log;
         _resolveExecutable = resolveExecutable ?? ResolveInstalled;
         _canRunWindowsSolvers = canRunWindowsSolvers ?? OperatingSystem.IsWindows();
-        _routes = new Routes(_internal, _internal, AppSettings.Empty.BlindSolveTimeout, AppSettings.Empty.NearSolveTimeout);
+        _route = new Route(_internal, AppSettings.Empty.BlindSolveTimeout, AppSettings.Empty.NearSolveTimeout);
     }
 
-    public string Name => _routes.Blind.Name;
+    public string Name => _route.Solver.Name;
 
     /// <summary>
-    /// Applies the solver choices in <paramref name="settings"/>. Cheap to call
-    /// on every settings change: nothing is rebuilt or logged unless a solver
-    /// choice or a solver path actually changed.
+    /// Applies the solver choice in <paramref name="settings"/>. Cheap to call
+    /// on every settings change: nothing is rebuilt or logged unless the solver,
+    /// a solver path or a timeout actually changed.
     /// </summary>
     public void Configure(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
 
         var wanted = (
-            Blind: settings.BlindSolver ?? SolverKind.Internal,
-            Near: settings.NearSolver ?? SolverKind.Internal,
+            Solver: settings.Solver ?? SolverKind.Internal,
             settings.AstapPath,
             settings.AspsPath,
             settings.Ps3Path,
@@ -91,25 +89,24 @@ public sealed class SelectedSolver : ISolver, IDisposable
         }
 
         _configuredFrom = wanted;
-        ISolver blind = Build(wanted.Blind, settings, "blind");
-        ISolver near = wanted.Near == wanted.Blind ? blind : Build(wanted.Near, settings, "near");
+        ISolver solver = Build(wanted.Solver, settings);
 
         _log?.Invoke(FormattableString.Invariant(
             $"Solve timeouts: {wanted.BlindTimeout.TotalSeconds:G4} s blind, {wanted.NearTimeout.TotalSeconds:G4} s near."));
 
         // One reference swap, so a solve already under way finishes on the
-        // route it started on and the next one takes the new pair whole.
-        _routes = new Routes(blind, near, wanted.BlindTimeout, wanted.NearTimeout);
+        // route it started on and the next one takes the new one whole.
+        _route = new Route(solver, wanted.BlindTimeout, wanted.NearTimeout);
     }
 
     public async Task<PlateSolveResult> SolveAsync(PlateSolveRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        Routes routes = _routes;
+        Route route = _route;
         bool near = request.ApproximateRaDegrees is not null && request.ApproximateDecDegrees is not null;
-        ISolver solver = near ? routes.Near : routes.Blind;
-        TimeSpan timeout = near ? routes.NearTimeout : routes.BlindTimeout;
+        ISolver solver = route.Solver;
+        TimeSpan timeout = near ? route.NearTimeout : route.BlindTimeout;
 
         // Whichever solver it is, a scale from a typed focal length is tried
         // first and no scale after it, inside this job's timeout (D41).
@@ -118,11 +115,11 @@ public sealed class SelectedSolver : ISolver, IDisposable
         return result.From(solver.Name);
     }
 
-    private ISolver Build(SolverKind kind, AppSettings settings, string job)
+    private ISolver Build(SolverKind kind, AppSettings settings)
     {
         if (kind == SolverKind.Internal || !Enum.IsDefined(kind))
         {
-            _log?.Invoke($"The {job} solver is {_internal.Name}.");
+            _log?.Invoke($"The solver is {_internal.Name}.");
             return _internal;
         }
 
@@ -138,12 +135,12 @@ public sealed class SelectedSolver : ISolver, IDisposable
         // "could not start" on every frame that follows.
         if (kind is SolverKind.Asps or SolverKind.Ps3 && !_canRunWindowsSolvers)
         {
-            _log?.Invoke($"The {job} solver chosen, {external.Name}, runs only on Windows. These frames will not solve " +
+            _log?.Invoke($"The solver chosen, {external.Name}, runs only on Windows. Frames will not solve " +
                          "until another solver is chosen in Settings.");
             return external;
         }
 
-        _log?.Invoke($"The {job} solver is {external.Name} at '{executable}'.");
+        _log?.Invoke($"The solver is {external.Name} at '{executable}'.");
         return external;
     }
 
@@ -169,5 +166,5 @@ public sealed class SelectedSolver : ISolver, IDisposable
         }
     }
 
-    private sealed record Routes(ISolver Blind, ISolver Near, TimeSpan BlindTimeout, TimeSpan NearTimeout);
+    private sealed record Route(ISolver Solver, TimeSpan BlindTimeout, TimeSpan NearTimeout);
 }

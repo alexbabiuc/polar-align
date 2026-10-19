@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace FreePolarAlign.Session;
@@ -136,18 +137,13 @@ public sealed record AppSettings
         double.IsFinite(seconds) && seconds >= 0.0 && seconds <= MaximumSettleSeconds;
 
     /// <summary>
-    /// The solver for frames where the pointing is unknown, or null for
-    /// <see cref="SolverKind.Internal"/>.
+    /// The solver for every frame, blind and near alike, or null for
+    /// <see cref="SolverKind.Internal"/>. One choice and not one per job:
+    /// solvers give slightly different answers for the same frame, and a
+    /// reading built from two of them moves with the solver rather than the
+    /// mount (D42).
     /// </summary>
-    public SolverKind? BlindSolver { get; init; }
-
-    /// <summary>
-    /// The solver for frames where the pointing is roughly known, or null for
-    /// <see cref="SolverKind.Internal"/>. Chosen separately from
-    /// <see cref="BlindSolver"/> because the two jobs are different: a solver
-    /// can be slow at one and fast at the other.
-    /// </summary>
-    public SolverKind? NearSolver { get; init; }
+    public SolverKind? Solver { get; init; }
 
     /// <summary>
     /// How long a blind solve may take, in seconds, or null for
@@ -312,10 +308,25 @@ public sealed class JsonFileSettingsStore : ISettingsStore
         {
             string json = File.ReadAllText(Location);
             AppSettings? settings = JsonSerializer.Deserialize<AppSettings>(json, Options);
+            if (settings is null)
+            {
+                return new SettingsLoadResult(AppSettings.Empty, $"'{Location}' held no settings; starting from defaults.");
+            }
 
-            return settings is null
-                ? new SettingsLoadResult(AppSettings.Empty, $"'{Location}' held no settings; starting from defaults.")
-                : new SettingsLoadResult(Validate(settings, out string? warning), warning);
+            AppSettings migrated = MigrateSolverChoice(settings, json, out string? migration);
+            if (migrated != settings)
+            {
+                // Written back at once, so a choice dropped in the merge is
+                // reported on one start and not on every one after. A failed
+                // write only means the migration repeats next time.
+                Save(migrated);
+            }
+
+            AppSettings valid = Validate(migrated, out string? warning);
+            string? warnings = migration is null ? warning
+                : warning is null ? migration
+                : migration + " " + warning;
+            return new SettingsLoadResult(valid, warnings);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
@@ -349,6 +360,64 @@ public sealed class JsonFileSettingsStore : ISettingsStore
                    "The session will run normally, but nothing will be remembered for next time.";
         }
     }
+
+    /// <summary>
+    /// Folds the separate blind and near solvers of 0.0.31 and earlier into the
+    /// one solver (D42). They are read from the file's own text because the
+    /// settings no longer carry them, and they are not written back.
+    ///
+    /// Where the two differed, the one that was not the built-in solver is
+    /// kept, since it was chosen rather than left at the default, and the
+    /// blind one where both were chosen. The user is told which.
+    /// </summary>
+    internal static AppSettings MigrateSolverChoice(AppSettings settings, string json, out string? warning)
+    {
+        warning = null;
+        if (settings.Solver is not null)
+        {
+            return settings;
+        }
+
+        SolverKind? blind = null;
+        SolverKind? near = null;
+        try
+        {
+            if (JsonNode.Parse(json) is JsonObject root)
+            {
+                blind = ReadSolver(root, "blindSolver");
+                near = ReadSolver(root, "nearSolver");
+            }
+        }
+        catch (JsonException)
+        {
+            return settings;
+        }
+
+        if (blind is null && near is null)
+        {
+            return settings;
+        }
+
+        SolverKind blindKind = blind ?? SolverKind.Internal;
+        SolverKind nearKind = near ?? SolverKind.Internal;
+        SolverKind kept = blindKind != SolverKind.Internal ? blindKind : nearKind;
+
+        if (blindKind != nearKind)
+        {
+            warning = $"Blind and near frames had different solvers ({blindKind} and {nearKind}). " +
+                      $"One solver now does both, and {kept} was kept. It can be changed in Settings.";
+        }
+
+        return settings with { Solver = kept == SolverKind.Internal ? null : kept };
+    }
+
+    private static SolverKind? ReadSolver(JsonObject root, string name) =>
+        root[name] is JsonValue value &&
+        value.TryGetValue(out string? text) &&
+        Enum.TryParse(text, ignoreCase: true, out SolverKind kind) &&
+        Enum.IsDefined(kind)
+            ? kind
+            : null;
 
     /// <summary>
     /// Discards stored values that cannot be right. A latitude of 200 degrees or
@@ -400,16 +469,10 @@ public sealed class JsonFileSettingsStore : ISettingsStore
             result = result with { SettleSeconds = null };
         }
 
-        if (result.BlindSolver is { } blind && !Enum.IsDefined(blind))
+        if (result.Solver is { } solver && !Enum.IsDefined(solver))
         {
-            complaints.Add("the stored blind solver was not one this version knows and has been discarded");
-            result = result with { BlindSolver = null };
-        }
-
-        if (result.NearSolver is { } near && !Enum.IsDefined(near))
-        {
-            complaints.Add("the stored near solver was not one this version knows and has been discarded");
-            result = result with { NearSolver = null };
+            complaints.Add("the stored solver was not one this version knows and has been discarded");
+            result = result with { Solver = null };
         }
 
         if (result.BlindSolveTimeoutSeconds is { } blindTimeout && !AppSettings.IsValidSolveTimeout(blindTimeout))

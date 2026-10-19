@@ -39,13 +39,11 @@ public sealed class SetSolverCommandTests : IDisposable
     }
 
     [Fact]
-    public void SetsTheSolver_ForBothJobs()
+    public void SetsTheSolver()
     {
         Assert.Equal(SetSolverCommand.Succeeded, Run("--set-solver", "Astap"));
 
-        AppSettings saved = _store.Load().Settings;
-        Assert.Equal(SolverKind.Astap, saved.BlindSolver);
-        Assert.Equal(SolverKind.Astap, saved.NearSolver);
+        Assert.Equal(SolverKind.Astap, _store.Load().Settings.Solver);
     }
 
     /// <summary>
@@ -63,19 +61,17 @@ public sealed class SetSolverCommandTests : IDisposable
         Assert.Equal(site, saved.Site);
         Assert.Equal(240.0, saved.FocalLengthMillimetres);
         Assert.Equal(5, saved.DefaultCapturePoints);
-        Assert.Equal(SolverKind.Ps3, saved.NearSolver);
+        Assert.Equal(SolverKind.Ps3, saved.Solver);
     }
 
     [Fact]
     public void Internal_IsStoredTheWayAFreshInstallStoresIt()
     {
-        Assert.Null(_store.Save(AppSettings.Empty with { BlindSolver = SolverKind.Asps, NearSolver = SolverKind.Asps }));
+        Assert.Null(_store.Save(AppSettings.Empty with { Solver = SolverKind.Asps }));
 
         Assert.Equal(SetSolverCommand.Succeeded, Run("--set-solver", "internal"));
 
-        AppSettings saved = _store.Load().Settings;
-        Assert.Null(saved.BlindSolver);
-        Assert.Null(saved.NearSolver);
+        Assert.Null(_store.Load().Settings.Solver);
     }
 
     /// <summary>
@@ -86,7 +82,7 @@ public sealed class SetSolverCommandTests : IDisposable
     public void AnUnreadableSettingsFile_IsLeftExactlyAsItWas()
     {
         Directory.CreateDirectory(_directory);
-        const string unreadable = "{ \"blindSolver\": \"SomethingFromANewerVersion\" }";
+        const string unreadable = "{ \"solver\": \"SomethingFromANewerVersion\" }";
         File.WriteAllText(_store.Location, unreadable);
 
         Assert.Equal(SetSolverCommand.SettingsUnreadable, Run("--set-solver", "Astap"));

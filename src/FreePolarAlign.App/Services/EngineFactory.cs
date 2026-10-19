@@ -264,13 +264,12 @@ public static class EngineFactory
     }
 
     /// <summary>
-    /// Whether Watney does either job. A missing database is a problem only
+    /// Whether Watney is the solver. A missing database is a problem only
     /// then: an installation that chose ASTAP instead of downloading packs
     /// (D39) would otherwise be told on every start that something is broken.
     /// </summary>
     internal static bool UsesInternalSolver(AppSettings settings) =>
-        (settings.BlindSolver ?? SolverKind.Internal) == SolverKind.Internal ||
-        (settings.NearSolver ?? SolverKind.Internal) == SolverKind.Internal;
+        (settings.Solver ?? SolverKind.Internal) == SolverKind.Internal;
 
     private static bool HasUsableQuadDatabase(string directory) =>
         Directory.Exists(directory) && Directory.EnumerateFiles(directory, "*.qdb", SearchOption.AllDirectories).Any();

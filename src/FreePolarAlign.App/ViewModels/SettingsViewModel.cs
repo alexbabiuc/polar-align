@@ -37,8 +37,7 @@ public sealed class SettingsViewModel : ViewModelBase
     private bool _mountWritePending;
 
     private string _capturePointsText;
-    private SolverOption _blindSolver;
-    private SolverOption _nearSolver;
+    private SolverOption _solver;
     private string _blindTimeoutText;
     private string _nearTimeoutText;
     private string _aspsPath;
@@ -85,8 +84,7 @@ public sealed class SettingsViewModel : ViewModelBase
         _longitudeText = current.Site?.LongitudeDegrees.ToString("F5", CultureInfo.InvariantCulture) ?? string.Empty;
         _heightText = current.Site?.HeightMeters.ToString("F0", CultureInfo.InvariantCulture) ?? string.Empty;
         _focalLengthText = FormatFocalLength(current.FocalLengthMillimetres);
-        _blindSolver = OptionFor(current.BlindSolver);
-        _nearSolver = OptionFor(current.NearSolver);
+        _solver = OptionFor(current.Solver);
         _blindTimeoutText = Seconds(current.BlindSolveTimeout);
         _nearTimeoutText = Seconds(current.NearSolveTimeout);
         _aspsPath = current.AspsPath ?? string.Empty;
@@ -286,16 +284,11 @@ public sealed class SettingsViewModel : ViewModelBase
         set => SetField(ref _settleText, value);
     }
 
-    public SolverOption BlindSolver
+    /// <summary>The solver for every frame, blind and near alike (D42).</summary>
+    public SolverOption Solver
     {
-        get => _blindSolver;
-        set => SetField(ref _blindSolver, value);
-    }
-
-    public SolverOption NearSolver
-    {
-        get => _nearSolver;
-        set => SetField(ref _nearSolver, value);
+        get => _solver;
+        set => SetField(ref _solver, value);
     }
 
     /// <summary>The blind solve timeout, in seconds.</summary>
@@ -390,8 +383,7 @@ public sealed class SettingsViewModel : ViewModelBase
             Site = CanChangeSite ? site : _original.Site,
             FocalLengthMillimetres = focalLengthUnchanged ? _original.FocalLengthMillimetres : focalLength,
             IsFocalLengthSolved = focalLengthUnchanged && _original.IsFocalLengthSolved,
-            BlindSolver = BlindSolver.Kind,
-            NearSolver = NearSolver.Kind,
+            Solver = Solver.Kind,
             BlindSolveTimeoutSeconds = blindTimeout,
             NearSolveTimeoutSeconds = nearTimeout,
             AspsPath = NullIfBlank(AspsPath),

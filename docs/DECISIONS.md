@@ -1531,15 +1531,16 @@ a real night, in both hemispheres if possible.
 ## D30 — The solver choice is stored before the solvers exist
 
 The settings window (opened from the Settings button in the left column)
-stores a capture-point count, a blind solver, a near solver, and the
-paths of ASPS, ASTAP and PS3. Each solver choice is one of Internal (Watney),
-ASPS, ASTAP or PS3. All four are implemented (D31, D32).
+stores a capture-point count, a solver, and the paths of ASPS, ASTAP and PS3.
+The solver is one of Internal (Watney), ASPS, ASTAP or PS3. All four are
+implemented (D31, D32).
 
 **Why.** Asked for ahead of the adapters, so the settings file and the window
 do not change shape when they arrive, and an installed copy never has to
-migrate a stored choice. Blind and near are separate settings because they are
-separate jobs (no pointing known, against pointing roughly known), and a solver
-can be good at one and slow at the other.
+migrate a stored choice. Blind and near were separate settings at first, because
+they are separate jobs (no pointing known, against pointing roughly known) and a
+solver can be good at one and slow at the other. D42 merged them, and an
+installed copy did have to migrate after all.
 
 **Stored by name.** The enum is written as text, so reordering it cannot
 reassign a stored choice to a different solver. A number outside the enum, or a
@@ -1554,10 +1555,11 @@ arrived.
 
 ## D31 — The chosen solver is the only solver, and the log names it
 
-A frame goes to the blind solver when the request carries no position hint and
-to the near solver when it does. The session adds a hint exactly when a mount is
-connected and reporting, so that is the line D30's two settings draw. Whichever
-solver is chosen for a frame is the only one asked. A frame it cannot solve is
+Every frame goes to the one solver the settings chose (D42). Until 0.0.31 a frame
+went to the blind solver when the request carried no position hint and to the
+near solver when it did. The session adds a hint exactly when a mount is
+connected and reporting, and that line now only picks the timeout (D33). The
+chosen solver is the only one asked. A frame it cannot solve is
 reported as unsolved, and every logged sample, live reading and failure names the
 solver it came from.
 
@@ -1579,7 +1581,8 @@ answered each frame anyway.
 
 Both changes follow from that. With one solver per job, a live reading cannot
 mix sources. With the solver named on every line, the next log can confirm or
-rule this out.
+rule this out. D42 then took the same reasoning across jobs, to one solver for
+every frame.
 
 **ASPS and PS3 where they cannot run.** Chosen on macOS or Linux they are still
 the solver asked, and every solve fails to start. The log says once, when the
@@ -2100,11 +2103,11 @@ ASTAP, ASPS and PlateSolve 3 (D30). All run on Windows, and each needs its own
 installation and its own star data, which this installer does not provide. The
 page looks in the same default locations as the adapters and says plainly when
 it cannot find the program, without refusing to continue. The choice is set as
-both the blind and the near solver.
+the solver for every frame (D42).
 
 The installer does not edit `settings.json` itself. It runs
 `FreePolarAlign.App.exe --set-solver <name>`, which opens no window. The switch
-loads the settings, changes only the two solver choices, and saves through
+loads the settings, changes only the solver choice, and saves through
 `JsonFileSettingsStore`. That keeps D30's validation and the store's atomic
 write, and leaves the site, the optics and everything else the user set alone.
 A settings file that exists but cannot be read is left untouched and the switch
@@ -2251,3 +2254,37 @@ Untested with `14-20`.
 other reason, such as cloud, can take up to twice as long to fail, within the
 same job timeout. Under Watney the internal solver's redrawn-frame retry (D33)
 runs inside each of the two tries, so up to four attempts share that timeout.
+
+---
+
+## D42 — One solver for every frame, blind and near alike
+
+*Decided 2026-10-19.*
+
+The settings hold one solver, used for every frame. The blind and near solver
+settings of D30 are gone. Blind and near frames still have their own timeouts
+(D33), since a search of the whole sky can fairly take longer than one of a few
+degrees.
+
+**Why.** Solvers give slightly different answers for the same frame: different
+star catalogues, different fits and a different reference pixel for the centre.
+D31 found a live reading moving in azimuth while only the altitude bolt turned,
+when its frames came from two solvers. It fixed that within each job and left
+the two jobs free to differ. A session moves between the jobs, though. It solves
+blind until a mount reports, and a frame can lose its position hint and be solved
+blind again. Each switch could then change the solver in the middle of a
+reading, which is the same fault by another route. One solver for both jobs
+closes that route. The user asked for this.
+
+**What it costs.** No more ASTAP for a blind solve with Watney for a near one,
+or any other split by speed. Nobody has reported wanting that, and D41's retry
+without a scale gives every solver a blind fallback of its own.
+
+**Settings from 0.0.31 and earlier** stored `blindSolver` and `nearSolver`. The
+first load reads them from the file's text and stores one `solver`. When they
+agreed, as the installer's `--set-solver` wrote them, nothing is said. When they
+differed, the one that is not the built-in solver is kept, since it was chosen
+rather than left at the default, and the blind one is kept when both were chosen.
+The load warning says which one was kept, and the file is written back straight
+away. Otherwise the warning would repeat on every start until something else
+saved the settings. A file that already has `solver` ignores the old keys.

@@ -78,31 +78,18 @@
       <StackPanel Grid.Column="1" Spacing="12">
 
         <StackPanel Spacing="4">
-          <TextBlock FontWeight="Bold" Text="Solvers" />
-          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="4">
-            <TextBlock Grid.Row="0" Grid.Column="0" Text="Blind solver" VerticalAlignment="Center" />
-            <ComboBox Grid.Row="0" Grid.Column="1" HorizontalAlignment="Stretch"
-                      ItemsSource="{x:Static vm:SettingsViewModel.SolverOptions}"
-                      SelectedItem="{Binding BlindSolver, Mode=TwoWay}">
-              <ComboBox.ItemTemplate>
-                <DataTemplate x:DataType="vm:SolverOption">
-                  <TextBlock Text="{Binding Label}" />
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="Near solver" VerticalAlignment="Center" />
-            <ComboBox Grid.Row="1" Grid.Column="1" HorizontalAlignment="Stretch"
-                      ItemsSource="{x:Static vm:SettingsViewModel.SolverOptions}"
-                      SelectedItem="{Binding NearSolver, Mode=TwoWay}">
-              <ComboBox.ItemTemplate>
-                <DataTemplate x:DataType="vm:SolverOption">
-                  <TextBlock Text="{Binding Label}" />
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
-          </Grid>
+          <TextBlock FontWeight="Bold" Text="Solver" />
+          <ComboBox HorizontalAlignment="Stretch"
+                    ItemsSource="{x:Static vm:SettingsViewModel.SolverOptions}"
+                    SelectedItem="{Binding Solver, Mode=TwoWay}">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:SolverOption">
+                <TextBlock Text="{Binding Label}" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
           <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
-                     Text="Blind is for frames where the pointing is unknown, near for frames where it is roughly known. Only the chosen solver is used: a frame it cannot solve is reported as unsolved. ASPS and PS3 run only on Windows." />
+                     Text="Used for every frame, whether the pointing is unknown or roughly known, so readings never mix two solvers' answers. A frame it cannot solve is reported as unsolved. ASPS and PS3 run only on Windows." />
         </StackPanel>
 
         <StackPanel Spacing="4">
@@ -114,7 +101,7 @@
             <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NearTimeoutText, Mode=TwoWay}" />
           </Grid>
           <TextBlock FontSize="12" Foreground="#A8A8A8" TextWrapping="Wrap"
-                     Text="How long a frame may take to solve before it is given up as unsolved, whichever solver is chosen. Between 1 and 600 seconds." />
+                     Text="How long a frame may take to solve before it is given up as unsolved. Blind is for frames where the pointing is unknown, near for frames where it is roughly known. Between 1 and 600 seconds." />
         </StackPanel>
 
         <StackPanel Spacing="4">

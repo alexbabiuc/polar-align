@@ -302,8 +302,7 @@ public sealed class SettingsStoreTests : IDisposable
         {
             DefaultCapturePoints = 8,
             SweepDegrees = 92.5,
-            BlindSolver = SolverKind.Astap,
-            NearSolver = SolverKind.Internal,
+            Solver = SolverKind.Astap,
             AspsPath = "/opt/asps",
             AstapPath = "/opt/astap",
             Ps3Path = "/opt/ps3",
@@ -375,13 +374,87 @@ public sealed class SettingsStoreTests : IDisposable
     {
         string path = PathIn("future.json");
         Directory.CreateDirectory(_directory);
-        File.WriteAllText(path, "{\"focalLengthMillimetres\": 382.5, \"blindSolver\": 99, \"defaultCapturePoints\": 1}");
+        File.WriteAllText(path, "{\"focalLengthMillimetres\": 382.5, \"solver\": 99, \"defaultCapturePoints\": 1}");
 
         SettingsLoadResult result = new JsonFileSettingsStore(path).Load();
 
         Assert.Equal(382.5, result.Settings.FocalLengthMillimetres);
-        Assert.Null(result.Settings.BlindSolver);
+        Assert.Null(result.Settings.Solver);
         Assert.Null(result.Settings.DefaultCapturePoints);
         Assert.NotNull(result.Warning);
+    }
+
+    /// <summary>
+    /// 0.0.31 and earlier stored a solver per job. A file from then keeps its
+    /// choice when the two agreed, as the installer's --set-solver wrote them.
+    /// </summary>
+    [Fact]
+    public void SeparateSolversThatAgreed_BecomeTheOneSolver_Silently()
+    {
+        string path = PathIn("legacy-same.json");
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(path, "{\"blindSolver\": \"Astap\", \"nearSolver\": \"Astap\", \"sweepDegrees\": 80}");
+
+        SettingsLoadResult result = new JsonFileSettingsStore(path).Load();
+
+        Assert.Equal(SolverKind.Astap, result.Settings.Solver);
+        Assert.Equal(80.0, result.Settings.SweepDegrees);
+        Assert.Null(result.Warning);
+    }
+
+    /// <summary>
+    /// Where they differed, the one chosen over the built-in default is kept, and
+    /// the user is told, since one of their choices has gone (D42).
+    /// </summary>
+    [Theory]
+    [InlineData("\"blindSolver\": \"Asps\"", SolverKind.Asps)]
+    [InlineData("\"nearSolver\": \"Astap\"", SolverKind.Astap)]
+    [InlineData("\"blindSolver\": \"Internal\", \"nearSolver\": \"Ps3\"", SolverKind.Ps3)]
+    [InlineData("\"blindSolver\": \"Asps\", \"nearSolver\": \"Astap\"", SolverKind.Asps)]
+    public void SeparateSolversThatDiffered_KeepTheChosenOne_AndSaySo(string stored, SolverKind kept)
+    {
+        string path = PathIn("legacy-differ.json");
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(path, "{" + stored + "}");
+
+        SettingsLoadResult result = new JsonFileSettingsStore(path).Load();
+
+        Assert.Equal(kept, result.Settings.Solver);
+        Assert.Contains($"{kept} was kept", result.Warning);
+
+        // Said on one start, not on every one after.
+        SettingsLoadResult next = new JsonFileSettingsStore(path).Load();
+        Assert.Equal(kept, next.Settings.Solver);
+        Assert.Null(next.Warning);
+    }
+
+    /// <summary>The old keys are read once and not written back.</summary>
+    [Fact]
+    public void SeparateSolvers_AreNotWrittenBack()
+    {
+        string path = PathIn("legacy-resave.json");
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(path, "{\"blindSolver\": \"Astap\", \"nearSolver\": \"Astap\"}");
+        var store = new JsonFileSettingsStore(path);
+
+        Assert.Null(store.Save(store.Load().Settings));
+
+        string json = File.ReadAllText(path);
+        Assert.DoesNotContain("blindSolver", json);
+        Assert.Contains("\"solver\": \"Astap\"", json);
+    }
+
+    /// <summary>A file written since has its own answer, which the old keys do not override.</summary>
+    [Fact]
+    public void TheOneSolver_WinsOverLeftoverSeparateOnes()
+    {
+        string path = PathIn("legacy-both.json");
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(path, "{\"solver\": \"Ps3\", \"blindSolver\": \"Astap\"}");
+
+        SettingsLoadResult result = new JsonFileSettingsStore(path).Load();
+
+        Assert.Equal(SolverKind.Ps3, result.Settings.Solver);
+        Assert.Null(result.Warning);
     }
 }

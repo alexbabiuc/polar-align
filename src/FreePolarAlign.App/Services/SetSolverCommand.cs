@@ -3,8 +3,8 @@ using FreePolarAlign.Session;
 namespace FreePolarAlign.App.Services;
 
 /// <summary>
-/// <c>--set-solver &lt;name&gt;</c>: sets one solver for both the blind and the
-/// near job, saves, and exits without opening a window. The installer runs it
+/// <c>--set-solver &lt;name&gt;</c>: sets the solver for every frame (D42), saves,
+/// and exits without opening a window. The installer runs it
 /// when no index pack was chosen (D39).
 ///
 /// It goes through the settings store rather than having the installer write
@@ -51,7 +51,7 @@ internal static class SetSolverCommand
         // Null is how the settings say Internal, so a choice of Internal reads
         // back exactly as a fresh install's would.
         SolverKind? stored = solver == SolverKind.Internal ? null : solver;
-        string? problem = store.Save(loaded.Settings with { BlindSolver = stored, NearSolver = stored });
+        string? problem = store.Save(loaded.Settings with { Solver = stored });
         if (problem is not null)
         {
             error.WriteLine(problem);

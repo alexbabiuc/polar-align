@@ -7,9 +7,9 @@ using Xunit;
 namespace FreePolarAlign.Tests.App;
 
 /// <summary>
-/// The solver choice in the settings window decides which solver a frame goes
-/// to, blind and near separately, and that solver alone: a frame it cannot
-/// solve is reported unsolved, never quietly handed to another (D31).
+/// The solver choice in the settings window decides which solver every frame
+/// goes to, blind and near alike (D42), and that solver alone: a frame it
+/// cannot solve is reported unsolved, never quietly handed to another (D31).
 /// </summary>
 public class SelectedSolverTests
 {
@@ -96,11 +96,11 @@ public class SelectedSolverTests
     /// failure is now the answer.
     /// </summary>
     [Fact]
-    public async Task AstapForBlind_ItsFailureIsReported_NotHandedToTheInternalSolver()
+    public async Task Astap_ItsFailureIsReported_NotHandedToTheInternalSolver()
     {
         var inner = new CountingSolver();
         var solver = Create(inner);
-        solver.Configure(new AppSettings { BlindSolver = SolverKind.Astap });
+        solver.Configure(new AppSettings { Solver = SolverKind.Astap });
 
         PlateSolveResult result = await solver.SolveAsync(Blind);
 
@@ -109,32 +109,24 @@ public class SelectedSolverTests
         Assert.Equal("ASTAP", result.SolverName);
     }
 
+    /// <summary>
+    /// One solver for blind and near frames alike (D42). Solvers give slightly
+    /// different answers for the same frame, so a reading that took its first
+    /// position from one and the rest from another moved with the solver.
+    /// </summary>
     [Fact]
-    public async Task AstapForBlindOnly_LeavesNearFramesWithTheInternalSolver()
+    public async Task ChosenSolver_SolvesBlindAndNearFramesAlike()
     {
         var inner = new CountingSolver();
         var solver = Create(inner);
-        solver.Configure(new AppSettings { BlindSolver = SolverKind.Astap, NearSolver = SolverKind.Internal });
-
-        PlateSolveResult result = await solver.SolveAsync(Near);
-
-        Assert.True(result.Success);
-        Assert.Single(inner.Requests);
-        Assert.Equal("Watney", result.SolverName);
-    }
-
-    [Fact]
-    public async Task AstapForNear_IsUsedForHintedFrames()
-    {
-        var inner = new CountingSolver();
-        var solver = Create(inner);
-        solver.Configure(new AppSettings { NearSolver = SolverKind.Astap });
+        solver.Configure(new AppSettings { Solver = SolverKind.Astap });
 
         PlateSolveResult near = await solver.SolveAsync(Near);
         PlateSolveResult blind = await solver.SolveAsync(Blind);
 
         Assert.Equal("ASTAP", near.SolverName);
-        Assert.Equal("Watney", blind.SolverName);
+        Assert.Equal("ASTAP", blind.SolverName);
+        Assert.Empty(inner.Requests);
     }
 
     [Fact]
@@ -143,7 +135,7 @@ public class SelectedSolverTests
         var log = new List<string>();
         var solver = Create(new CountingSolver(), log);
 
-        solver.Configure(new AppSettings { BlindSolver = SolverKind.Astap, AstapPath = "/opt/astap/astap_cli" });
+        solver.Configure(new AppSettings { Solver = SolverKind.Astap, AstapPath = "/opt/astap/astap_cli" });
 
         Assert.Contains(log, line => line.Contains("'/opt/astap/astap_cli'"));
     }
@@ -155,7 +147,7 @@ public class SelectedSolverTests
     {
         var inner = new CountingSolver();
         var solver = Create(inner, windows: true);
-        solver.Configure(new AppSettings { BlindSolver = kind });
+        solver.Configure(new AppSettings { Solver = kind });
 
         PlateSolveResult result = await solver.SolveAsync(Blind);
 
@@ -178,7 +170,7 @@ public class SelectedSolverTests
         var log = new List<string>();
         var solver = Create(inner, log, windows: false);
 
-        solver.Configure(new AppSettings { NearSolver = kind });
+        solver.Configure(new AppSettings { Solver = kind });
         PlateSolveResult result = await solver.SolveAsync(Near);
 
         Assert.False(result.Success);
@@ -193,12 +185,12 @@ public class SelectedSolverTests
     {
         var log = new List<string>();
         var solver = Create(new CountingSolver(), log);
-        solver.Configure(new AppSettings { BlindSolver = kind });
+        solver.Configure(new AppSettings { Solver = kind });
         log.Clear();
 
         solver.Configure(kind == SolverKind.Asps
-            ? new AppSettings { BlindSolver = kind, AspsPath = @"D:\Tools\PlateSolver.exe" }
-            : new AppSettings { BlindSolver = kind, Ps3Path = @"D:\Tools\PlateSolve3.80.exe" });
+            ? new AppSettings { Solver = kind, AspsPath = @"D:\Tools\PlateSolver.exe" }
+            : new AppSettings { Solver = kind, Ps3Path = @"D:\Tools\PlateSolve3.80.exe" });
 
         Assert.Contains(log, line => line.Contains(@"D:\Tools\"));
     }
@@ -242,10 +234,10 @@ public class SelectedSolverTests
     {
         var log = new List<string>();
         var solver = Create(new CountingSolver(), log);
-        solver.Configure(new AppSettings { BlindSolver = SolverKind.Astap });
+        solver.Configure(new AppSettings { Solver = SolverKind.Astap });
         int logged = log.Count;
 
-        solver.Configure(new AppSettings { BlindSolver = SolverKind.Astap, ExposureSeconds = 2.0 });
+        solver.Configure(new AppSettings { Solver = SolverKind.Astap, ExposureSeconds = 2.0 });
 
         Assert.Equal(logged, log.Count);
     }
@@ -256,8 +248,8 @@ public class SelectedSolverTests
         var inner = new CountingSolver();
         var log = new List<string>();
         var solver = Create(inner, log);
-        solver.Configure(new AppSettings { BlindSolver = SolverKind.Astap });
-        solver.Configure(new AppSettings { BlindSolver = SolverKind.Internal });
+        solver.Configure(new AppSettings { Solver = SolverKind.Astap });
+        solver.Configure(new AppSettings { Solver = SolverKind.Internal });
         log.Clear();
 
         await solver.SolveAsync(Blind);

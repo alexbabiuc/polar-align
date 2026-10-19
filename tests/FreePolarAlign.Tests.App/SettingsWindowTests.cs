@@ -108,8 +108,7 @@ public class SettingsWindowTests
         (SettingsViewModel window, _, _) = Build();
 
         Assert.Equal("6", window.CapturePointsText);
-        Assert.Equal(SolverKind.Internal, window.BlindSolver.Kind);
-        Assert.Equal(SolverKind.Internal, window.NearSolver.Kind);
+        Assert.Equal(SolverKind.Internal, window.Solver.Kind);
         Assert.Equal(string.Empty, window.AstapPath);
         Assert.Equal("20", window.BlindTimeoutText);
         Assert.Equal("5", window.NearTimeoutText);
@@ -153,8 +152,7 @@ public class SettingsWindowTests
         (SettingsViewModel window, List<AppSettings> saved, Func<int> closed) = Build();
 
         window.CapturePointsText = "9";
-        window.BlindSolver = SettingsViewModel.SolverOptions.Single(o => o.Kind == SolverKind.Astap);
-        window.NearSolver = SettingsViewModel.SolverOptions.Single(o => o.Kind == SolverKind.Ps3);
+        window.Solver = SettingsViewModel.SolverOptions.Single(o => o.Kind == SolverKind.Astap);
         window.AspsPath = "  /opt/asps  ";
         window.AstapPath = "/opt/astap";
         window.Ps3Path = "";
@@ -162,8 +160,7 @@ public class SettingsWindowTests
 
         AppSettings result = Assert.Single(saved);
         Assert.Equal(9, result.DefaultCapturePoints);
-        Assert.Equal(SolverKind.Astap, result.BlindSolver);
-        Assert.Equal(SolverKind.Ps3, result.NearSolver);
+        Assert.Equal(SolverKind.Astap, result.Solver);
         Assert.Equal("/opt/asps", result.AspsPath);
         Assert.Equal("/opt/astap", result.AstapPath);
         Assert.Null(result.Ps3Path);
@@ -237,10 +234,10 @@ public class SettingsWindowTests
             settingsChanged: changes.Add);
 
         SettingsViewModel window = viewModel.CreateSettingsViewModel(() => { });
-        window.BlindSolver = SettingsViewModel.SolverOptions.Single(o => o.Kind == SolverKind.Astap);
+        window.Solver = SettingsViewModel.SolverOptions.Single(o => o.Kind == SolverKind.Astap);
         window.SaveCommand.Execute(null);
 
-        Assert.Equal(SolverKind.Astap, changes.Single().BlindSolver);
+        Assert.Equal(SolverKind.Astap, changes.Single().Solver);
     }
 
     // ---- Sequence ----

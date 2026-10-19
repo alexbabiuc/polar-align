@@ -2062,6 +2062,14 @@ On a first install `00-07` and `08-09` are ticked. They are what D13 bundled,
 and they covered 1.2° to 7.4° frames when measured. When any pack is already
 installed, exactly those are ticked instead, so an upgrade adds nothing unasked.
 
+*Revised 2026-10-19:* when ASTAP, ASPS or PlateSolve3 is found where it is
+usually installed, a first install ticks nothing, and the page says which solver
+was found. The solver page that follows offers that solver, already selected.
+Someone who has a solver already did not ask for 760 MB of index, and since D41
+ASTAP solves narrower fields from a typed focal length than any offered pack
+covers. An upgrade is unchanged. Unticking installed packs would route it
+through the solver page and replace a solver choice the user already made.
+
 **Why nothing is bundled.**
 - **Size.** Bundling decided the installer's size. The pair alone made the
   build 1.0 GB unpacked, against about 250 MB without them (`dist/`,

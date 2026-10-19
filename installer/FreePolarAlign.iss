@@ -134,6 +134,31 @@ begin
   Result := True;
 end;
 
+function AnySolverFound: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 0 to 2 do
+    if SolverFound(I) then
+      Result := True;
+end;
+
+{ Why a first install starts with nothing ticked, said where it is seen. }
+function FoundSolverNote: String;
+var
+  I: Integer;
+begin
+  Result := '';
+  if AnyPackInstalledBefore then
+    Exit;
+  for I := 2 downto 0 do
+    if SolverFound(I) then
+      Result := SolverNames[I];
+  if Result <> '' then
+    Result := ' ' + Result + ' is already installed, so none is ticked.';
+end;
+
 procedure InitializeWizard;
 var
   I, Found: Integer;
@@ -155,6 +180,10 @@ begin
   SolverNames[1] := 'ASPS (All Sky Plate Solver)';
   SolverNames[2] := 'PlateSolve 3';
 
+  { Before the page, whose text depends on it. }
+  for I := 0 to 3 do
+    PackInstalledBefore[I] := PackIsInstalled(I);
+
   PackPage := CreateInputOptionPage(wpSelectDir,
     'Star index',
     'Which frame widths will you plate-solve?',
@@ -163,12 +192,11 @@ begin
     'Frame width is about the sensor diagonal divided by the focal length. A typical guide camera ' +
     '(6.4 mm diagonal) is wide field up to about 200 mm, medium to 300 mm, narrow to 450 mm and ' +
     'very narrow to 600 mm. Narrower frames need another solver.' + #13#10#13#10 +
-    'Untick them all to use another plate solver instead.',
+    'Untick them all to use another plate solver instead.' + FoundSolverNote,
     False, False);
 
   for I := 0 to 3 do
   begin
-    PackInstalledBefore[I] := PackIsInstalled(I);
     PackDownloaded[I] := False;
     PackOutcome[I] := '';
     Caption := PackNames[I];
@@ -178,12 +206,14 @@ begin
   end;
 
   { An upgrade keeps what is there and adds nothing unasked. A first install
-    starts from the two wide packs, which cover most guide scopes (D39). }
+    starts from the two wide packs, which cover most guide scopes, unless
+    another solver is already installed: then nothing is ticked, the solver
+    page offers the one found, and nothing is downloaded unasked (D39). }
   for I := 0 to 3 do
     if AnyPackInstalledBefore then
       PackPage.Values[I] := PackInstalledBefore[I]
     else
-      PackPage.Values[I] := I < 2;
+      PackPage.Values[I] := (I < 2) and not AnySolverFound;
 
   SolverPage := CreateInputOptionPage(PackPage.ID,
     'Plate solver',

@@ -991,10 +991,16 @@ directly above the control.
 ~~It shares a row with the brightness slider rather than taking one of its own. A
 second row cost the picture 38 px, which at the minimum window size with the
 install warnings showing put it under the floor the layout test holds it to.~~
-*Revised 2026-11-09:* it now has a row of its own with the binning picker
-(D43). One row of four labelled controls overran the panel's 312 px at the
-minimum window size, and the install warnings banner that made a second row too
-costly is gone. The layout tests pass with it.
+*Revised 2026-11-09 (0.0.35):* it sits with the binning picker (D43) at the
+right of the brightness slider, which takes the rest of the row, as the user
+asked. At the minimum window size the panel is 312 px wide, and one row of four
+labelled controls overran it by 16 px with the slider already at nothing. The
+user chose wrapping over a wider minimum window or unlabelled pickers. The
+pickers move to a right-aligned row of their own only when the slider would be
+left under 160 px. The panel measures this, with no fixed breakpoint, so a
+change of label or font moves the wrap point with it. The second row costs
+the picture 38 px, and with the install warnings banner gone the layout tests
+show it can spare them.
 
 ~~**Why it is read at sequence start rather than sent as a command.** It is not
 device state. The session passes it on every capture, so changing it mid-sequence

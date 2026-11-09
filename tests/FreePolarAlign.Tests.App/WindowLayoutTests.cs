@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.LogicalTree;
+using FreePolarAlign.App.Controls;
 using FreePolarAlign.App.ViewModels;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Tests.Support;
@@ -373,6 +374,54 @@ public class WindowLayoutTests
             {
                 window.Close();
             }
+        });
+    }
+
+    /// <summary>
+    /// The exposure and binning pickers sit at the right of the brightness
+    /// slider, flush with the panel's right edge, and the slider takes the rest
+    /// of the row -- at the window's default size, which is where the user
+    /// asked for it.
+    /// </summary>
+    [Theory]
+    [InlineData(1380.0, 880.0)]
+    [InlineData(1920.0, 1080.0)]
+    public void ThePickersSitRightOfTheSlider_WhichFillsTheRest(double width, double height)
+    {
+        WithWindow(width, height, withWarnings: false, window =>
+        {
+            FillThenWrapPanel row = window.GetLogicalDescendants().OfType<FillThenWrapPanel>().Single();
+            Control leading = (Control)row.Children[0];
+            Control trailing = (Control)row.Children[1];
+            Slider slider = leading.GetLogicalDescendants().OfType<Slider>().Single();
+
+            Assert.False(row.IsWrapped, $"at {width}x{height} the pickers wrapped below the slider");
+            Assert.Equal(row.Bounds.Width, trailing.Bounds.Right, 1);
+            Assert.Equal(trailing.Bounds.Top, leading.Bounds.Top, 1);
+
+            Point sliderRight = slider.TranslatePoint(new Point(slider.Bounds.Width, 0), row)!.Value;
+            Assert.Equal(trailing.Bounds.Left - row.Spacing, sliderRight.X, 1);
+        });
+    }
+
+    /// <summary>
+    /// Where one row would leave the slider too short to use, the pickers take
+    /// a row of their own below it, still at the right, rather than the row
+    /// overrunning the panel.
+    /// </summary>
+    [Fact]
+    public void AtTheMinimumSize_ThePickersWrapBelowTheSlider()
+    {
+        WithWindow(1100.0, 720.0, withWarnings: false, window =>
+        {
+            FillThenWrapPanel row = window.GetLogicalDescendants().OfType<FillThenWrapPanel>().Single();
+            Control leading = (Control)row.Children[0];
+            Control trailing = (Control)row.Children[1];
+
+            Assert.True(row.IsWrapped);
+            Assert.True(trailing.Bounds.Top >= leading.Bounds.Bottom);
+            Assert.Equal(row.Bounds.Width, trailing.Bounds.Right, 1);
+            Assert.Equal(row.Bounds.Width, leading.Bounds.Width, 1);
         });
     }
 }

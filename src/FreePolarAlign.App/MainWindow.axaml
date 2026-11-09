@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:FreePolarAlign.App.ViewModels"
+        xmlns:controls="using:FreePolarAlign.App.Controls"
         xmlns:devices="using:FreePolarAlign.Devices"
         xmlns:engine="using:FreePolarAlign.Core.Engine"
         x:Class="FreePolarAlign.App.MainWindow"
@@ -311,14 +312,15 @@
               is looked at: too long an exposure shows up as a washed-out frame
               in the picture above.
 
-              Two rows, brightness above the pickers. They were one row until
-              binning joined them (D43), and at the minimum window size the
-              panel is 312px wide, which one row of four labelled controls
-              overran. The second row costs the picture 38px; that once took it
-              under the layout test's 80px floor, but only with the install
-              warnings banner the window no longer has.
+              One row, the pickers at the right and the slider taking whatever
+              width is left, wrapping the pickers onto a row of their own below
+              only when the slider would be left too short to use. At the
+              minimum window size the panel is 312px wide, which the labelled
+              pickers alone nearly fill (D43); there the second row costs the
+              picture 38px, which the layout tests show it can spare.
             -->
-            <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6" Margin="0,6,0,0">
+            <controls:FillThenWrapPanel DockPanel.Dock="Bottom" Spacing="8" LeadingMinWidth="160" Margin="0,6,0,0">
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
               <TextBlock Grid.Column="0" Classes="label" Text="Brightness" VerticalAlignment="Center" />
               <!--
                 Height pinned because the stock control reserves 50px for a
@@ -330,7 +332,9 @@
                       TickFrequency="0.01" IsSnapToTickEnabled="True" Height="32" VerticalAlignment="Center"
                       ToolTip.Tip="The frame's darkest pixel is always black and its brightest always white. This moves the midpoint between them, so nothing is clipped at either end whichever way it is dragged. The travel stops short of both ends on purpose: past them the picture stops gaining contrast and only fades." />
 
-              <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="8">
+            </Grid>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
               <TextBlock Classes="label" Text="Exposure" VerticalAlignment="Center" />
               <!--
                 Enabled during a sequence too (D22 as revised): exposure changes
@@ -361,8 +365,8 @@
                   </DataTemplate>
                 </ComboBox.ItemTemplate>
               </ComboBox>
-              </StackPanel>
-            </Grid>
+            </StackPanel>
+            </controls:FillThenWrapPanel>
 
             <!-- Fills whatever is left. -->
             <Border Background="#0A0A0A" CornerRadius="3" ClipToBounds="True">

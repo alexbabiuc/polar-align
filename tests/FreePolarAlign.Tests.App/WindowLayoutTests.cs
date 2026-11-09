@@ -154,6 +154,14 @@ public class WindowLayoutTests
     /// whole subtree rather than against the frame view alone, since which
     /// control overflows is not the point.
     /// </summary>
+    /// <summary>
+    /// The window opens maximized, because the user asked for it. Width and
+    /// Height stay in the markup as the size it restores to.
+    /// </summary>
+    [Fact]
+    public void TheWindowStartsMaximized() =>
+        OnUiThread(() => Assert.Equal(WindowState.Maximized, new MainWindow().WindowState));
+
     [Theory]
     [InlineData(1380.0, 880.0, false)]
     [InlineData(1380.0, 880.0, true)]

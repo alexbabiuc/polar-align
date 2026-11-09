@@ -6,6 +6,7 @@
         x:Class="FreePolarAlign.App.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="free-polar-align"
+        WindowState="Maximized"
         Width="1380" Height="880" MinWidth="1100" MinHeight="720">
 
   <Window.Styles>

@@ -37,14 +37,22 @@ public static class CaptureHeader
     /// Keywords the provider has already set, kept as they are. A driver that
     /// reports something this does not know about should not lose it.
     /// </param>
+    /// <param name="binning">
+    /// The binning the driver applied to this frame (D43). The pixel size and
+    /// the scale written are the binned pixel's, since that is what the file
+    /// holds: ASPS takes its pixel size from XPIXSZ.
+    /// </param>
     public static FitsHeader Build(
         FitsHeader? existing,
         ICamera camera,
         TimeSpan exposure,
         DateTime startUtc,
         DateTime midpointUtc,
-        CaptureContext? context)
+        CaptureContext? context,
+        int binning = 1)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(binning, 1);
+
         var header = new FitsHeader();
 
         if (existing is not null)
@@ -75,8 +83,10 @@ public static class CaptureHeader
         header.Set("EXPOSURE", exposure.TotalSeconds, "exposure, seconds");
 
         header.Set("INSTRUME", camera.Name, "camera");
-        header.Set("XPIXSZ", camera.PixelSizeMicrons, "pixel size, microns");
-        header.Set("YPIXSZ", camera.PixelSizeMicrons, "pixel size, microns");
+        header.Set("XPIXSZ", camera.PixelSizeMicrons * binning, "pixel size, microns");
+        header.Set("YPIXSZ", camera.PixelSizeMicrons * binning, "pixel size, microns");
+        header.Set("XBINNING", binning, "binning, x");
+        header.Set("YBINNING", binning, "binning, y");
 
         if (camera.ReadoutModeIndex is { } modeIndex)
         {
@@ -103,7 +113,7 @@ public static class CaptureHeader
 
             // Derived rather than measured, and said so: this is what the
             // entered focal length implies, not what a solve found.
-            double scale = 206.264806247 * camera.PixelSizeMicrons / focalLength;
+            double scale = 206.264806247 * camera.PixelSizeMicrons * binning / focalLength;
             header.Set("PIXSCALE", scale, "arcsec/pixel implied by FOCALLEN");
         }
 

@@ -43,4 +43,38 @@ public static class ZwoMapping
     /// </summary>
     public static long ExposureMicroseconds(TimeSpan duration) =>
         Math.Max(1L, (long)Math.Round(duration.TotalMilliseconds * 1000.0));
+
+    /// <summary>
+    /// The bins listed in <c>ASI_CAMERA_INFO.SupportedBins</c>, which the SDK
+    /// ends with a 0. Sorted and without repeats, and 1 always included: every
+    /// camera reads out unbinned, and a list without it would leave no way back.
+    /// </summary>
+    public static IReadOnlyList<int> SupportedBins(ReadOnlySpan<int> field)
+    {
+        var bins = new SortedSet<int> { 1 };
+        foreach (int bin in field)
+        {
+            if (bin <= 0)
+            {
+                break;
+            }
+
+            bins.Add(bin);
+        }
+
+        return bins.ToArray();
+    }
+
+    /// <summary>
+    /// The frame size to ask <c>ASISetROIFormat</c> for at a binning: the whole
+    /// sensor in binned pixels, cut down to what the SDK accepts. Its manual
+    /// requires the width to be a multiple of 8 and the height of 2, and it
+    /// refuses anything else; the columns and rows that do not fit are lost at
+    /// the edge, as with any camera's binning.
+    /// </summary>
+    public static (int Width, int Height) BinnedFrameSize(int sensorWidth, int sensorHeight, int bin)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(bin, 1);
+        return (sensorWidth / bin / 8 * 8, sensorHeight / bin / 2 * 2);
+    }
 }

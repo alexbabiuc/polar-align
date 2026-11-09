@@ -350,6 +350,46 @@ mount. `AscomMount.SetSiteLocationAsync` is compiled but **untested**.
   slew is commanded **[UNKNOWN]**. ASCOM leaves this to the driver. The
   simulator leaves the drive off.
 
+### Cameras on the night of 2026-11-05 (native plugins, 0.0.32)
+
+Measured on the failed-solve frames and the session log kept from that night
+(local only; `test_data/` is not committed), 800 mm focal length, through the
+native plugins (D25), which set gain and never offset.
+
+- **ToupTek ATR2600M** (6224×4168, 3.76 µm, 16-bit, gain 7030) **[FIELD]**:
+  about 70,000 isolated hot pixels per 2 s frame, more than 10σ above a
+  background-level 3×3 neighbourhood. That is 0.27% of the sensor. The
+  background sits at about 300 ADU with σ about 190, and 3–6% of pixels read
+  exactly 0, spread evenly over the frame. The noise is clipped at black, so
+  the offset is too low for this gain. Stars were out of focus (rings about
+  15 px across) in the last frame. `astap_cli` 2025.04.12 with D50 solved none
+  of the four. ASTAP 2026.09.15 with D50 solved all four in 0.2 s, and so did
+  ASPS that night. See D43.
+- **ZWO ASI290MM** (1936×1096, 2.9 µm, RAW16, gain 480) **[FIELD]**: 36–37% of
+  pixels sit at the floor value 16 (one 12-bit ADU), so most of the background is
+  clipped at black. ASTAP reported its histogram's most common value as 16 and
+  fell back to the mean. **[INFER]** The offset the SDK left is too low for
+  gain 480.
+- **[UNKNOWN]** What offset each SDK applies when nothing sets one, and whether
+  it carries over from the last program that opened the camera.
+
+### Binning in the drivers (D43)
+
+- **ToupTek** **[DOC]** (`toupcam.h`, SDK 60.33015.20261024):
+  `TOUPCAM_OPTION_BINNING` (0x17) is digital binning. `n` (2 to 8) is a
+  saturating sum, `0x40 | n` an unsaturated sum that raises the bit depth (RAW
+  only), and `0x80 | n` an average. The frame size is rounded down to an even
+  number. The option must not be set from the event callback.
+- **ZWO** **[DOC]** (SDK manual): `ASISetROIFormat` takes the bin, and needs a
+  width that is a multiple of 8 and a height that is a multiple of 2.
+  `ASI_CAMERA_INFO.SupportedBins` lists the bins, ending with 0.
+  **[UNKNOWN]** Whether software binning sums or averages, and when the
+  `ASI_HARDWARE_BIN` control matters. It is left at the SDK's default.
+- **ASCOM** **[DOC]** (ICameraV3): `NumX`/`NumY` are in binned pixels.
+  **[UNKNOWN]** Whether drivers accept every bin up to `MaxBinX`, and whether
+  they keep the binning their own settings window sets across reconnects.
+- None of the three binning paths has run against a real camera **[UNKNOWN]**.
+
 ## What this means for D9/D8 in this project
 
 1. **`SideOfPier` should be treated as advisory across all three drivers, not

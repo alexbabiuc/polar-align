@@ -3,6 +3,7 @@ using FreePolarAlign.Core.Astrometry;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Devices;
 using FreePolarAlign.Devices.Simulated;
+using FreePolarAlign.Imaging.Fits;
 using FreePolarAlign.Session;
 using FreePolarAlign.Solving;
 using FreePolarAlign.Tests.Support;
@@ -214,6 +215,40 @@ internal sealed class StubCamera : ICamera
 
     public string WorkingDirectory { get; }
 
+    /// <summary>
+    /// Write a small but genuine FITS frame rather than a few bytes, for a test
+    /// in which the engine itself reads the frame -- binning it (D43).
+    /// </summary>
+    public bool WritesRealFrames { get; init; }
+
+    /// <summary>The bins this stub's "driver" applies itself (D43); empty, the default, for one that bins nothing.</summary>
+    public IReadOnlyList<int> DriverBins { get; init; } = Array.Empty<int>();
+
+    /// <summary>A driver that lists bins and then will not set them.</summary>
+    public bool RefusesBinning { get; init; }
+
+    public List<int> BinningRequests { get; } = new();
+
+    public IReadOnlyList<int> SupportedBinnings => DriverBins;
+
+    public int Binning { get; private set; } = 1;
+
+    public Task SetBinningAsync(int factor, CancellationToken cancellationToken = default)
+    {
+        lock (BinningRequests)
+        {
+            BinningRequests.Add(factor);
+        }
+
+        if (RefusesBinning || !DriverBins.Contains(factor))
+        {
+            throw new InvalidOperationException($"The stub driver will not bin {factor}x{factor}.");
+        }
+
+        Binning = factor;
+        return Task.CompletedTask;
+    }
+
     public string Name => "Stub Camera";
 
     public int SensorWidthPixels => 4000;
@@ -280,9 +315,30 @@ internal sealed class StubCamera : ICamera
             _frames.Add((start, duration, context, path));
         }
 
-        await File.WriteAllTextAsync(path, "SIMPLE  =                    T", cancellationToken).ConfigureAwait(false);
+        int binning = Binning;
+        if (WritesRealFrames)
+        {
+            int width = 40 / binning;
+            int height = 30 / binning;
+            var pixels = new double[height, width];
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    pixels[y, x] = 1000 + x + (width * y);
+                }
+            }
 
-        return new CapturedImage(path, start + duration / 2, duration);
+            var header = new FitsHeader();
+            header.Set("XPIXSZ", PixelSizeMicrons * binning, "pixel size, microns");
+            FitsFile.Write(path, FitsImage.ForCapturedFrame(width, height, pixels, 16, header));
+        }
+        else
+        {
+            await File.WriteAllTextAsync(path, "SIMPLE  =                    T", cancellationToken).ConfigureAwait(false);
+        }
+
+        return new CapturedImage(path, start + duration / 2, duration, binning);
     }
 
     public void Dispose() => IsConnected = false;
@@ -431,7 +487,11 @@ internal sealed class SessionHarness : IDisposable
         TimeSpan? settleDelay = null,
         TimeSpan? solveInterval = null,
         SimulatedSiteWrites siteWrites = SimulatedSiteWrites.Stored,
-        bool canStopTracking = true)
+        bool canStopTracking = true,
+        int binning = 1,
+        bool realFrames = false,
+        IReadOnlyList<int>? driverBins = null,
+        bool driverRefusesBinning = false)
     {
         Clock = new TestClock();
         Simulated = new SimulatedMount(new SimulatedMountOptions(
@@ -447,7 +507,12 @@ internal sealed class SessionHarness : IDisposable
             CanStopTracking: canStopTracking), Clock);
 
         Mount = new RecordingMount(Simulated);
-        Camera = new StubCamera(Clock);
+        Camera = new StubCamera(Clock)
+        {
+            WritesRealFrames = realFrames,
+            DriverBins = driverBins ?? Array.Empty<int>(),
+            RefusesBinning = driverRefusesBinning,
+        };
         Perfect = new PerfectSolver(Simulated, Site);
         Solver = solver ?? Perfect;
 
@@ -460,7 +525,8 @@ internal sealed class SessionHarness : IDisposable
             ExpectedSolveNoiseArcseconds: 3.0,
             SettleDelay: settleDelay ?? TimeSpan.FromMilliseconds(30),
             SolveInterval: solveInterval ?? TimeSpan.FromMilliseconds(60),
-            FailedSolvesDirectory: FailedSolvesDirectory);
+            FailedSolvesDirectory: FailedSolvesDirectory,
+            Binning: binning);
 
         Session = new AlignmentSession(Camera, withMount ? Mount : null, Solver, Clock, options);
 

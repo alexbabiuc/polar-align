@@ -5,7 +5,14 @@ namespace FreePolarAlign.Devices;
 /// timestamp that matters for this project (README: "Sidereal tracking is
 /// harmless... we... timestamp exposure midpoints"), not start or end time.
 /// </summary>
-public sealed record CapturedImage(string FitsPath, DateTime ExposureMidpointUtc, TimeSpan Duration);
+/// <param name="Binning">
+/// How many sensor pixels each side of a frame pixel spans: whatever the driver
+/// applied, times whatever the session applied after it (D43). Recorded per
+/// frame so the scale a frame is solved at and the focal length learned from it
+/// follow the frame itself rather than whatever binning is selected by the time
+/// its solve comes back.
+/// </param>
+public sealed record CapturedImage(string FitsPath, DateTime ExposureMidpointUtc, TimeSpan Duration, int Binning = 1);
 
 /// <summary>
 /// One way a camera can be read out, as the driver describes it.
@@ -160,6 +167,33 @@ public interface ICamera : IDisposable
     /// </summary>
     Task SetGainAsync(int value, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException($"Camera '{Name}' does not have its gain controlled from here.");
+
+    /// <summary>
+    /// The binning factors the driver applies itself, n meaning n×n, 1 included;
+    /// empty when the driver bins nothing, or nothing this application can ask
+    /// for. Binning the driver cannot do is done by the session on the frame as
+    /// written (D43), so empty is a complete answer rather than a failure.
+    ///
+    /// <see cref="SensorWidthPixels"/>, <see cref="SensorHeightPixels"/> and
+    /// <see cref="PixelSizeMicrons"/> stay the sensor's own whatever is chosen
+    /// here: the frames shrink, the sensor does not.
+    /// </summary>
+    IReadOnlyList<int> SupportedBinnings => Array.Empty<int>();
+
+    /// <summary>
+    /// The binning the driver is set to apply to the next frame. 1 for a camera
+    /// that does not bin. Each frame also says what it actually got, in
+    /// <see cref="CapturedImage.Binning"/>, which is the figure to compute with.
+    /// </summary>
+    int Binning => 1;
+
+    /// <summary>
+    /// Sets the driver's binning to one of <see cref="SupportedBinnings"/>.
+    /// Implementations reject anything else rather than approximate it: a frame
+    /// binned other than asked would be solved at the wrong scale.
+    /// </summary>
+    Task SetBinningAsync(int factor, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException($"Camera '{Name}' does not bin in its driver.");
 
     Task ConnectAsync(CancellationToken cancellationToken = default);
 

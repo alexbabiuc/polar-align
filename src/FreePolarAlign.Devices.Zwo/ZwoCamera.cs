@@ -9,8 +9,8 @@ namespace FreePolarAlign.Devices.Zwo;
 /// alignment takes one frame at a time, and snapshot mode gives each frame a
 /// definite start, which is what its timestamp is computed from.
 ///
-/// Full sensor, no binning, always. The plate solve wants every star the sensor
-/// can see, and the pixel scale the session computes assumes unbinned pixels.
+/// Full sensor, and binned only when the session asks (D43), by the SDK, at one
+/// of the bins the camera lists as supported.
 ///
 /// Colour cameras are read out as raw Bayer data and written as they come. The
 /// solver finds stars in a Bayer frame well enough, and debayering is a
@@ -35,6 +35,10 @@ public sealed class ZwoCamera : ICamera
     private readonly List<(int ImageType, CameraReadoutMode Mode)> _modes = new();
     private int _modeIndex;
     private CameraGainRange? _gainRange;
+    private readonly IReadOnlyList<int> _supportedBins;
+    private int _binning = 1;
+    private int _frameWidth;
+    private int _frameHeight;
     private bool _disposed;
 
     internal unsafe ZwoCamera(
@@ -53,6 +57,8 @@ public sealed class ZwoCamera : ICamera
         SensorWidthPixels = (int)info.MaxWidth.Value;
         SensorHeightPixels = (int)info.MaxHeight.Value;
         PixelSizeMicrons = info.PixelSize;
+        _supportedBins = ZwoMapping.SupportedBins(new ReadOnlySpan<int>(info.SupportedBins, 16));
+        (_frameWidth, _frameHeight) = ZwoMapping.BinnedFrameSize(SensorWidthPixels, SensorHeightPixels, 1);
 
         // Only the two raw formats. RGB24 and Y8 are the SDK's processed
         // outputs, and a plate solve wants the sensor's own values.
@@ -109,6 +115,10 @@ public sealed class ZwoCamera : ICamera
     public int? ReadoutModeIndex => _modes.Count > 1 ? _modeIndex : null;
 
     public CameraGainRange? GainRange => IsConnected ? _gainRange : null;
+
+    public IReadOnlyList<int> SupportedBinnings => _supportedBins;
+
+    public int Binning => _binning;
 
     public int? Gain
     {
@@ -197,6 +207,32 @@ public sealed class ZwoCamera : ICamera
         return Task.CompletedTask;
     }
 
+    public Task SetBinningAsync(int factor, CancellationToken cancellationToken = default)
+    {
+        if (!_supportedBins.Contains(factor))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(factor), factor, $"ZWO camera '{Name}' bins {string.Join(", ", _supportedBins)}, not {factor}.");
+        }
+
+        int previous = _binning;
+        _binning = factor;
+        if (IsConnected)
+        {
+            try
+            {
+                ApplyFormat(_modes[_modeIndex].ImageType);
+            }
+            catch
+            {
+                _binning = previous;
+                throw;
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
     public async Task<CapturedImage> ExposeAsync(
         TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default)
     {
@@ -231,11 +267,13 @@ public sealed class ZwoCamera : ICamera
             throw;
         }
 
-        byte[] buffer = new byte[checked(SensorWidthPixels * SensorHeightPixels * bytesPerPixel)];
+        int width = _frameWidth;
+        int height = _frameHeight;
+        byte[] buffer = new byte[checked(width * height * bytesPerPixel)];
         Download(buffer);
 
-        double[,] pixels = NativeFrame.ToPixels(buffer, SensorWidthPixels, SensorHeightPixels, bytesPerPixel);
-        return NativeFrame.Write(this, pixels, mode.BitDepth ?? 16, duration, startUtc, context, _workingDirectory);
+        double[,] pixels = NativeFrame.ToPixels(buffer, width, height, bytesPerPixel);
+        return NativeFrame.Write(this, pixels, mode.BitDepth ?? 16, duration, startUtc, context, _workingDirectory, _binning);
     }
 
     private async Task WaitForExposureAsync(TimeSpan duration, CancellationToken cancellationToken)
@@ -297,8 +335,18 @@ public sealed class ZwoCamera : ICamera
         }
     }
 
-    private void ApplyFormat(int imageType) =>
-        Check(AsiNative.ASISetROIFormat(_cameraId, SensorWidthPixels, SensorHeightPixels, 1, imageType), "set the frame format");
+    /// <summary>
+    /// Sets the readout format at the current binning. The frame size is
+    /// remembered only once the SDK has accepted it, since it is what the next
+    /// download is sized by.
+    /// </summary>
+    private void ApplyFormat(int imageType)
+    {
+        (int width, int height) = ZwoMapping.BinnedFrameSize(SensorWidthPixels, SensorHeightPixels, _binning);
+        Check(AsiNative.ASISetROIFormat(_cameraId, width, height, _binning, imageType), "set the frame format");
+        _frameWidth = width;
+        _frameHeight = height;
+    }
 
     /// <summary>
     /// The gain range from the camera's own control table. Read, never assumed:

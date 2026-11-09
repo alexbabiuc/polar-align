@@ -77,6 +77,18 @@ public static class EngineEventNarrator
 
             ExposureChangedEvent e => Info(Inv($"Exposure set to {e.Duration.TotalSeconds:G3} s from the next frame.")),
 
+            BinningChangedEvent e => Info(e.Factor == 1
+                ? "No binning from the next frame."
+                : Inv($"Binning set to {e.Factor}×{e.Factor} from the next frame.")),
+
+            BinningAppliedEvent e => DescribeBinning(e),
+
+            DriverBinningRefusedEvent e => new NarratedEvent(LogSeverity.Warning,
+                Inv($"The camera driver refused {e.Factor}×{e.Factor} binning, so this application bins instead: {e.Reason}")),
+
+            FrameNotBinnedEvent e => new NarratedEvent(LogSeverity.Warning,
+                $"A frame could not be binned and is used at full resolution: {e.Reason} ({e.FitsPath})"),
+
             TargetSelectedEvent e => Info(Inv(
                 $"Target: mechanical declination {e.DeclinationDegrees:F2}°, ",
                 $"{e.PlannedCaptures} captures across {e.SweepDegrees:F0}° ",
@@ -245,6 +257,27 @@ public static class EngineEventNarrator
     private static string Kind(DeviceKind kind) => kind == DeviceKind.Camera ? "Camera" : "Mount";
 
     private static NarratedEvent Info(string message) => new(LogSeverity.Info, message);
+
+    /// <summary>
+    /// Says who bins, because the two are not the same thing to someone
+    /// comparing with another program: a driver's binning is what that program
+    /// would get too, and this application's is its own.
+    /// </summary>
+    private static NarratedEvent DescribeBinning(BinningAppliedEvent e)
+    {
+        int total = e.ByDriver * e.ByApplication;
+        string how = (e.ByDriver, e.ByApplication) switch
+        {
+            (1, 1) => "Frames are not binned.",
+            (_, 1) => Inv($"Frames are binned {e.ByDriver}×{e.ByDriver} by the camera driver."),
+            (1, _) => Inv($"Frames are binned {e.ByApplication}×{e.ByApplication} by this application, as the camera driver does not offer it."),
+            _ => Inv($"Frames are binned {e.ByDriver}×{e.ByDriver} by the camera driver and {e.ByApplication}×{e.ByApplication} more by this application."),
+        };
+
+        return total == e.Requested
+            ? Info(how)
+            : new NarratedEvent(LogSeverity.Warning, Inv($"{how} {e.Requested}×{e.Requested} was asked for, and the camera driver would not change to it."));
+    }
 
     private static string InARow(SolveFailedEvent e) => e.Solver is null
         ? Inv($"{e.ConsecutiveFailures} in a row")

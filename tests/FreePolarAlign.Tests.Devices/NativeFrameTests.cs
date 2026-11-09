@@ -110,4 +110,16 @@ public sealed class NativeFrameTests : IDisposable
         {
         }
     }
+
+    /// <summary>The driver's binning travels with the frame, which is what the session computes its scale from (D43).</summary>
+    [Fact]
+    public void ADriverBinnedFrame_SaysSo()
+    {
+        CapturedImage captured = NativeFrame.Write(
+            new GainCamera(), new double[2, 4], 16, TimeSpan.FromSeconds(1), new DateTime(2026, 11, 9, 21, 0, 0, DateTimeKind.Utc),
+            null, _directory, binning: 2);
+
+        Assert.Equal(2, captured.Binning);
+        Assert.Equal(2.0, FitsFile.Read(captured.FitsPath).ExtraHeader.GetDouble("XBINNING"));
+    }
 }

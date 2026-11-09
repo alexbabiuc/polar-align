@@ -962,8 +962,14 @@ and only that — the solver reads the FITS file, never the preview.
 
 ## D22 — The exposure is a short fixed list, chosen next to the picture
 
-The exposure is picked from 0.1, 0.2, 0.5, 1, 1.5 and 2 seconds, in the captured
-frame panel, and remembered between sessions.
+The exposure is picked from 0.1, 0.2, 0.5, 1, 1.5, 2 and 5 seconds, in the
+captured frame panel, and remembered between sessions.
+
+*Revised 2026-11-09 (0.0.34): 5 s added at the top, at the user's request.* The
+list stopped at the old fixed two seconds, which suits the short end's problem,
+a bright sky, and not the opposite one: a narrow field at a long focal length
+(0.23° from an 800 mm scope, measured on the night of 2026-11-05) holds few stars
+bright enough to find in two seconds.
 
 **Why there is a control at all.** There was none: every capture ran at a
 hardcoded two seconds. On a 105 mm lens under a moderately bright sky that put
@@ -982,9 +988,13 @@ readily as 0.3 s.
 visible. Too long an exposure shows up as a washed-out frame in the picture
 directly above the control.
 
-It shares a row with the brightness slider rather than taking one of its own. A
+~~It shares a row with the brightness slider rather than taking one of its own. A
 second row cost the picture 38 px, which at the minimum window size with the
-install warnings showing put it under the floor the layout test holds it to.
+install warnings showing put it under the floor the layout test holds it to.~~
+*Revised 2026-11-09:* it now has a row of its own with the binning picker
+(D43). One row of four labelled controls overran the panel's 312 px at the
+minimum window size, and the install warnings banner that made a second row too
+costly is gone. The layout tests pass with it.
 
 ~~**Why it is read at sequence start rather than sent as a command.** It is not
 device state. The session passes it on every capture, so changing it mid-sequence
@@ -1179,7 +1189,8 @@ the same rule.
 **What the plugins do not do.** Colour cameras are read out as raw Bayer data
 and written as they come; debayering is left for later. No binning, no ROI —
 the solve wants every star and the scale assumes unbinned pixels. Offset, USB
-bandwidth and cooling stay at the SDK's defaults.
+bandwidth and cooling stay at the SDK's defaults. (*2026-11-09:* binning is now
+offered, and the plugins do it in the SDK when the camera supports it — D43.)
 
 **Where the vendor library comes from, and why its absence is quiet.** ZWO's
 SDK licence permits redistribution provided its notice goes with it, so ZWO's
@@ -2288,3 +2299,83 @@ rather than left at the default, and the blind one is kept when both were chosen
 The load warning says which one was kept, and the file is written back straight
 away. Otherwise the warning would repeat on every start until something else
 saved the settings. A file that already has `solver` ignores the old keys.
+
+---
+
+## D43 — Binning by the camera driver where it can, by the engine where it cannot
+
+*Decided 2026-11-09, in 0.0.34.*
+
+Frames can be binned 2×2, chosen beside the exposure and remembered with it.
+Off by default. At each frame boundary the engine asks the camera's driver for
+the binning, if the driver lists it. Otherwise it keeps the driver unbinned and
+bins the written frame itself: it reads it back, averages each 2×2 block into
+one pixel, and writes it over the original.
+
+**Why it was asked for.** On 2026-11-05 every ATR2600M frame (6224×4168, gain
+7030) failed under ASTAP on Windows (`astap_cli` 2025.04.12, D50), while APT
+solved frames of the same area with the same ASTAP install and ASPS solved ours.
+Two measurements point at binning. First, each frame holds about 70,000
+isolated hot pixels, at more than 10σ above a background-level neighbourhood.
+Second, that ASTAP counted about 597 stars in every attempt, where ASTAP
+2026.09.15 counts 139 to 181 in the same files and solves all four in 0.2 s. A
+2×2 bin averages each hot pixel over four, and ASTAP's own 2×2 on top makes
+sixteen. Whether that rescues these frames under the 2025 build is **not yet
+tested**: the test needs the Windows machine.
+
+**Why the driver first.** The user asked for it. A driver's binning is what
+another program on the same camera gets, so a frame compared against APT's is
+binned the same way. It also skips the transfer and the rewrite.
+
+**Each driver:**
+
+- **ZWO:** the bin goes to `ASISetROIFormat`, from the camera's own
+  `SupportedBins`. The frame is the whole sensor in binned pixels, cut to a
+  width that is a multiple of 8 and a height that is a multiple of 2, which the
+  SDK requires. Whether the SDK sums or averages is not known (DEVICE-COMPATIBILITY).
+- **ToupTek:** `TOUPCAM_OPTION_BINNING` in its averaging form, `0x80 | n`, never
+  the plain `n`, which the header documents as a saturating sum. Offered only
+  when the SDK accepts the option at connect. It is set with streaming stopped,
+  as the bit depth is.
+- **ASCOM:** `BinX`/`BinY` up to the smaller of `MaxBinX`/`MaxBinY`, then
+  `StartX`/`StartY` at 0 and `NumX`/`NumY` at the whole sensor in binned pixels.
+  The binning a frame got is read from `BinX` just before it is taken, because
+  the driver's own settings window can change it. Before this, a driver left
+  binned by that window gave frames described as unbinned.
+
+**Why the engine still bins.** The simulator, and any driver that lists nothing
+or refuses what it lists, would otherwise have no binning at all. A refused bin
+is not asked for again until a camera connects, so the log says so once. The
+engine's binning costs little. Measured on one ATR2600M frame on an M2 Pro:
+about 150 ms to read, bin and write (80 + 40 + 30), against exposures of 0.1 to
+5 s. It happens after the camera is released, so the next exposure is not held
+up.
+
+**The mean, not the sum,** so a binned frame keeps the sensor's range and is
+written at the same depth (D20). A sum of four saturated wells does not fit in
+16 bits. A partial block on an odd edge is dropped, as hardware binning does.
+
+**Scale stays in sensor pixels.** The camera's sensor size and pixel size, the
+equipment profile, and so the focal length and the scale shown all describe the
+sensor's own pixels. Each frame records the binning it actually got, the driver's
+times the engine's. Its scale hint is the profile's scale times that, and the
+focal length learned from its solve divides it back out. Per frame rather than
+per setting, because the binning can change between a frame's capture and its
+solve's result. The header says what the file holds: `XPIXSZ`, `YPIXSZ` and
+`PIXSCALE` are the binned pixel's, and `XBINNING`/`YBINNING` are written. ASPS
+takes its pixel size from `XPIXSZ`, so a binned frame claiming the sensor's would
+be solved at half its scale.
+
+**The log says who bins** whenever that changes: the driver, the engine, or
+both. A frame the engine cannot bin is used at full resolution, counted as
+unbinned so its scale stays right, and the log says so.
+
+**Changeable at any time,** like the exposure (D22): it changes how a frame is
+measured, not where it points.
+
+**Cost.** A quarter of the pixels. D38 tried 2×2 on the simulator's recorded
+frames and dropped it: binned frames would not blind-solve at four of five sweep
+positions. A field already short of stars, or a short focal length whose stars
+are already a pixel or two, can be made worse. That is why it is offered and off
+by default, not applied. Only 1×1 and 2×2 are offered; the engine accepts up to
+4×4. None of the three driver paths has run against hardware yet.

@@ -129,7 +129,7 @@ public class ExposureChoiceTests
     {
         double[] seconds = ExposureOption.All.Select(o => o.Duration.TotalSeconds).ToArray();
 
-        Assert.Equal(new[] { 0.1, 0.2, 0.5, 1.0, 1.5, 2.0 }, seconds);
+        Assert.Equal(new[] { 0.1, 0.2, 0.5, 1.0, 1.5, 2.0, 5.0 }, seconds);
     }
 
     [Fact]
@@ -224,6 +224,67 @@ public class ExposureChoiceTests
         Assert.Empty(engine.Commands.OfType<SetExposureCommand>());
     }
 
+    // ---- Binning (D43) ----
+
+    [Fact]
+    public void TheBinningPicker_OffersNoneAndTwoByTwo() =>
+        Assert.Equal(new[] { 1, 2 }, BinningOption.All.Select(o => o.Factor).ToArray());
+
+    [Fact]
+    public void ChoosingABinning_SendsItToTheEngine_AndStoresIt()
+    {
+        var (viewModel, engine, store) = Build();
+
+        viewModel.SelectedBinning = BinningOption.All.Single(o => o.Factor == 2);
+
+        Assert.Equal(2, Assert.Single(engine.Commands.OfType<SetBinningCommand>()).Factor);
+        Assert.Equal(2, store.Saved.Binning);
+    }
+
+    [Fact]
+    public void ARememberedBinning_IsPreselected()
+    {
+        var (viewModel, _, _) = Build(AppSettings.Empty with { Binning = 2 });
+
+        Assert.Equal(2, viewModel.SelectedBinning.Factor);
+    }
+
+    /// <summary>Nothing remembered, or a factor no longer offered, is no binning -- which is what the engine does with it too.</summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData(3)]
+    [InlineData(0)]
+    public void WithNoUsableBinningRemembered_ThePickerShowsNone(int? stored)
+    {
+        var (viewModel, _, _) = Build(AppSettings.Empty with { Binning = stored });
+
+        Assert.Equal(1, viewModel.SelectedBinning.Factor);
+    }
+
+    [Fact]
+    public void AnEngineReportingADifferentBinning_IsSentTheChosenOne()
+    {
+        var (_, engine, _) = Build(AppSettings.Empty with { Binning = 2 });
+
+        engine.Publish(new BinningChangedEvent(1));
+
+        Assert.Equal(2, Assert.Single(engine.Commands.OfType<SetBinningCommand>()).Factor);
+    }
+
+    [Fact]
+    public void TheBinning_CannotBeChangedWhileTheDriverWindowIsOpen()
+    {
+        var (viewModel, engine, store) = Build();
+        engine.Publish(new CameraSetupDialogChangedEvent(IsOpen: true));
+
+        Assert.False(viewModel.IsBinningEditable);
+        viewModel.SelectedBinning = BinningOption.All.Single(o => o.Factor == 2);
+
+        Assert.Empty(engine.Commands.OfType<SetBinningCommand>());
+        Assert.Equal(1, viewModel.SelectedBinning.Factor);
+        Assert.Null(store.Saved.Binning);
+    }
+
     // ---- Persistence ----
 
     [Fact]
@@ -272,7 +333,8 @@ public class ExposureChoiceTests
     [InlineData(0.09, 0.1)]
     [InlineData(0.3, 0.2)]
     [InlineData(0.9, 1.0)]
-    [InlineData(30.0, 2.0)]
+    [InlineData(3.0, 2.0)]
+    [InlineData(30.0, 5.0)]
     public void AnUnlistedRememberedValue_SnapsToTheNearest(double stored, double expected)
     {
         var (viewModel, _, _) = Build(AppSettings.Empty with { ExposureSeconds = stored });

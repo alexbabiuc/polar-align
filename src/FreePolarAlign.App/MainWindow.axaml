@@ -306,18 +306,19 @@
                        IsVisible="{Binding HasSaveFrameProblem}" />
 
             <!--
-              Both controls on one row, and the exposure picker docked here
-              rather than in the Camera panel, because this is where the result
-              of the choice is looked at: too long an exposure shows up as a
-              washed-out frame in the picture above.
+              The exposure and binning pickers are docked here rather than in
+              the Camera panel, because this is where the result of the choice
+              is looked at: too long an exposure shows up as a washed-out frame
+              in the picture above.
 
-              One row rather than two is not tidiness. A second row cost the
-              picture 38px, and at the minimum window size, with the install
-              warnings banner the window then had, that took it under the 80px
-              floor the layout test holds it to, which is the same failure mode
-              that once had the frame drawn across its neighbours.
+              Two rows, brightness above the pickers. They were one row until
+              binning joined them (D43), and at the minimum window size the
+              panel is 312px wide, which one row of four labelled controls
+              overran. The second row costs the picture 38px; that once took it
+              under the layout test's 80px floor, but only with the install
+              warnings banner the window no longer has.
             -->
-            <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8" Margin="0,6,0,0">
+            <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6" Margin="0,6,0,0">
               <TextBlock Grid.Column="0" Classes="label" Text="Brightness" VerticalAlignment="Center" />
               <!--
                 Height pinned because the stock control reserves 50px for a
@@ -329,13 +330,14 @@
                       TickFrequency="0.01" IsSnapToTickEnabled="True" Height="32" VerticalAlignment="Center"
                       ToolTip.Tip="The frame's darkest pixel is always black and its brightest always white. This moves the midpoint between them, so nothing is clipped at either end whichever way it is dragged. The travel stops short of both ends on purpose: past them the picture stops gaining contrast and only fades." />
 
-              <TextBlock Grid.Column="2" Classes="label" Text="Exposure" VerticalAlignment="Center" />
+              <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="8">
+              <TextBlock Classes="label" Text="Exposure" VerticalAlignment="Center" />
               <!--
                 Enabled during a sequence too (D22 as revised): exposure changes
                 how noisy a solved position is, not where it is, and the picture
                 above is live, so this is where a brightening sky is answered.
               -->
-              <ComboBox Grid.Column="3" ItemsSource="{Binding ExposureOptions}"
+              <ComboBox ItemsSource="{Binding ExposureOptions}"
                         SelectedItem="{Binding SelectedExposure, Mode=TwoWay}"
                         MinHeight="32" VerticalAlignment="Center"
                         IsEnabled="{Binding IsExposureEditable}"
@@ -346,6 +348,20 @@
                   </DataTemplate>
                 </ComboBox.ItemTemplate>
               </ComboBox>
+
+              <TextBlock Classes="label" Text="Binning" VerticalAlignment="Center" Margin="8,0,0,0" />
+              <ComboBox ItemsSource="{Binding BinningOptions}"
+                        SelectedItem="{Binding SelectedBinning, Mode=TwoWay}"
+                        MinHeight="32" VerticalAlignment="Center"
+                        IsEnabled="{Binding IsBinningEditable}"
+                        ToolTip.Tip="Applies from the next frame. 2×2 combines each block of four pixels into one: a quarter of the pixels, less noise in each, and hot pixels diluted four times. Done by the camera driver where it can, and by this application otherwise; the log says which. Worth trying on a large, noisy sensor whose frames will not solve.">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:BinningOption">
+                    <TextBlock Text="{Binding Label}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              </StackPanel>
             </Grid>
 
             <!-- Fills whatever is left. -->

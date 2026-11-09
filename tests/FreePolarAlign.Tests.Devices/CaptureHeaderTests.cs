@@ -203,4 +203,23 @@ public class CaptureHeaderTests
         Assert.Equal(105.0, double.Parse(Value(read.ExtraHeader, "FOCALLEN")!), precision: 6);
         Assert.Equal("2026-09-23T20:06:34.000", Value(read.ExtraHeader, "DATE-AVG"));
     }
+
+    /// <summary>
+    /// A frame binned by the driver (D43) describes the pixel it holds. ASPS
+    /// takes its pixel size from XPIXSZ, so the sensor's pixel here would have
+    /// it solve at half the frame's scale.
+    /// </summary>
+    [Fact]
+    public void ADriverBinnedFrame_DescribesItsBinnedPixel()
+    {
+        FitsHeader header = CaptureHeader.Build(
+            existing: null, new FakeCamera { PixelSizeMicrons = 3.76 }, TimeSpan.FromSeconds(2), Start, Start.AddSeconds(1),
+            new CaptureContext(FocalLengthMillimetres: 800.0), binning: 2);
+
+        Assert.Equal(7.52, double.Parse(Value(header, "XPIXSZ")!), precision: 6);
+        Assert.Equal(7.52, double.Parse(Value(header, "YPIXSZ")!), precision: 6);
+        Assert.Equal(206.264806247 * 7.52 / 800.0, double.Parse(Value(header, "PIXSCALE")!), precision: 6);
+        Assert.Equal("2", Value(header, "XBINNING"));
+        Assert.Equal("2", Value(header, "YBINNING"));
+    }
 }

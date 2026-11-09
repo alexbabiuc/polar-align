@@ -24,6 +24,8 @@ public sealed class AscomCamera : ICamera
     private readonly dynamic _camera;
     private readonly string _workingDirectory;
     private readonly TimeProvider _time;
+    private IReadOnlyList<int> _supportedBins = Array.Empty<int>();
+    private int _binning = 1;
     private bool _disposed;
 
     public AscomCamera(string progId, TimeProvider timeProvider)
@@ -211,6 +213,70 @@ public sealed class AscomCamera : ICamera
 
     public bool IsConnected { get; private set; }
 
+    public IReadOnlyList<int> SupportedBinnings => IsConnected ? _supportedBins : Array.Empty<int>();
+
+    /// <summary>
+    /// Read from the driver each time rather than remembered, because the
+    /// driver's own settings window can change it behind this application's
+    /// back, and a frame binned there but described as unbinned would be solved
+    /// at half its scale.
+    /// </summary>
+    public int Binning
+    {
+        get
+        {
+            if (!IsConnected)
+            {
+                return _binning;
+            }
+
+            try
+            {
+                int binX = (int)_camera.BinX;
+                return binX >= 1 ? binX : _binning;
+            }
+            catch (Exception)
+            {
+                return _binning;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Square binning over the whole sensor: BinX and BinY, then the frame
+    /// placed at the origin and sized to the sensor in binned pixels, which is
+    /// the order the ASCOM documentation describes, since NumX and NumY are in
+    /// binned pixels and are checked against the binning.
+    /// </summary>
+    public Task SetBinningAsync(int factor, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsConnected || !_supportedBins.Contains(factor))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(factor), factor,
+                $"ASCOM camera '{_progId}' bins {(_supportedBins.Count == 0 ? "nothing" : string.Join(", ", _supportedBins))}, not {factor}.");
+        }
+
+        try
+        {
+            _camera.BinX = (short)factor;
+            _camera.BinY = (short)factor;
+            _camera.StartX = 0;
+            _camera.StartY = 0;
+            _camera.NumX = SensorWidthPixels / factor;
+            _camera.NumY = SensorHeightPixels / factor;
+        }
+        catch (Exception ex)
+        {
+            throw new AscomPlatformNotAvailableException(
+                $"ASCOM camera '{_progId}' would not bin {factor}x{factor}: {ex.Message}", ex);
+        }
+
+        _binning = factor;
+        return Task.CompletedTask;
+    }
+
     /// <summary>
     /// Every ASCOM driver has one: <c>SetupDialog</c> is on the base interface
     /// all of them implement, not on the camera interface.
@@ -284,6 +350,17 @@ public sealed class AscomCamera : ICamera
             throw new AscomPlatformNotAvailableException($"Failed to connect to ASCOM camera '{_progId}': {ex.Message}", ex);
         }
 
+        // A driver that will not say how far it bins is binned by the session
+        // instead (D43); not being able to ask is not a reason to refuse it.
+        try
+        {
+            _supportedBins = AscomMapping.SupportedBins((int)_camera.MaxBinX, (int)_camera.MaxBinY);
+        }
+        catch (Exception)
+        {
+            _supportedBins = Array.Empty<int>();
+        }
+
         IsConnected = true;
         return Task.CompletedTask;
     }
@@ -307,6 +384,10 @@ public sealed class AscomCamera : ICamera
         TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
+        // What this frame is binned at, asked of the driver just before it is
+        // taken, so it is right even when the driver's window changed it.
+        int binning = Binning;
 
         DateTime startUtc = _time.GetUtcNow().UtcDateTime;
         try
@@ -351,13 +432,13 @@ public sealed class AscomCamera : ICamera
         // rectangle of numbers.
         FitsImage described = new(
             fitsImage.Width, fitsImage.Height, fitsImage.BitPix, fitsImage.Bzero, fitsImage.Bscale, fitsImage.Pixels,
-            CaptureHeader.Build(fitsImage.ExtraHeader, this, duration, startUtc, midpointUtc, context));
+            CaptureHeader.Build(fitsImage.ExtraHeader, this, duration, startUtc, midpointUtc, context, binning));
 
         Directory.CreateDirectory(_workingDirectory);
         string path = Path.Combine(_workingDirectory, $"{startUtc:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}.fits");
         FitsFile.Write(path, described);
 
-        return new CapturedImage(path, midpointUtc, duration);
+        return new CapturedImage(path, midpointUtc, duration, binning);
     }
 
     private bool IsImageReady()

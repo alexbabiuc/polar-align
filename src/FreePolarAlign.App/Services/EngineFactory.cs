@@ -136,6 +136,7 @@ public static class EngineFactory
         // that motivated D22, a frame swamped at two seconds.
         var options = new AlignmentSessionOptions(
             ExposureDuration: ExposureOption.Nearest(loaded.Settings.ExposureSeconds)?.Duration ?? default,
+            Binning: BinningOption.For(loaded.Settings.Binning)?.Factor ?? 1,
             EquipmentProfile: null,
             ApplicationName: AppVersion.ProductName,
             ApplicationVersion: AppVersion.Identifier());

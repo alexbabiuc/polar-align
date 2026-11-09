@@ -26,6 +26,7 @@ internal static unsafe class ToupcamNative
     public const uint OptionRaw = 0x04;
     public const uint OptionBitDepth = 0x06;
     public const uint OptionTrigger = 0x0b;
+    public const uint OptionBinning = 0x17;
 
     // TOUPCAM_EVENT_xxx
     public const uint EventImage = 0x0004;
@@ -92,6 +93,9 @@ internal static unsafe class ToupcamNative
 
     [DllImport(LibraryName)]
     public static extern int Toupcam_put_Option(IntPtr handle, uint option, int value);
+
+    [DllImport(LibraryName)]
+    public static extern int Toupcam_get_Option(IntPtr handle, uint option, int* value);
 
     [DllImport(LibraryName)]
     public static extern int Toupcam_get_Size(IntPtr handle, int* width, int* height);

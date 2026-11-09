@@ -15,9 +15,11 @@ namespace FreePolarAlign.App.ViewModels;
 public sealed record ExposureOption(TimeSpan Duration, string Label)
 {
     /// <summary>
-    /// What the picker offers, shortest first. Two seconds is the top because it
-    /// was the old fixed value and nothing here wants longer; the short end is
-    /// where an over-exposed sky is rescued.
+    /// What the picker offers, shortest first. The short end is where an
+    /// over-exposed sky is rescued. Five seconds is the one step past the old
+    /// fixed two, for the opposite case: a narrow field at a long focal length,
+    /// such as 0.23° from an 800 mm scope, holds few stars bright enough to
+    /// find in two seconds.
     /// </summary>
     public static IReadOnlyList<ExposureOption> All { get; } = new[]
     {
@@ -27,6 +29,7 @@ public sealed record ExposureOption(TimeSpan Duration, string Label)
         new ExposureOption(TimeSpan.FromSeconds(1.0), "1 s"),
         new ExposureOption(TimeSpan.FromSeconds(1.5), "1.5 s"),
         new ExposureOption(TimeSpan.FromSeconds(2.0), "2 s"),
+        new ExposureOption(TimeSpan.FromSeconds(5.0), "5 s"),
     };
 
     /// <summary>

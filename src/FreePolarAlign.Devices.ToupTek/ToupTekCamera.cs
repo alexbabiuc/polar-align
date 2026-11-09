@@ -31,6 +31,8 @@ public sealed class ToupTekCamera : ICamera
     private int _modeIndex;
     private CameraGainRange? _gainRange;
     private (uint Minimum, uint Maximum)? _exposureRange;
+    private IReadOnlyList<int> _supportedBins = Array.Empty<int>();
+    private int _binning = 1;
     private bool _disposed;
 
     internal ToupTekCamera(
@@ -74,6 +76,10 @@ public sealed class ToupTekCamera : ICamera
 
     public int? Gain => IsConnected && _gainRange is not null ? ReadGain() : null;
 
+    public IReadOnlyList<int> SupportedBinnings => IsConnected ? _supportedBins : Array.Empty<int>();
+
+    public int Binning => _binning;
+
     public unsafe Task ConnectAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -107,6 +113,17 @@ public sealed class ToupTekCamera : ICamera
             Check(ToupcamNative.Toupcam_put_Option(handle, ToupcamNative.OptionBitDepth, _modeIndex), "set the bit depth");
             Check(ToupcamNative.Toupcam_put_AutoExpoEnable(handle, 0), "turn off auto exposure");
             Check(ToupcamNative.Toupcam_put_Option(handle, ToupcamNative.OptionTrigger, 1), "enter software trigger mode");
+
+            // Unbinned to start, whatever the last program left, and only
+            // offered at all when the SDK takes the option: an older camera or
+            // SDK refuses it, and the session then bins for it (D43).
+            _binning = 1;
+            int binningValue;
+            _supportedBins =
+                !ToupcamNative.Failed(ToupcamNative.Toupcam_get_Option(handle, ToupcamNative.OptionBinning, &binningValue)) &&
+                !ToupcamNative.Failed(ToupcamNative.Toupcam_put_Option(handle, ToupcamNative.OptionBinning, ToupTekMapping.BinningOption(1)))
+                    ? ToupTekMapping.SupportedBins
+                    : Array.Empty<int>();
 
             int width;
             int height;
@@ -174,6 +191,35 @@ public sealed class ToupTekCamera : ICamera
         return Task.CompletedTask;
     }
 
+    public Task SetBinningAsync(int factor, CancellationToken cancellationToken = default)
+    {
+        if (!IsConnected || !_supportedBins.Contains(factor))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(factor), factor,
+                $"ToupTek camera '{Name}' bins {(_supportedBins.Count == 0 ? "nothing" : string.Join(", ", _supportedBins))}, not {factor}.");
+        }
+
+        if (factor != _binning)
+        {
+            // Stopped around the change, as for the bit depth: it changes the
+            // frame size, and a frame already in the pipeline at the old size
+            // must not be collected as the new one.
+            Check(ToupcamNative.Toupcam_Stop(_handle), "stop streaming");
+            try
+            {
+                Check(ToupcamNative.Toupcam_put_Option(_handle, ToupcamNative.OptionBinning, ToupTekMapping.BinningOption(factor)), "set the binning");
+                _binning = factor;
+            }
+            finally
+            {
+                StartStreaming();
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
     public async Task<CapturedImage> ExposeAsync(
         TimeSpan duration, CaptureContext? context = null, CancellationToken cancellationToken = default)
     {
@@ -231,7 +277,7 @@ public sealed class ToupTekCamera : ICamera
         (byte[] buffer, int width, int height) = Pull(bytesPerPixel);
 
         double[,] pixels = NativeFrame.ToPixels(buffer, width, height, bytesPerPixel);
-        return NativeFrame.Write(this, pixels, bytesPerPixel * 8, duration, startUtc, context, _workingDirectory);
+        return NativeFrame.Write(this, pixels, bytesPerPixel * 8, duration, startUtc, context, _workingDirectory, _binning);
     }
 
     private unsafe (byte[] Buffer, int Width, int Height) Pull(int bytesPerPixel)

@@ -306,6 +306,15 @@ public sealed record SetCameraGainCommand(int Percent) : EngineCommand;
 public sealed record SetExposureCommand(TimeSpan Duration) : EngineCommand;
 
 /// <summary>
+/// Bin every frame from the next one on, <paramref name="Factor"/> pixels by
+/// <paramref name="Factor"/>; 1 is no binning. Done by the engine on the frame
+/// as written, not by the camera (D43), so it is held there and applied at a
+/// frame boundary, as the exposure is, and accepted at any time for the same
+/// reason: it changes how a frame is measured, not where it points.
+/// </summary>
+public sealed record SetBinningCommand(int Factor) : EngineCommand;
+
+/// <summary>
 /// Plan a sequence and begin sampling. With a mount connected it is anchored
 /// where the mount already points; without one it is planned from the site
 /// and the clock, and the user is told where to set the telescope (D10). Moves
@@ -476,6 +485,31 @@ public sealed record SessionStartedEvent(SessionConfiguration Configuration, Seq
 
 /// <summary>The exposure every frame from the next one on will be taken at.</summary>
 public sealed record ExposureChangedEvent(TimeSpan Duration) : EngineEvent;
+
+/// <summary>The binning every frame from the next one on will be given (D43); 1 is none.</summary>
+public sealed record BinningChangedEvent(int Factor) : EngineEvent;
+
+/// <summary>
+/// A frame that was to be binned could not be, and goes on at full resolution.
+/// Its scale is still known exactly, since binning is recorded per frame, so
+/// the frame is used rather than thrown away; this says why it looks different.
+/// </summary>
+public sealed record FrameNotBinnedEvent(string FitsPath, string Reason) : EngineEvent;
+
+/// <summary>
+/// How frames are now being binned (D43): by the camera's driver, by the
+/// engine on the written frame, or both. Published when the arrangement
+/// changes, not per frame. The two factors multiply to what frames actually
+/// get, which differs from <paramref name="Requested"/> only when a driver
+/// would not do as asked.
+/// </summary>
+public sealed record BinningAppliedEvent(int Requested, int ByDriver, int ByApplication) : EngineEvent;
+
+/// <summary>
+/// The camera's driver refused a binning it lists as supported. It is not asked
+/// again until a camera next connects; the engine bins the frames instead.
+/// </summary>
+public sealed record DriverBinningRefusedEvent(int Factor, string Reason) : EngineEvent;
 
 /// <param name="SweepDegrees">
 /// The sweep actually planned, which may be less than requested: the planner

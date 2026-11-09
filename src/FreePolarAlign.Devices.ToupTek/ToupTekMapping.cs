@@ -86,4 +86,25 @@ public static class ToupTekMapping
         int nul = field.IndexOf((byte)0);
         return Encoding.UTF8.GetString(nul < 0 ? field : field[..nul]).Trim();
     }
+
+    /// <summary>
+    /// The bins asked of a camera whose SDK has <c>TOUPCAM_OPTION_BINNING</c>.
+    /// The header documents 2×2 to 8×8; the session asks for no more than 4×4
+    /// (D43), so offering more would only be a promise nobody tests.
+    /// </summary>
+    public static IReadOnlyList<int> SupportedBins { get; } = new[] { 1, 2, 3, 4 };
+
+    /// <summary>
+    /// The <c>TOUPCAM_OPTION_BINNING</c> value for an n×n bin: 0x01 for none,
+    /// and otherwise 0x80 | n, the header's averaging mode. Averaging rather
+    /// than its plain 0x0n, which is a saturating sum, so a binned frame keeps
+    /// the sensor's range as the session's own binning does, and a bright star
+    /// is not clipped by a sum of four wells.
+    /// </summary>
+    public static int BinningOption(int bin)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(bin, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(bin, 8);
+        return bin == 1 ? 0x01 : 0x80 | bin;
+    }
 }

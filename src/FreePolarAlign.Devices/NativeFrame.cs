@@ -80,6 +80,7 @@ public static class NativeFrame
     /// provenance header every capture carries, and returns what the session
     /// needs to know about it.
     /// </summary>
+    /// <param name="binning">The binning the driver applied to these pixels (D43).</param>
     public static CapturedImage Write(
         ICamera camera,
         double[,] pixels,
@@ -87,7 +88,8 @@ public static class NativeFrame
         TimeSpan duration,
         DateTime startUtc,
         CaptureContext? context,
-        string workingDirectory)
+        string workingDirectory,
+        int binning = 1)
     {
         ArgumentNullException.ThrowIfNull(camera);
         ArgumentNullException.ThrowIfNull(pixels);
@@ -102,13 +104,13 @@ public static class NativeFrame
         FitsImage image = FitsImage.ForCapturedFrame(width, height, pixels, bitsPerPixel);
         var described = new FitsImage(
             image.Width, image.Height, image.BitPix, image.Bzero, image.Bscale, image.Pixels,
-            CaptureHeader.Build(image.ExtraHeader, camera, duration, startUtc, midpointUtc, context));
+            CaptureHeader.Build(image.ExtraHeader, camera, duration, startUtc, midpointUtc, context, binning));
 
         Directory.CreateDirectory(workingDirectory);
         string path = Path.Combine(workingDirectory, $"{startUtc:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}.fits");
         FitsFile.Write(path, described);
 
-        return new CapturedImage(path, midpointUtc, duration);
+        return new CapturedImage(path, midpointUtc, duration, binning);
     }
 
     /// <summary>

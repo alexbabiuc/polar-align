@@ -101,6 +101,13 @@ public sealed record AppSettings
     public double? ExposureSeconds { get; init; }
 
     /// <summary>
+    /// The binning last chosen (D43), 1 for none. Remembered beside the exposure
+    /// because it is the same kind of judgement, about the camera and the sky,
+    /// and is chosen in the same place.
+    /// </summary>
+    public int? Binning { get; init; }
+
+    /// <summary>
     /// The number of capture points a sequence takes, or null for the built-in
     /// default. Set in the settings window, which is the only place it is
     /// edited (D34).

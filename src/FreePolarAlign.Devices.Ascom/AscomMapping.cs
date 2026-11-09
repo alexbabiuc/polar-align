@@ -86,6 +86,19 @@ internal static class AscomMapping
 
         return string.IsNullOrWhiteSpace(driverMessage) ? reason : $"{reason} ({driverMessage.Trim()})";
     }
+
+    /// <summary>
+    /// The bins to offer from <c>MaxBinX</c> and <c>MaxBinY</c>: every square
+    /// bin up to the smaller of the two, since only square bins are asked for,
+    /// and no further than 4×4, the most the session asks (D43). ASCOM promises
+    /// no more than the maximum, so a driver that refuses a bin under it is
+    /// answered by the session binning instead.
+    /// </summary>
+    public static IReadOnlyList<int> SupportedBins(int maxBinX, int maxBinY)
+    {
+        int most = Math.Min(Math.Min(maxBinX, maxBinY), 4);
+        return most >= 1 ? Enumerable.Range(1, most).ToArray() : Array.Empty<int>();
+    }
 }
 
 /// <summary>

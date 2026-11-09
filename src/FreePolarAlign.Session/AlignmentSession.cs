@@ -2,6 +2,7 @@ using FreePolarAlign.Core.Alignment;
 using FreePolarAlign.Core.Astrometry;
 using FreePolarAlign.Core.Engine;
 using FreePolarAlign.Devices;
+using FreePolarAlign.Imaging.Fits;
 using FreePolarAlign.Imaging.Wcs;
 using FreePolarAlign.Solving;
 
@@ -46,6 +47,7 @@ public sealed record CommandRejectedEvent(string Reason) : EngineEvent;
 /// retrying a failed post-slew one (D26). Null is five seconds.
 /// </param>
 /// <param name="FailedSolvesDirectory">Where frames whose solve failed are kept (D26). Null is the per-user default.</param>
+/// <param name="Binning">The binning the capture loop starts at (D43); <see cref="SetBinningCommand"/> changes it. Anything below 1 is 1.</param>
 public sealed record AlignmentSessionOptions(
     int CaptureCount = 6,
     double SweepDegrees = 70.0,
@@ -57,8 +59,11 @@ public sealed record AlignmentSessionOptions(
     string? ApplicationVersion = null,
     TimeSpan? SettleDelay = null,
     TimeSpan? SolveInterval = null,
-    string? FailedSolvesDirectory = null)
+    string? FailedSolvesDirectory = null,
+    int Binning = 1)
 {
+    public int EffectiveBinning => Math.Max(1, Binning);
+
     public TimeSpan EffectiveExposure => ExposureDuration == default ? TimeSpan.FromSeconds(2) : ExposureDuration;
 
     public static TimeSpan DefaultSettleDelay { get; } = TimeSpan.FromSeconds(2);
@@ -181,6 +186,25 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
     /// <summary>Read by the capture loop at every frame boundary, so it is volatile rather than gated.</summary>
     private long _exposureTicks;
+
+    /// <summary>Read by the capture loop at every frame boundary, like the exposure.</summary>
+    private int _binning;
+
+    /// <summary>
+    /// Bins the connected camera's driver has refused, so it is not asked again
+    /// every frame and the log does not repeat the refusal; the session bins
+    /// for it instead. Cleared when a camera connects.
+    /// </summary>
+    private readonly HashSet<int> _refusedDriverBins = new();
+
+    /// <summary>
+    /// How frames were last binned, so a change of arrangement is announced
+    /// once. A tuple rather than the event, whose equality includes the time it
+    /// was published.
+    /// </summary>
+    private (int Requested, int ByDriver, int ByApplication) _lastBinning = Unbinned;
+
+    private static readonly (int, int, int) Unbinned = (1, 1, 1);
 
     private MountPosition? _latestMountPosition;
     private bool _mountMoving;
@@ -317,6 +341,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         _options = options ?? new AlignmentSessionOptions();
         _profile = _options.EquipmentProfile;
         _exposureTicks = _options.EffectiveExposure.Ticks;
+        _binning = _options.EffectiveBinning;
         _frameStore = new FrameStore(_options.FailedSolvesDirectory ?? FrameStore.DefaultFailedSolvesDirectory);
     }
 
@@ -340,6 +365,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         _options = options ?? new AlignmentSessionOptions();
         _profile = _options.EquipmentProfile;
         _exposureTicks = _options.EffectiveExposure.Ticks;
+        _binning = _options.EffectiveBinning;
         _frameStore = new FrameStore(_options.FailedSolvesDirectory ?? FrameStore.DefaultFailedSolvesDirectory);
     }
 
@@ -360,6 +386,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     public EquipmentProfile? Profile => _profile;
 
     private TimeSpan Exposure => TimeSpan.FromTicks(Interlocked.Read(ref _exposureTicks));
+
+    private int Binning => Volatile.Read(ref _binning);
 
     public async ValueTask SendAsync(EngineCommand command, CancellationToken cancellationToken = default)
     {
@@ -399,6 +427,9 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                     break;
                 case SetExposureCommand exposure:
                     SetExposure(exposure);
+                    break;
+                case SetBinningCommand binning:
+                    SetBinning(binning);
                     break;
                 case StartSessionCommand start:
                     await StartAsync(start, cancellationToken).ConfigureAwait(false);
@@ -555,7 +586,10 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         PublishEquipment();
         _events.Publish(new ExposureChangedEvent(Exposure));
+        _events.Publish(new BinningChangedEvent(Binning));
 
+        _refusedDriverBins.Clear();
+        _lastBinning = Unbinned;
         StartCaptureLoop(camera);
     }
 
@@ -1013,6 +1047,99 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     }
 
     /// <summary>
+    /// Changes the binning every frame from the next one on is given (D43). Up
+    /// to 4x4: past that a guide-scope frame is down to a few hundred pixels a
+    /// side and the stars to a pixel each, which no solver measures well.
+    /// </summary>
+    private void SetBinning(SetBinningCommand command)
+    {
+        if (command.Factor is < 1 or > MaximumBinning)
+        {
+            _events.Publish(new CommandRejectedEvent(
+                $"Binning has to be between 1x1 and {MaximumBinning}x{MaximumBinning}; {command.Factor}x{command.Factor} is not."));
+            return;
+        }
+
+        Volatile.Write(ref _binning, command.Factor);
+        _events.Publish(new BinningChangedEvent(command.Factor));
+    }
+
+    private const int MaximumBinning = 4;
+
+    /// <summary>
+    /// Sets the driver's binning for the next frame (D43): to what is wanted if
+    /// the driver offers it, and otherwise back to none, so that the session's
+    /// own binning starts from unbinned pixels. Called with the camera held, so
+    /// no exposure is under way. A driver that refuses is not asked for that
+    /// bin again until a camera next connects.
+    /// </summary>
+    private async Task ArrangeDriverBinningAsync(ICamera camera, int wanted, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<int> offered = camera.SupportedBinnings;
+        if (offered.Count == 0)
+        {
+            return;
+        }
+
+        int target = offered.Contains(wanted) && !_refusedDriverBins.Contains(wanted) ? wanted : 1;
+        if (camera.Binning == target || !offered.Contains(target) || _refusedDriverBins.Contains(target))
+        {
+            return;
+        }
+
+        try
+        {
+            await camera.SetBinningAsync(target, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _refusedDriverBins.Add(target);
+            _events.Publish(new DriverBinningRefusedEvent(target, ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// What the driver did, and what is left for the session to do: the rest
+    /// of the wanted factor, when the driver's binning divides it, and nothing
+    /// otherwise. A driver left binning more than wanted -- a refusal to go
+    /// back to none -- is not undone; the frame is used as it came, and says so
+    /// in its own binning.
+    /// </summary>
+    private static int RemainingBinning(int wanted, int byDriver) =>
+        byDriver >= 1 && wanted % byDriver == 0 ? wanted / byDriver : 1;
+
+    private void AnnounceBinning(int wanted, int byDriver, int byApplication)
+    {
+        var applied = (wanted, byDriver, byApplication);
+        if (applied != _lastBinning)
+        {
+            _lastBinning = applied;
+            _events.Publish(new BinningAppliedEvent(wanted, byDriver, byApplication));
+        }
+    }
+
+    /// <summary>
+    /// Bins a frame where it lies, and records the factor on it. A frame that
+    /// cannot be binned goes on as it was, said so, at a binning of 1 -- its
+    /// scale is then still right, which a frame claiming a binning it did not
+    /// get would not be.
+    /// </summary>
+    private CapturedImage BinFrame(CapturedImage frame, int factor)
+    {
+        try
+        {
+            FitsImage binned = FrameBinning.Bin(FitsFile.Read(frame.FitsPath), factor);
+            FitsFile.Write(frame.FitsPath, binned);
+            return frame with { Binning = frame.Binning * factor };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException or FormatException or ArgumentException)
+        {
+            _events.Publish(new FrameNotBinnedEvent(frame.FitsPath, ex.Message));
+            return frame;
+        }
+    }
+
+    /// <summary>
     /// Selects a readout mode between frames. Allowed during a sequence: the bit
     /// depth changes how noisy a solved position is, not where it is (D22, D25
     /// as revised).
@@ -1369,6 +1496,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         {
             CapturedImage frame;
             TimeSpan exposure;
+            int binning;
             DateTime startedUtc;
             int? gain;
 
@@ -1378,6 +1506,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 try
                 {
                     exposure = Exposure;
+                    binning = Binning;
+                    await ArrangeDriverBinningAsync(camera, binning, cancellationToken).ConfigureAwait(false);
                     startedUtc = UtcNow;
                     frame = await camera.ExposeAsync(exposure, BuildCaptureContext(), cancellationToken)
                         .ConfigureAwait(false);
@@ -1402,6 +1532,16 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 return;
             }
 
+            // What the driver did not bin, binned here: after the camera is let
+            // go, so the next exposure is not held up by the rewrite, which on a
+            // 26-megapixel frame takes a noticeable fraction of a second.
+            int byDriver = Math.Max(1, frame.Binning);
+            int remaining = RemainingBinning(binning, byDriver);
+            if (remaining > 1)
+            {
+                frame = BinFrame(frame, remaining);
+            }
+
             try
             {
                 // A camera that hands a frame back faster than the exposure it
@@ -1419,7 +1559,14 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 return;
             }
 
-            if (!await RunSerialAsync(() => OnFrameAsync(camera, frame, startedUtc, gain), cancellationToken).ConfigureAwait(false))
+            int byApplication = frame.Binning / byDriver;
+            if (!await RunSerialAsync(
+                    () =>
+                    {
+                        AnnounceBinning(binning, byDriver, byApplication);
+                        return OnFrameAsync(camera, frame, startedUtc, gain);
+                    },
+                    cancellationToken).ConfigureAwait(false))
             {
                 TryDelete(frame.FitsPath);
                 return;
@@ -2433,7 +2580,10 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         // without a scale. Held back, ASTAP fell to its automatic field ladder,
         // which stops at 0.37° and so never reached a 0.23° frame from an
         // 800 mm scope (D41).
-        double? scaleHint = _profile?.ExpectedScaleArcsecondsPerPixel;
+        //
+        // The profile describes the sensor's own pixels, so a binned frame's
+        // scale is that times its binning.
+        double? scaleHint = _profile?.ExpectedScaleArcsecondsPerPixel * frame.Binning;
 
         return new PlateSolveRequest(
             frame.FitsPath,
@@ -2465,7 +2615,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
             _consecutiveSolveFailures = 0;
             PlateSolveSolution solution = result.Solution!;
-            LearnFocalLength(solution);
+            LearnFocalLength(solution, frame.Binning);
 
             // The fit needs the physical pointing direction, so the catalogue
             // position goes back through the full apparent-place transform with
@@ -2750,7 +2900,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     /// implies. The point of a profile is that the user supplies a guess once
     /// and the software measures it thereafter.
     /// </summary>
-    private void LearnFocalLength(PlateSolveSolution solution)
+    /// <param name="binning">The binning of the frame solved: the profile is in sensor pixels, so the solved scale is divided by it.</param>
+    private void LearnFocalLength(PlateSolveSolution solution, int binning)
     {
         if (_profile is null)
         {
@@ -2761,7 +2912,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         bool wasSolved = _profile.IsFocalLengthSolved;
         double? before = _profile.FocalLengthMillimetres;
 
-        _profile = _profile.WithSolvedScale(solution.PixelScaleArcsecPerPixel);
+        _profile = _profile.WithSolvedScale(solution.PixelScaleArcsecPerPixel / binning);
 
         // Only announced when it actually changed something, so the log records
         // the moment the scale became known rather than repeating it per capture.

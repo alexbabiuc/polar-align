@@ -60,6 +60,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
     private CameraReadoutModeDescription? _selectedReadoutMode;
     private ExposureOption _selectedExposure;
+    private BinningOption _selectedBinning;
     private double _stretchTarget = Imaging.Display.ImageStretch.DefaultTargetBackground;
     private Avalonia.Media.Imaging.Bitmap? _framePreview;
     private string? _framePreviewProblem;
@@ -142,6 +143,10 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         _selectedExposure = ExposureOption.Nearest(_settings.ExposureSeconds)
                             ?? ExposureOption.Nearest(new AlignmentSessionOptions().EffectiveExposure.TotalSeconds)
                             ?? ExposureOption.All[^1];
+
+        // Same reasoning, and no binning when nothing usable was remembered,
+        // since that is what the engine does then too.
+        _selectedBinning = BinningOption.For(_settings.Binning) ?? BinningOption.All[0];
 
         // Startup problems open the log rather than a banner across the top of
         // the window. A banner that is always up is one nobody reads, and most
@@ -498,6 +503,38 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
 
             _ = SendAsync(new SetExposureCommand(value.Duration));
             Remember(_settings with { ExposureSeconds = value.Duration.TotalSeconds });
+        }
+    }
+
+    public IReadOnlyList<BinningOption> BinningOptions => BinningOption.All;
+
+    /// <summary>Editable whenever the exposure is, for the same reason: binning changes how a frame is measured, not where it points.</summary>
+    public bool IsBinningEditable => Ready;
+
+    /// <summary>
+    /// The binning each frame is given, from the next frame on (D43). The
+    /// authoritative copy in the way <see cref="SelectedExposure"/> is: it is
+    /// what is remembered, what the engine starts at, and what is sent again if
+    /// the engine ever reports something else.
+    /// </summary>
+    public BinningOption SelectedBinning
+    {
+        get => _selectedBinning;
+        set
+        {
+            if (!IsBinningEditable)
+            {
+                OnPropertyChanged();
+                return;
+            }
+
+            if (value is null || !SetField(ref _selectedBinning, value))
+            {
+                return;
+            }
+
+            _ = SendAsync(new SetBinningCommand(value.Factor));
+            Remember(_settings with { Binning = value.Factor });
         }
     }
 
@@ -983,6 +1020,12 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
                 _ = SendAsync(new SetExposureCommand(SelectedExposure.Duration));
             }
 
+            if (engineEvent is BinningChangedEvent binning &&
+                binning.Factor != SelectedBinning.Factor && Ready)
+            {
+                _ = SendAsync(new SetBinningCommand(SelectedBinning.Factor));
+            }
+
             // Kept in step with what the camera actually accepted, rather than
             // with what was clicked. The picker follows the engine, so it cannot
             // sit showing a mode the driver refused.
@@ -1457,6 +1500,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(ShowGainControl),
         nameof(IsGainEditable),
         nameof(IsExposureEditable),
+        nameof(IsBinningEditable),
         nameof(IsReadoutModeEditable),
         nameof(GainPercent),
         nameof(GainDetailText),

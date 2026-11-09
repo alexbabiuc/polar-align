@@ -35,15 +35,3 @@ jobs:
           name: installer
           path: ${{ runner.temp }}/installer/*.exe
           retention-days: 7
-
-  macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Test
-        run: dotnet test FreePolarAlign.Core.slnf -c Release

@@ -390,6 +390,13 @@ public static class EngineEventReducer
                 StatusMessage = "Mount synced to the solved position.",
             },
 
+            // Something the user chose replaced the sync; the log says so and
+            // the panel has nothing to report.
+            MountSyncCancelledEvent => withLog with
+            {
+                Sync = null,
+            },
+
             MountSyncFailedEvent e => withLog with
             {
                 Sync = new SyncView(

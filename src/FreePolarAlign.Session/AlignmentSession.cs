@@ -1661,16 +1661,6 @@ public sealed partial class AlignmentSession : IAlignmentEngine, IDisposable
 
     private async Task StartAsync(StartSessionCommand start, CancellationToken cancellationToken)
     {
-        // A sequence started now would take its samples against coordinates
-        // that are about to change under it (D45).
-        if (_sync is not null)
-        {
-            _events.Publish(new CommandRejectedEvent(
-                "Wait for Solve & sync to finish before starting a sequence: the coordinates the mount reports " +
-                "are about to change."));
-            return;
-        }
-
         ResetSession();
 
         if (_camera is null || !_camera.IsConnected)
@@ -1753,6 +1743,11 @@ public sealed partial class AlignmentSession : IAlignmentEngine, IDisposable
             _plan = plan;
             _spacingDegrees = SpacingOf(plan);
             _settleDelay = start.Configuration.SettleDelay ?? _options.EffectiveSettleDelay;
+
+            // A sync landing mid-sequence would change the coordinates the
+            // samples are read against (D45). Cancelled only here, once the
+            // sequence is certain to start, so a refused start leaves it running.
+            CancelSyncForSequence();
             _sessionActive = true;
 
             _events.Publish(new SessionStartedEvent(start.Configuration with { SettleDelay = SettleDelay }, _mode));

@@ -209,7 +209,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         StartCommand = new RelayCommand(
             StartAsync,
             () => Ready && (!State.SessionActive || State.IsLiveReading) &&
-                  State.Camera.IsConnected && State.IsSiteConfigured && !IsSyncInProgress);
+                  State.Camera.IsConnected && State.IsSiteConfigured);
 
         RecordSampleCommand = new RelayCommand(
             () => SendAsync(new RecordSampleCommand()),

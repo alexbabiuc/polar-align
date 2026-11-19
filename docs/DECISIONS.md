@@ -2458,8 +2458,15 @@ anyway, so syncing one costs a button.
 **Only between sequences.** A sync changes the coordinates the mount reports.
 Every sample a sequence takes is read against those coordinates, and a
 declination jump restarts the sequence (D18). The engine refuses the command
-during a sequence, and refuses to start a sequence while a sync is running,
-because the coordinates are about to change under it.
+during a sequence.
+
+**Starting a sequence cancels a sync.** The user asked for this: Start stays
+available while a sync runs, and starting means the sequence is wanted more. The
+sync is cancelled at the point the sequence is certain to start, so it can never
+land under the sequence's samples. A start that is refused, for a missing site
+or a plan that fails, leaves the sync running. The cancellation has its own
+event, `MountSyncCancelledEvent`. It clears the panel and writes one line in the
+log. It is not shown as a failure, because nothing failed.
 
 **The next frame.** The frame on screen may have started before the button was
 pressed (D26's reasoning for Record sample). The engine solves the first frame

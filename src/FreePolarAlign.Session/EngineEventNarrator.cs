@@ -191,6 +191,8 @@ public static class EngineEventNarrator
                 $"Dec {CoordinateText.FormatDegrees(e.DecDegrees)} ({e.DecDegrees:F5}°){SolvedBy(e.Solver)}. ",
                 $"Its own position had been {e.CorrectionArcminutes:F1}' out.")),
 
+            MountSyncCancelledEvent e => Info($"Solve & sync cancelled, the mount was not synced: {e.Reason}"),
+
             MountSyncFailedEvent e => new NarratedEvent(LogSeverity.Warning, Inv(
                 $"Solve & sync: {(e.Stage == MountSyncStage.Solve ? "solving" : "syncing")} failed, ",
                 $"the mount was not synced. {e.Reason}",

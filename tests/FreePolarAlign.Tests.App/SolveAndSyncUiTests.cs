@@ -128,20 +128,28 @@ public class SolveAndSyncUiTests
         Assert.False(viewModel.SolveAndSyncCommand.CanExecute(null));
     }
 
-    /// <summary>One at a time, and no sequence starting under a sync that is about to change the coordinates.</summary>
+    /// <summary>
+    /// One sync at a time, but a sequence may start over one: the engine then
+    /// cancels it, and the panel shows nothing for the cancellation.
+    /// </summary>
     [Fact]
-    public void WhileASyncRuns_NeitherItNorStartIsOffered()
+    public void WhileASyncRuns_StartIsOfferedAndCancellingItLeavesThePanelEmpty()
     {
         var (viewModel, engine) = Build();
-        engine.Publish(CameraConnected, MountConnected, Tracking, SiteConfigured);
-        Assert.True(viewModel.StartCommand.CanExecute(null));
-
-        engine.Publish(new MountSyncStartedEvent());
+        engine.Publish(CameraConnected, MountConnected, Tracking, SiteConfigured, new MountSyncStartedEvent());
 
         Assert.True(viewModel.HasSyncResult);
         Assert.True(viewModel.IsSyncInProgress);
         Assert.False(viewModel.SolveAndSyncCommand.CanExecute(null));
-        Assert.False(viewModel.StartCommand.CanExecute(null));
+        Assert.True(viewModel.StartCommand.CanExecute(null));
+
+        engine.Publish(
+            new MountSyncCancelledEvent("A sequence was started."),
+            new SessionStartedEvent(new SessionConfiguration(6, 70.0)),
+            new SessionCompletedEvent());
+
+        Assert.False(viewModel.HasSyncResult);
+        Assert.Null(viewModel.State.Sync);
     }
 
     [Fact]

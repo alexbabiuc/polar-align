@@ -268,6 +268,22 @@ public sealed partial class AlignmentSession
     }
 
     /// <summary>
+    /// A sequence is starting, which the user chose over the sync. Said in the
+    /// log, not as a failure: nothing went wrong.
+    /// </summary>
+    private void CancelSyncForSequence()
+    {
+        if (_sync is not { } sync)
+        {
+            return;
+        }
+
+        _sync = null;
+        sync.Cancellation.Cancel();
+        _events.Publish(new MountSyncCancelledEvent("A sequence was started."));
+    }
+
+    /// <summary>
     /// The mount, or the camera that was to supply the frame, has gone. A
     /// solve already under way on a frame the camera handed over is left to
     /// finish, since it no longer needs the camera.

@@ -732,6 +732,12 @@ public sealed record MountSyncedEvent(
     double CorrectionArcminutes,
     string? Solver = null) : EngineEvent;
 
+/// <summary>
+/// A solve-and-sync given up because the user did something that replaces it,
+/// such as starting a sequence (D45). Not a failure, so not presented as one.
+/// </summary>
+public sealed record MountSyncCancelledEvent(string Reason) : EngineEvent;
+
 /// <summary>A solve-and-sync that left the mount as it was (D45).</summary>
 /// <param name="KeptFramePath">For a failed solve, where the frame was kept for diagnosis (D26), or null.</param>
 public sealed record MountSyncFailedEvent(

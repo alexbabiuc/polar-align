@@ -168,18 +168,45 @@ public class SolveAndSyncTests
         Assert.Contains("mount", rejected!.Reason);
     }
 
+    /// <summary>
+    /// The user chose the sequence over the sync. The sync is dropped, quietly:
+    /// a cancellation, not a failure, and the mount is never synced under the
+    /// sequence's samples.
+    /// </summary>
     [Fact]
-    public async Task StartingASequenceWhileSyncing_IsRefused()
+    public async Task StartingASequenceWhileSyncing_CancelsTheSyncQuietly()
     {
         using var harness = new SessionHarness();
         await ReadyBetweenSequencesAsync(harness);
         harness.Perfect.Delay = TimeSpan.FromSeconds(10);
 
         await harness.Session.SendAsync(new SolveAndSyncCommand());
+        await harness.Clock.WaitUntilAsync(() => harness.Perfect.Calls > 0, () => " The solve never started.");
         await harness.StartAsync();
 
-        Assert.Null(harness.Recorder.Last<SessionStartedEvent>());
-        Assert.Contains("Solve & sync", harness.Recorder.Last<CommandRejectedEvent>()!.Reason);
+        Assert.True(harness.Recorder.Last<SessionStartedEvent>() is not null, harness.Recorder.Trail());
+        Assert.True(harness.Recorder.IndexOfLast<MountSyncCancelledEvent>() <
+                    harness.Recorder.IndexOfLast<SessionStartedEvent>(), harness.Recorder.Trail());
+
+        await harness.Clock.PassAsync(TimeSpan.FromSeconds(12), harness.PollAsync);
+        Assert.Empty(harness.Mount.Syncs);
+        Assert.Null(harness.Recorder.Last<MountSyncFailedEvent>());
+        Assert.Null(harness.Recorder.Last<MountSyncedEvent>());
+    }
+
+    /// <summary>A start that is refused replaces nothing, so the sync carries on.</summary>
+    [Fact]
+    public async Task ARefusedStart_LeavesTheSyncRunning()
+    {
+        using var harness = new SessionHarness();
+        await harness.ConnectAsync();
+
+        await harness.Session.SendAsync(new SolveAndSyncCommand());
+        await harness.StartAsync();
+
+        Assert.Contains("site", harness.Recorder.Last<CommandRejectedEvent>()!.Reason);
+        Assert.Null(harness.Recorder.Last<MountSyncCancelledEvent>());
+        await harness.Recorder.WaitForAsync<MountSyncedEvent>(poll: harness.PollAsync);
     }
 
     private static double Separation(double ra1, double dec1, double ra2, double dec2)

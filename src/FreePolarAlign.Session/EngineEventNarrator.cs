@@ -52,10 +52,10 @@ public static class EngineEventNarrator
             SiteConfiguredEvent e => e.MountReportedDisagreement is null
                 ? Info(Inv(
                     $"Site set: {Coordinates(e.LatitudeDegrees, e.LongitudeDegrees)}, ",
-                    $"height {e.HeightMeters:F0} m."))
+                    $"altitude {e.HeightMeters:F0} m."))
                 : new NarratedEvent(LogSeverity.Warning, Inv(
                     $"Site set: {Coordinates(e.LatitudeDegrees, e.LongitudeDegrees)}, ",
-                    $"height {e.HeightMeters:F0} m. {e.MountReportedDisagreement}")),
+                    $"altitude {e.HeightMeters:F0} m. {e.MountReportedDisagreement}")),
 
             MountSiteReportedEvent e => e.WriteProblem is not null || e.DisagreementWithSiteInUse is not null
                 ? new NarratedEvent(LogSeverity.Warning, DescribeMountSite(e))
@@ -219,7 +219,7 @@ public static class EngineEventNarrator
     {
         string text = Inv(
             $"{(e.AfterWrite ? "Site written to the mount; it now reports" : "The mount reports its site as")} ",
-            $"{Coordinates(e.LatitudeDegrees, e.LongitudeDegrees)}, height {e.HeightMeters:F0} m.");
+            $"{Coordinates(e.LatitudeDegrees, e.LongitudeDegrees)}, altitude {e.HeightMeters:F0} m.");
         if (e.WriteProblem is not null)
         {
             text += " " + e.WriteProblem;

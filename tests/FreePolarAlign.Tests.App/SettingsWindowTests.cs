@@ -317,10 +317,58 @@ public class SettingsWindowTests
     {
         (SettingsViewModel window, _, _) = Build(new AppSettings { Site = Bucharest, FocalLengthMillimetres = 382.5 });
 
-        Assert.Equal("44.42680", window.LatitudeText);
-        Assert.Equal("26.10250", window.LongitudeText);
+        Assert.Equal("44:25:36", window.LatitudeText);
+        Assert.Equal("26:06:09", window.LongitudeText);
         Assert.Equal("85", window.HeightText);
         Assert.Equal("382.5", window.FocalLengthText);
+    }
+
+    /// <summary>
+    /// The fields show whole arcseconds and Bucharest's latitude is not a whole
+    /// arcsecond, so a window that read its own display back would save a site
+    /// half an arcsecond from the one in use -- and opening Settings to change
+    /// the exposure would reconfigure the site. Untouched, it saves exactly.
+    /// </summary>
+    [Fact]
+    public void AnUntouchedSite_IsSavedExactly_NotAsDisplayed()
+    {
+        (SettingsViewModel window, List<AppSettings> saved, _) = Build(new AppSettings { Site = Bucharest });
+
+        window.NormaliseSiteText();
+        window.SaveCommand.Execute(null);
+
+        Assert.Equal(Bucharest, Assert.Single(saved).Site);
+    }
+
+    /// <summary>"20.5" is 20:30:00, and the field says so once it is left.</summary>
+    [Fact]
+    public void DecimalDegrees_AreRewrittenAsDegreesMinutesSeconds_WhenTheFieldIsLeft()
+    {
+        (SettingsViewModel window, List<AppSettings> saved, _) = Build();
+
+        window.LatitudeText = "20.5";
+        window.LongitudeText = "-0,12";
+        window.NormaliseSiteText();
+
+        Assert.Equal("20:30:00", window.LatitudeText);
+        Assert.Equal("-0:07:12", window.LongitudeText);
+
+        window.SaveCommand.Execute(null);
+        Assert.Equal(new StoredSite(20.5, -0.12, 0.0), Assert.Single(saved).Site);
+    }
+
+    /// <summary>A mistake stays on screen to be corrected, rather than being rewritten away.</summary>
+    [Fact]
+    public void UnreadableSiteText_IsLeftAsTyped()
+    {
+        (SettingsViewModel window, _, _) = Build();
+
+        window.LatitudeText = "44 north";
+        window.LongitudeText = "200";
+        window.NormaliseSiteText();
+
+        Assert.Equal("44 north", window.LatitudeText);
+        Assert.Equal("200", window.LongitudeText);
     }
 
     [Fact]
@@ -559,8 +607,8 @@ public class SettingsWindowTests
         SettingsViewModel window = viewModel.CreateSettingsViewModel(() => { });
         window.CopyFromMountCommand.Execute(null);
 
-        Assert.Equal("51.47733", window.LatitudeText);
-        Assert.Equal("-0.00139", window.LongitudeText);
+        Assert.Equal("51:28:38", window.LatitudeText);
+        Assert.Equal("-0:00:05", window.LongitudeText);
         Assert.Equal("47", window.HeightText);
         Assert.Empty(engine.Commands);
         Assert.Equal(Bucharest, store.Saved.Site);
@@ -621,7 +669,7 @@ public class SettingsWindowTests
         window.WriteToMountCommand.Execute(null);
         engine.Publish(new MountSiteReportedEvent(44.4268, 26.1025, 85.0, AfterWrite: true));
 
-        Assert.Contains("44.42680", window.MountSiteText);
+        Assert.Contains("44:25:36", window.MountSiteText);
         Assert.StartsWith("Written.", window.MountSiteStatus);
     }
 

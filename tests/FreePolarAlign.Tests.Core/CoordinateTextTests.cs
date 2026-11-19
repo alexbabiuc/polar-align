@@ -17,10 +17,10 @@ public class CoordinateTextTests
 {
     private const double ArcsecondInDegrees = 1.0 / 3600.0;
 
-    // ---- The hours-versus-degrees rule ----
+    // ---- Right ascension is hours ----
 
     /// <summary>
-    /// The rule the UI's own labels state: separators mean sexagesimal hours.
+    /// The rule the UI's own labels state: right ascension is typed in hours.
     /// Getting this backwards would misplace a target by a factor of fifteen --
     /// far enough that the plate solve would simply fail, which is the lucky
     /// outcome, but on a mount with limits it is a collision.
@@ -39,32 +39,29 @@ public class CoordinateTextTests
     }
 
     /// <summary>
-    /// A bare number is degrees, because that is the form the software itself
-    /// produces and the form a user copying from a solve result will have.
+    /// A bare number is hours too (D44). It was degrees until then, so this is
+    /// the test that would catch the old reading coming back -- and with it a
+    /// target misplaced by a factor of fifteen.
     /// </summary>
     [Theory]
-    [InlineData("157.5", 157.5)]
-    [InlineData("10.5", 10.5)]
+    [InlineData("10.5", 157.5)]
+    [InlineData("20.5", 307.5)]
     [InlineData("0", 0.0)]
-    [InlineData("359.999", 359.999)]
-    public void DecimalRightAscension_IsReadAsDegrees(string text, double expectedDegrees)
+    [InlineData("23.999", 359.985)]
+    public void DecimalRightAscension_IsReadAsHours(string text, double expectedDegrees)
     {
         Assert.True(CoordinateText.TryParseRightAscension(text, out double degrees), text);
         Assert.Equal(expectedDegrees, degrees, precision: 6);
     }
 
-    /// <summary>
-    /// The same digits mean different things in the two forms, which is exactly
-    /// why the distinction is drawn explicitly rather than guessed at.
-    /// </summary>
+    /// <summary>The two forms of the same hours agree, which is what lets a field rewrite one as the other.</summary>
     [Fact]
-    public void TheSameDigits_MeanDifferentThings_InTheTwoForms()
+    public void DecimalAndSexagesimalHours_MeanTheSame()
     {
-        Assert.True(CoordinateText.TryParseRightAscension("10.5", out double asDegrees));
-        Assert.True(CoordinateText.TryParseRightAscension("10:30:00", out double asHours));
+        Assert.True(CoordinateText.TryParseRightAscension("10.5", out double asDecimal));
+        Assert.True(CoordinateText.TryParseRightAscension("10:30:00", out double asSexagesimal));
 
-        Assert.Equal(10.5, asDegrees, precision: 6);
-        Assert.Equal(157.5, asHours, precision: 6);
+        Assert.Equal(asSexagesimal, asDecimal, precision: 9);
     }
 
     // ---- The sign trap ----
@@ -124,7 +121,10 @@ public class CoordinateTextTests
     [InlineData("24:00:00")]
     [InlineData("25:00:00")]
     [InlineData("-01:00:00")]
-    public void ImpossibleSexagesimalRightAscension_IsRefused(string text) =>
+    [InlineData("24")]
+    [InlineData("157.5")]
+    [InlineData("-1.5")]
+    public void ImpossibleRightAscension_IsRefused(string text) =>
         Assert.False(CoordinateText.TryParseRightAscension(text, out _), text);
 
     /// <summary>
@@ -187,9 +187,9 @@ public class CoordinateTextTests
 
         Assert.True(CoordinateText.TryParseRightAscension(text, out double reparsed), text);
 
-        // A tenth of a second of time is 1.5 arcseconds of angle, which is the
-        // resolution the displayed form carries.
-        Assert.Equal(degrees, reparsed, tolerance: 2.0 * ArcsecondInDegrees);
+        // Whole seconds of time are 15 arcseconds of angle, so rounding can move
+        // the value by half that.
+        Assert.Equal(degrees, reparsed, tolerance: 7.5 * ArcsecondInDegrees);
     }
 
     [Theory]
@@ -201,42 +201,33 @@ public class CoordinateTextTests
     [InlineData(-89.999)]
     public void Declination_SurvivesFormattingAndReparsing(double degrees)
     {
-        string text = CoordinateText.FormatDeclination(degrees);
+        string text = CoordinateText.FormatDegrees(degrees);
 
         Assert.True(CoordinateText.TryParseDeclination(text, out double reparsed), text);
         Assert.Equal(degrees, reparsed, tolerance: ArcsecondInDegrees);
     }
 
-    /// <summary>
-    /// The editable field is seeded with the decimal form so that confirming
-    /// without editing returns exactly what was proposed -- which is how the
-    /// engine tells "accepted" from "overridden", and therefore whether to
-    /// re-resolve the coordinates for the moment of the slew (D16).
-    /// </summary>
+    /// <summary>The hours counterpart of the d:mm:ss form, unpadded and in whole seconds (D44).</summary>
     [Theory]
-    [InlineData(157.512345)]
-    [InlineData(0.000001)]
-    [InlineData(359.999999)]
-    public void DecimalForm_RoundTripsFarTighterThanTheOverrideThreshold(double degrees)
+    [InlineData(157.5, "10:30:00")]
+    [InlineData(0.0, "0:00:00")]
+    [InlineData(218.04, "14:32:10")]
+    [InlineData(-15.0, "23:00:00")]
+    public void RightAscension_IsShownAsHoursMinutesSeconds(double degrees, string expected)
     {
-        Assert.True(
-            CoordinateText.TryParseRightAscension(CoordinateText.FormatDecimalDegrees(degrees), out double reparsed));
-
-        // The engine treats a difference below one arcsecond as "unedited", so
-        // the seeded text has to round trip well inside that.
-        Assert.Equal(degrees, reparsed, tolerance: 0.1 * ArcsecondInDegrees);
+        Assert.Equal(expected, CoordinateText.FormatRightAscension(degrees));
     }
 
     /// <summary>
-    /// Rounding the seconds must not be allowed to produce "24h 00m 00.0s",
-    /// which is not a right ascension.
+    /// Rounding the seconds must not be allowed to produce "24:00:00", which is
+    /// not a right ascension and which the parser would refuse.
     /// </summary>
     [Fact]
     public void FormattingNearTheWrapPoint_DoesNotProduceTwentyFourHours()
     {
         string text = CoordinateText.FormatRightAscension(359.99999);
 
-        Assert.DoesNotContain("24h", text);
+        Assert.Equal("0:00:00", text);
         Assert.True(CoordinateText.TryParseRightAscension(text, out double reparsed), text);
         Assert.InRange(reparsed, 0.0, 360.0);
     }
@@ -251,10 +242,44 @@ public class CoordinateTextTests
     [InlineData(12.016666)]
     public void DeclinationFormatting_NeverShowsSixtyArcsecondsOrArcminutes(double degrees)
     {
-        string text = CoordinateText.FormatDeclination(degrees);
+        string text = CoordinateText.FormatDegrees(degrees);
 
-        Assert.DoesNotContain("60'", text);
-        Assert.DoesNotContain("60.0\"", text);
+        Assert.DoesNotContain(":60", text);
         Assert.True(CoordinateText.TryParseDeclination(text, out _), text);
+    }
+
+    /// <summary>
+    /// The one form every coordinate in degrees is shown in: degrees, then
+    /// arcminutes and arcseconds of two digits each, whole seconds. "20.5" is
+    /// the case asked for by name; the rest are the edges of the rounding --
+    /// a carry through both fields, and a sign that must belong to the whole
+    /// value below one degree and vanish when rounding leaves nothing.
+    /// </summary>
+    [Theory]
+    [InlineData(20.5, "20:30:00")]
+    [InlineData(46.77, "46:46:12")]
+    [InlineData(-0.5, "-0:30:00")]
+    [InlineData(-122.4194, "-122:25:10")]
+    [InlineData(41.99999, "42:00:00")]
+    [InlineData(-0.0001, "0:00:00")]
+    [InlineData(0.0, "0:00:00")]
+    public void Degrees_AreShownAsDegreesMinutesSeconds(double degrees, string expected)
+    {
+        Assert.Equal(expected, CoordinateText.FormatDegrees(degrees));
+    }
+
+    /// <summary>
+    /// The limit is the caller's: a longitude of 122 degrees is legal and a
+    /// latitude of 122 is a typing mistake, in either notation.
+    /// </summary>
+    [Theory]
+    [InlineData("-122:25:10", 180.0, true)]
+    [InlineData("-122.4194", 180.0, true)]
+    [InlineData("-122:25:10", 90.0, false)]
+    [InlineData("180.5", 180.0, false)]
+    [InlineData("20:61:00", 90.0, false)]
+    public void Degrees_ParseWithinTheirLimit(string text, double limit, bool accepted)
+    {
+        Assert.Equal(accepted, CoordinateText.TryParseDegrees(text, limit, out _));
     }
 }

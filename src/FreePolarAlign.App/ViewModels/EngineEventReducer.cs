@@ -217,7 +217,7 @@ public static class EngineEventReducer
                 PlannedSweepDegrees = e.SweepDegrees,
                 StatusMessage =
                     $"Target selected: {e.PlannedCaptures} captures at mechanical declination " +
-                    $"{e.DeclinationDegrees:F1}°, sweeping {e.SweepDegrees:F0}° " +
+                    $"{CoordinateText.FormatDegrees(e.DeclinationDegrees)}, sweeping {e.SweepDegrees:F0}° " +
                     $"{(e.IsWestOfMeridian ? "west" : "east")} of the meridian (D8).",
             },
 

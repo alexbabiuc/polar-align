@@ -497,11 +497,13 @@
 
               <StackPanel Spacing="4" IsVisible="{Binding ProposalRequiresMotion}">
                 <TextBlock Classes="label" TextWrapping="Wrap"
-                           Text="Right ascension: h m s (14:32:10) or decimal degrees (218.04)" />
-                <TextBox Text="{Binding ProposalRaText, Mode=TwoWay}" FontFamily="monospace" />
+                           Text="Right ascension: h:mm:ss (14:32:10) or decimal hours (14.5)" />
+                <TextBox Text="{Binding ProposalRaText, Mode=TwoWay}" FontFamily="monospace"
+                         LostFocus="OnProposalRaLostFocus" />
                 <TextBlock Classes="label" TextWrapping="Wrap"
-                           Text="Declination: ° ' &quot; (-12 30 00) or decimal degrees (-12.5)" />
-                <TextBox Text="{Binding ProposalDecText, Mode=TwoWay}" FontFamily="monospace" />
+                           Text="Declination: d:mm:ss (-12:30:00) or decimal degrees (-12.5)" />
+                <TextBox Text="{Binding ProposalDecText, Mode=TwoWay}" FontFamily="monospace"
+                         LostFocus="OnProposalDecLostFocus" />
                 <TextBlock Classes="label" TextWrapping="Wrap"
                            Text="Moving in declination starts a new sequence: points at different declinations do not lie on one circle about the polar axis." />
                 <StackPanel Orientation="Horizontal" Spacing="8">

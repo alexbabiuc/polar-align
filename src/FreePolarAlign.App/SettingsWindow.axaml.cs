@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Interactivity;
 
 namespace FreePolarAlign.App;
 
@@ -9,4 +10,7 @@ public partial class SettingsWindow : Window
     {
         InitializeComponent();
     }
+
+    private void OnSiteLostFocus(object? sender, RoutedEventArgs e) =>
+        (DataContext as ViewModels.SettingsViewModel)?.NormaliseSiteText();
 }

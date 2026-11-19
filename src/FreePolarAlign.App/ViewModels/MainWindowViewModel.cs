@@ -50,6 +50,8 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     private TimeSpan? _settleDelay;
     private string _proposalRaText = string.Empty;
     private string _proposalDecText = string.Empty;
+    private readonly AngleEntry _proposalRa = AngleEntry.RightAscension();
+    private readonly AngleEntry _proposalDec = AngleEntry.Degrees(90.0);
     private string? _entryError;
 
     /// <summary>
@@ -408,6 +410,20 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         get => _proposalDecText;
         set => SetField(ref _proposalDecText, value);
     }
+
+    /// <summary>
+    /// Rewrites a readable right ascension as "h:mm:ss", so "20.5" becomes
+    /// "20:30:00". Called when the field loses focus, not on every keystroke.
+    /// </summary>
+    public void NormaliseProposalRaText() =>
+        ProposalRaText = _proposalRa.Normalise(ProposalRaText);
+
+    /// <summary>
+    /// Rewrites a readable declination as "d:mm:ss", so "20.5" becomes
+    /// "20:30:00". Called when the field loses focus, not on every keystroke.
+    /// </summary>
+    public void NormaliseProposalDecText() =>
+        ProposalDecText = _proposalDec.Normalise(ProposalDecText);
 
     /// <summary>
     /// Why the last thing typed could not be used. Kept separate from the
@@ -958,17 +974,18 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        if (!CoordinateText.TryParseRightAscension(ProposalRaText, out double ra))
+        if (!_proposalRa.TryRead(ProposalRaText, out double ra))
         {
             EntryError =
-                "Right ascension could not be read. Use hours and minutes (\"14:32:10\") or decimal degrees (\"218.04\").";
+                "Right ascension could not be read. Use hours, minutes and seconds (\"14:32:10\") or " +
+                "decimal hours (\"14.5\"), below 24.";
             return;
         }
 
-        if (!CoordinateText.TryParseDeclination(ProposalDecText, out double dec))
+        if (!_proposalDec.TryRead(ProposalDecText, out double dec))
         {
             EntryError =
-                "Declination could not be read. Use degrees, arcminutes and arcseconds (\"-12 30 00\") or " +
+                "Declination could not be read. Use degrees, arcminutes and arcseconds (\"-12:30:00\") or " +
                 "decimal degrees (\"-12.5\").";
             return;
         }
@@ -1192,11 +1209,11 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        // Decimal degrees rather than the sexagesimal form, so that confirming
-        // without editing sends back exactly what was proposed and the engine
-        // recognises it as unedited.
-        ProposalRaText = CoordinateText.FormatDecimalDegrees(proposal.RaDegrees);
-        ProposalDecText = CoordinateText.FormatDecimalDegrees(proposal.DecDegrees);
+        // Shown in whole seconds, but confirming without editing still sends
+        // back exactly what was proposed, so the engine recognises it as
+        // unedited: each entry reads its own seed back exactly.
+        ProposalRaText = _proposalRa.Seed(proposal.RaDegrees);
+        ProposalDecText = _proposalDec.Seed(proposal.DecDegrees);
     }
 
     /// <summary>

@@ -154,7 +154,7 @@ public static class AlignmentFormatting
     /// </summary>
     public static string Coordinates(double? raDegrees, double? decDegrees) =>
         raDegrees is { } ra && decDegrees is { } dec
-            ? $"RA {CoordinateText.FormatRightAscension(ra)}   Dec {CoordinateText.FormatDeclination(dec)}"
+            ? $"RA {CoordinateText.FormatRightAscension(ra)}   Dec {CoordinateText.FormatDegrees(dec)}"
             : "--";
 
     /// <summary>
@@ -188,11 +188,10 @@ public static class AlignmentFormatting
             : "--";
 
     /// <summary>
-    /// The site in use. Shown to five decimal places because a
-    /// latitude error appears one-for-one in the reported altitude misalignment
-    /// (D19): a hundredth of a degree is already six tenths of an arcminute of
-    /// pure bias, so rounding the display to two places would hide a difference
-    /// that matters.
+    /// The site in use, to the arcsecond, because a latitude error appears
+    /// one-for-one in the reported altitude misalignment (D19): a hundredth of a
+    /// degree is already six tenths of an arcminute of pure bias, so a display
+    /// rounded to the arcminute would hide a difference that matters.
     /// </summary>
     public static string Site(double? latitude, double? longitude, double? heightMeters)
     {
@@ -207,8 +206,8 @@ public static class AlignmentFormatting
             ? FormattableString.Invariant($", {metres:F0} m")
             : string.Empty;
 
-        return FormattableString.Invariant(
-            $"{Math.Abs(lat):F5}° {northSouth}, {Math.Abs(lon):F5}° {eastWest}{height}");
+        return $"{CoordinateText.FormatDegrees(Math.Abs(lat))} {northSouth}, " +
+               $"{CoordinateText.FormatDegrees(Math.Abs(lon))} {eastWest}{height}";
     }
 
     /// <summary>

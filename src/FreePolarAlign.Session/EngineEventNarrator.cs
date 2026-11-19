@@ -51,10 +51,10 @@ public static class EngineEventNarrator
             // re-examine when a result looks wrong.
             SiteConfiguredEvent e => e.MountReportedDisagreement is null
                 ? Info(Inv(
-                    $"Site set: latitude {e.LatitudeDegrees:F5}°, longitude {e.LongitudeDegrees:F5}°, ",
+                    $"Site set: {Coordinates(e.LatitudeDegrees, e.LongitudeDegrees)}, ",
                     $"height {e.HeightMeters:F0} m."))
                 : new NarratedEvent(LogSeverity.Warning, Inv(
-                    $"Site set: latitude {e.LatitudeDegrees:F5}°, longitude {e.LongitudeDegrees:F5}°, ",
+                    $"Site set: {Coordinates(e.LatitudeDegrees, e.LongitudeDegrees)}, ",
                     $"height {e.HeightMeters:F0} m. {e.MountReportedDisagreement}")),
 
             MountSiteReportedEvent e => e.WriteProblem is not null || e.DisagreementWithSiteInUse is not null
@@ -90,24 +90,24 @@ public static class EngineEventNarrator
                 $"A frame could not be binned and is used at full resolution: {e.Reason} ({e.FitsPath})"),
 
             TargetSelectedEvent e => Info(Inv(
-                $"Target: mechanical declination {e.DeclinationDegrees:F2}°, ",
+                $"Target: mechanical declination {CoordinateText.FormatDegrees(e.DeclinationDegrees)}, ",
                 $"{e.PlannedCaptures} captures across {e.SweepDegrees:F0}° ",
                 $"{(e.IsWestOfMeridian ? "west" : "east")} of the meridian.")),
 
             SlewProposedEvent e => Info(Inv(
                 $"Proposed point {e.PointIndex} of {e.PlannedCaptures}: ",
                 $"RA {CoordinateText.FormatRightAscension(e.RaDegrees)}, ",
-                $"Dec {CoordinateText.FormatDeclination(e.DecDegrees)} ",
+                $"Dec {CoordinateText.FormatDegrees(e.DecDegrees)} ",
                 $"(hour angle {e.MechanicalRotationDegrees:F1}°, altitude {e.PredictedAltitudeDegrees:F0}°). ",
                 $"{(e.RequiresMotion ? "Waiting for confirmation before moving." : "No movement needed.")}")),
 
             SlewConfirmedEvent e => e.ReanchoredReason is not null
                 ? new NarratedEvent(LogSeverity.Warning, Inv(
                     $"Slew confirmed to RA {CoordinateText.FormatRightAscension(e.RaDegrees)}, ",
-                    $"Dec {CoordinateText.FormatDeclination(e.DecDegrees)}. {e.ReanchoredReason}"))
+                    $"Dec {CoordinateText.FormatDegrees(e.DecDegrees)}. {e.ReanchoredReason}"))
                 : Info(Inv(
                     $"Slew confirmed to RA {CoordinateText.FormatRightAscension(e.RaDegrees)}, ",
-                    $"Dec {CoordinateText.FormatDeclination(e.DecDegrees)}",
+                    $"Dec {CoordinateText.FormatDegrees(e.DecDegrees)}",
                     $"{(e.WasOverridden ? " (coordinates overridden by the operator)." : ".")}")),
 
             // Deliberately not logged: the camera runs continuously (D26), so
@@ -148,7 +148,7 @@ public static class EngineEventNarrator
 
             PointCapturedEvent e => Info(Inv(
                 $"Sample {e.Point.Index}{(e.Trigger == SampleTrigger.Forced ? " (recorded on request)" : string.Empty)}{SolvedBy(e.Solver)}: RA {CoordinateText.FormatRightAscension(e.Point.RaDegrees)}, ",
-                $"Dec {CoordinateText.FormatDeclination(e.Point.DecDegrees)}, ",
+                $"Dec {CoordinateText.FormatDegrees(e.Point.DecDegrees)}, ",
                 $"exposure midpoint {e.Point.ExposureMidpointUtc:yyyy-MM-dd HH:mm:ss}Z.")),
 
             AlignmentUpdatedEvent e => Info(Inv(
@@ -186,11 +186,22 @@ public static class EngineEventNarrator
         };
     }
 
+    /// <summary>
+    /// A site as d:mm:ss, as every coordinate is shown, followed by the value
+    /// with every digit it was given. The site is the one input the software
+    /// cannot check, and the first thing re-examined the morning after a result
+    /// that looked wrong; whole arcseconds are about 30 m, and would throw away
+    /// the difference between what was typed and what a driver kept.
+    /// </summary>
+    private static string Coordinates(double latitude, double longitude) => Inv(
+        $"latitude {CoordinateText.FormatDegrees(latitude)} ({latitude:F5}°), ",
+        $"longitude {CoordinateText.FormatDegrees(longitude)} ({longitude:F5}°)");
+
     private static string DescribeMountSite(MountSiteReportedEvent e)
     {
         string text = Inv(
             $"{(e.AfterWrite ? "Site written to the mount; it now reports" : "The mount reports its site as")} ",
-            $"latitude {e.LatitudeDegrees:F5}°, longitude {e.LongitudeDegrees:F5}°, height {e.HeightMeters:F0} m.");
+            $"{Coordinates(e.LatitudeDegrees, e.LongitudeDegrees)}, height {e.HeightMeters:F0} m.");
         if (e.WriteProblem is not null)
         {
             text += " " + e.WriteProblem;

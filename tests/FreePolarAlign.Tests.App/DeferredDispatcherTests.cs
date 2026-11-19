@@ -261,9 +261,9 @@ public class DeferredDispatcherTests
     }
 
     /// <summary>
-    /// A proposal seeds the editable coordinate fields with the decimal form, so
-    /// that confirming without editing sends back exactly what was proposed and
-    /// the engine can tell an acceptance from an override (D18).
+    /// A proposal seeds the editable coordinate fields, shown as h:mm:ss and
+    /// d:mm:ss (D44). Confirming them without editing sends back exactly what
+    /// was proposed, so the engine can tell an acceptance from an override (D18).
     /// </summary>
     [Fact]
     public void AProposalSeedsTheEditableCoordinates()
@@ -275,11 +275,9 @@ public class DeferredDispatcherTests
 
         dispatcher.Drain();
 
-        Assert.True(CoordinateText.TryParseRightAscension(viewModel.ProposalRaText, out double ra));
-        Assert.True(CoordinateText.TryParseDeclination(viewModel.ProposalDecText, out double dec));
-
-        // Well inside the arcsecond the engine treats as "unedited".
-        Assert.Equal(145.912345, ra, tolerance: 0.1 / 3600.0);
-        Assert.Equal(68.098765, dec, tolerance: 0.1 / 3600.0);
+        // Shown in whole seconds; that confirming them untouched sends back
+        // exactly what was proposed is pinned in LiveCaptureUiTests.
+        Assert.Equal("9:43:39", viewModel.ProposalRaText);
+        Assert.Equal("68:05:56", viewModel.ProposalDecText);
     }
 }

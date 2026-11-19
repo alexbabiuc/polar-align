@@ -13,12 +13,10 @@ namespace FreePolarAlign.Core.Engine;
 ///
 /// <list type="bullet">
 /// <item>
-/// Right ascension is conventionally written in hours but decimally in degrees,
-/// and the same string can mean either. The rule here is explicit and stated in
-/// the UI's own labels: a value containing a separator is sexagesimal
-/// <em>hours</em>, a bare number is decimal <em>degrees</em>. "10:30:00" is
-/// therefore 157.5 degrees while "10.5" is 10.5 degrees, and both are what the
-/// person typing them almost certainly meant.
+/// Right ascension is read in hours in both forms: "10:30:00" and "10.5" are
+/// both 157.5 degrees. Until D44 a bare number was read as degrees, the form a
+/// solve result gives; it was changed so that every coordinate field reads a
+/// decimal in the unit it displays, and the UI's label says which unit that is.
 /// </item>
 /// <item>
 /// A negative declination's sign belongs to the whole value, not to its degrees
@@ -37,8 +35,8 @@ public static class CoordinateText
     private static readonly char[] Separators = { ' ', ':', '\t', 'h', 'H', 'm', 'M', 's', 'S', 'd', 'D', '°', '\'', '"' };
 
     /// <summary>
-    /// Parses a right ascension. Sexagesimal input is read as hours; a bare
-    /// decimal number is read as degrees. Result is normalised to [0, 360).
+    /// Parses a right ascension written in hours, sexagesimal ("10:30:00") or
+    /// decimal ("10.5"). Returns degrees in [0, 360).
     /// </summary>
     public static bool TryParseRightAscension(string? text, out double degrees)
     {
@@ -49,31 +47,24 @@ public static class CoordinateText
         }
 
         string trimmed = text.Trim();
+        double hours;
 
         if (!LooksSexagesimal(trimmed))
         {
-            if (!double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out double asDegrees))
+            if (!double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out hours)
+                || !double.IsFinite(hours))
             {
                 return false;
             }
-
-            if (!double.IsFinite(asDegrees))
-            {
-                return false;
-            }
-
-            degrees = Normalise360(asDegrees);
-            return true;
         }
-
-        if (!TryParseSexagesimal(trimmed, out double hours, out bool negative) || negative)
+        else if (!TryParseSexagesimal(trimmed, out hours, out bool negative) || negative)
         {
-            // A negative right ascension is not a thing anyone means; rejecting
-            // it is safer than silently wrapping it into the far side of the sky.
             return false;
         }
 
-        if (hours >= 24.0)
+        // Negative, or 24 hours and beyond, is refused rather than wrapped: a
+        // typo wrapped into a legal value is a target on the far side of the sky.
+        if (hours is < 0.0 or >= 24.0)
         {
             return false;
         }
@@ -88,7 +79,16 @@ public static class CoordinateText
     /// typing mistake, and clamping it would hide the mistake behind a legal
     /// value.
     /// </summary>
-    public static bool TryParseDeclination(string? text, out double degrees)
+    public static bool TryParseDeclination(string? text, out double degrees) =>
+        TryParseDegrees(text, 90.0, out degrees);
+
+    /// <summary>
+    /// Parses an angle in degrees -- a declination, a latitude, a longitude --
+    /// written either as degrees, arcminutes and arcseconds ("-12:30:00",
+    /// "-12 30") or as decimal degrees ("-12.5"). Anything whose magnitude
+    /// exceeds <paramref name="limit"/> is refused, not clamped.
+    /// </summary>
+    public static bool TryParseDegrees(string? text, double limit, out double degrees)
     {
         degrees = 0.0;
         if (string.IsNullOrWhiteSpace(text))
@@ -101,12 +101,8 @@ public static class CoordinateText
         if (!LooksSexagesimal(trimmed))
         {
             if (!double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out double asDegrees)
-                || !double.IsFinite(asDegrees))
-            {
-                return false;
-            }
-
-            if (asDegrees is < -90.0 or > 90.0)
+                || !double.IsFinite(asDegrees)
+                || Math.Abs(asDegrees) > limit)
             {
                 return false;
             }
@@ -115,12 +111,7 @@ public static class CoordinateText
             return true;
         }
 
-        if (!TryParseSexagesimal(trimmed, out double magnitude, out bool negative))
-        {
-            return false;
-        }
-
-        if (magnitude > 90.0)
+        if (!TryParseSexagesimal(trimmed, out double magnitude, out bool negative) || magnitude > limit)
         {
             return false;
         }
@@ -129,63 +120,35 @@ public static class CoordinateText
         return true;
     }
 
-    /// <summary>Right ascension as hours, minutes and seconds -- how it is read off a chart.</summary>
+    /// <summary>
+    /// Right ascension as "h:mm:ss" -- "10:30:00" -- the hours counterpart of
+    /// <see cref="FormatDegrees"/>, in whole seconds of time (D44). A value that
+    /// rounds up to 24 hours is shown as 0:00:00, which is where it is.
+    /// </summary>
     public static string FormatRightAscension(double degrees)
     {
-        double hours = Normalise360(degrees) / 15.0;
-        (int whole, int minutes, double seconds) = Split(hours);
-
-        // Rounding the seconds can carry into the minutes and hours, and an
-        // "24h 00m 00.0s" readout would be simply wrong, so it is renormalised.
-        if (seconds >= 59.95)
-        {
-            seconds = 0.0;
-            minutes++;
-        }
-
-        if (minutes >= 60)
-        {
-            minutes = 0;
-            whole++;
-        }
-
-        if (whole >= 24)
-        {
-            whole = 0;
-        }
-
-        return FormattableString.Invariant($"{whole:00}h {minutes:00}m {seconds:00.0}s");
-    }
-
-    /// <summary>Declination as signed degrees, arcminutes and arcseconds.</summary>
-    public static string FormatDeclination(double degrees)
-    {
-        string sign = degrees < 0.0 ? "-" : "+";
-        (int whole, int minutes, double seconds) = Split(Math.Abs(degrees));
-
-        if (seconds >= 59.95)
-        {
-            seconds = 0.0;
-            minutes++;
-        }
-
-        if (minutes >= 60)
-        {
-            minutes = 0;
-            whole++;
-        }
-
-        return FormattableString.Invariant($"{sign}{whole:00}° {minutes:00}' {seconds:00.0}\"");
+        long totalSeconds = (long)Math.Round(Normalise360(degrees) / 15.0 * 3600.0, MidpointRounding.AwayFromZero)
+                            % (24 * 3600);
+        return FormattableString.Invariant($"{totalSeconds / 3600}:{totalSeconds / 60 % 60:00}:{totalSeconds % 60:00}");
     }
 
     /// <summary>
-    /// Round-trippable decimal degrees, for pre-filling an editable field. The
-    /// override dialog is seeded with this rather than with the sexagesimal form
-    /// so that a user who confirms without editing sends back exactly what was
-    /// proposed.
+    /// An angle in degrees as "d:mm:ss" -- "46:46:12", "-0:30:00" -- which is how
+    /// every coordinate in degrees is shown to the user. Whole arcseconds: a
+    /// latitude off by the half-arcsecond this can round away biases the
+    /// altitude reading by under a hundredth of an arcminute. The sign belongs
+    /// to the whole value, as <see cref="TryParseDegrees"/> reads it back, and
+    /// is dropped once rounding has made the value zero.
     /// </summary>
-    public static string FormatDecimalDegrees(double degrees) =>
-        degrees.ToString("F6", CultureInfo.InvariantCulture);
+    public static string FormatDegrees(double degrees)
+    {
+        long totalSeconds = (long)Math.Round(Math.Abs(degrees) * 3600.0, MidpointRounding.AwayFromZero);
+        string sign = degrees < 0.0 && totalSeconds > 0 ? "-" : string.Empty;
+        long whole = totalSeconds / 3600;
+        long minutes = totalSeconds / 60 % 60;
+        long seconds = totalSeconds % 60;
+        return FormattableString.Invariant($"{sign}{whole}:{minutes:00}:{seconds:00}");
+    }
 
     private static bool LooksSexagesimal(string text) =>
         text.IndexOfAny(Separators) >= 0;
@@ -228,15 +191,6 @@ public static class CoordinateText
 
         magnitude = values[0] + values[1] / 60.0 + values[2] / 3600.0;
         return true;
-    }
-
-    private static (int Whole, int Minutes, double Seconds) Split(double value)
-    {
-        int whole = (int)Math.Floor(value);
-        double remainderMinutes = (value - whole) * 60.0;
-        int minutes = (int)Math.Floor(remainderMinutes);
-        double seconds = (remainderMinutes - minutes) * 60.0;
-        return (whole, minutes, seconds);
     }
 
     private static double Normalise360(double degrees)

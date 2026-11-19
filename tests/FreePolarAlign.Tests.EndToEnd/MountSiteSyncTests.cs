@@ -123,7 +123,7 @@ public class MountSiteSyncTests
 
         MountSiteReportedEvent reported = harness.Recorder.Last<MountSiteReportedEvent>()!;
         Assert.Equal(44.4333, reported.LatitudeDegrees, precision: 4);
-        Assert.Contains("kept 44.43333°", reported.WriteProblem);
+        Assert.Contains("kept 44:26:00 (44.43333°)", reported.WriteProblem);
     }
 
     [Fact]

@@ -377,6 +377,57 @@ public sealed class LiveCaptureUiTests : IDisposable
         Assert.Single(engine.Commands.OfType<ConfirmSlewCommand>());
     }
 
+    /// <summary>
+    /// The proposed coordinates are shown in whole seconds and sent back exactly
+    /// when they are not touched: the engine tells an accepted proposal from an
+    /// override by comparing against its own (D16, D18), and a confirmation
+    /// must not arrive as an edit because of how it was shown. For the right
+    /// ascension the rounding is up to 7.5 arcseconds, well past the one the
+    /// engine allows.
+    /// </summary>
+    [Fact]
+    public void UntouchedProposedCoordinates_AreSentBackExactly()
+    {
+        var (viewModel, engine) = Build();
+        engine.Publish(CameraConnected, SiteConfirmed, Started);
+        engine.Publish(new SlewProposedEvent(2, 6, 145.912345, 68.098765, 26.0, 71.0, RequiresMotion: true, "Slew 26° west."));
+
+        Assert.Equal("9:43:39", viewModel.ProposalRaText);
+        Assert.Equal("68:05:56", viewModel.ProposalDecText);
+        viewModel.NormaliseProposalRaText();
+        viewModel.NormaliseProposalDecText();
+        viewModel.ConfirmProposalCommand.Execute(null);
+
+        ConfirmSlewCommand sent = Assert.Single(engine.Commands.OfType<ConfirmSlewCommand>());
+        Assert.Equal(145.912345, sent.RaDegrees);
+        Assert.Equal(68.098765, sent.DecDegrees);
+    }
+
+    /// <summary>
+    /// A typed "-20.5" is -20:30:00 of declination, a typed "20.5" is 20:30:00
+    /// of right ascension -- hours, not degrees (D44) -- and each field says so
+    /// once it is left.
+    /// </summary>
+    [Fact]
+    public void DecimalCoordinates_AreRewrittenWhenTheFieldIsLeft()
+    {
+        var (viewModel, engine) = Build();
+        engine.Publish(CameraConnected, SiteConfirmed, Started);
+        engine.Publish(new SlewProposedEvent(2, 6, 165.0, 60.0, -21.0, 55.0, RequiresMotion: true, "Slew 14° west."));
+
+        viewModel.ProposalRaText = "20.5";
+        viewModel.ProposalDecText = "-20.5";
+        viewModel.NormaliseProposalRaText();
+        viewModel.NormaliseProposalDecText();
+
+        Assert.Equal("20:30:00", viewModel.ProposalRaText);
+        Assert.Equal("-20:30:00", viewModel.ProposalDecText);
+        viewModel.ConfirmProposalCommand.Execute(null);
+        ConfirmSlewCommand sent = Assert.Single(engine.Commands.OfType<ConfirmSlewCommand>());
+        Assert.Equal(307.5, sent.RaDegrees);
+        Assert.Equal(-20.5, sent.DecDegrees);
+    }
+
     // ---- The live preview ----
 
     /// <summary>

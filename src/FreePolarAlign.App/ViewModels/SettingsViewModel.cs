@@ -45,6 +45,8 @@ public sealed class SettingsViewModel : ViewModelBase
     private string _ps3Path;
     private string _sweepText;
     private string _settleText;
+    private readonly AngleEntry _latitude = AngleEntry.Degrees(90.0);
+    private readonly AngleEntry _longitude = AngleEntry.Degrees(180.0);
     private string _latitudeText;
     private string _longitudeText;
     private string _heightText;
@@ -80,8 +82,9 @@ public sealed class SettingsViewModel : ViewModelBase
         _capturePointsText = (current.DefaultCapturePoints ?? defaults.CapturePoints).ToString(CultureInfo.InvariantCulture);
         _sweepText = (current.SweepDegrees ?? defaults.RequestedSweepDegrees).ToString("G", CultureInfo.InvariantCulture);
         _settleText = Seconds(current.SettleDelay ?? defaults.SettleDelay ?? AlignmentSessionOptions.DefaultSettleDelay);
-        _latitudeText = current.Site?.LatitudeDegrees.ToString("F5", CultureInfo.InvariantCulture) ?? string.Empty;
-        _longitudeText = current.Site?.LongitudeDegrees.ToString("F5", CultureInfo.InvariantCulture) ?? string.Empty;
+        StoredSite? storedSite = current.Site;
+        _latitudeText = storedSite is null ? string.Empty : _latitude.Seed(storedSite.LatitudeDegrees);
+        _longitudeText = storedSite is null ? string.Empty : _longitude.Seed(storedSite.LongitudeDegrees);
         _heightText = current.Site?.HeightMeters.ToString("F0", CultureInfo.InvariantCulture) ?? string.Empty;
         _focalLengthText = FormatFocalLength(current.FocalLengthMillimetres);
         _solver = OptionFor(current.Solver);
@@ -139,8 +142,9 @@ public sealed class SettingsViewModel : ViewModelBase
     public bool HasMountSite => _mountSite is not null;
 
     public string? MountSiteText => _mountSite is { } site
-        ? FormattableString.Invariant(
-            $"The mount reports {site.LatitudeDegrees:F5}°, {site.LongitudeDegrees:F5}°, {site.HeightMeters:F0} m.")
+        ? $"The mount reports {CoordinateText.FormatDegrees(site.LatitudeDegrees)}, " +
+          $"{CoordinateText.FormatDegrees(site.LongitudeDegrees)}, " +
+          FormattableString.Invariant($"{site.HeightMeters:F0} m.")
         : null;
 
     /// <summary>What became of the last write to the mount from this window.</summary>
@@ -199,8 +203,8 @@ public sealed class SettingsViewModel : ViewModelBase
             return;
         }
 
-        LatitudeText = site.LatitudeDegrees.ToString("F5", CultureInfo.InvariantCulture);
-        LongitudeText = site.LongitudeDegrees.ToString("F5", CultureInfo.InvariantCulture);
+        LatitudeText = _latitude.Seed(site.LatitudeDegrees);
+        LongitudeText = _longitude.Seed(site.LongitudeDegrees);
         HeightText = site.HeightMeters.ToString("F0", CultureInfo.InvariantCulture);
         MountSiteStatus = "Copied from the mount. Save to use it.";
     }
@@ -244,6 +248,17 @@ public sealed class SettingsViewModel : ViewModelBase
     {
         get => _longitudeText;
         set => SetField(ref _longitudeText, value);
+    }
+
+    /// <summary>
+    /// Rewrites whatever readable was typed into the site fields as "d:mm:ss",
+    /// so "20.5" becomes "20:30:00". Called when a field loses focus rather than
+    /// on every keystroke, which would rewrite "20." out from under the typing.
+    /// </summary>
+    public void NormaliseSiteText()
+    {
+        LatitudeText = _latitude.Normalise(LatitudeText);
+        LongitudeText = _longitude.Normalise(LongitudeText);
     }
 
     public string HeightText
@@ -425,15 +440,15 @@ public sealed class SettingsViewModel : ViewModelBase
             return true;
         }
 
-        if (!TryParseDecimal(LatitudeText, out double latitude) || !double.IsFinite(latitude) || Math.Abs(latitude) > 90.0)
+        if (!_latitude.TryRead(LatitudeText, out double latitude))
         {
-            problem = "Latitude must be a number of degrees between -90 and 90. North is positive.";
+            problem = "Latitude must be between -90 and 90 degrees, as d:mm:ss or decimal degrees. North is positive.";
             return false;
         }
 
-        if (!TryParseDecimal(LongitudeText, out double longitude) || !double.IsFinite(longitude) || Math.Abs(longitude) > 180.0)
+        if (!_longitude.TryRead(LongitudeText, out double longitude))
         {
-            problem = "Longitude must be a number of degrees between -180 and 180. East is positive.";
+            problem = "Longitude must be between -180 and 180 degrees, as d:mm:ss or decimal degrees. East is positive.";
             return false;
         }
 

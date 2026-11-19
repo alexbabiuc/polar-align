@@ -2385,3 +2385,47 @@ positions. A field already short of stars, or a short focal length whose stars
 are already a pixel or two, can be made worse. That is why it is offered and off
 by default, not applied. Only 1×1 and 2×2 are offered; the engine accepts up to
 4×4. None of the three driver paths has run against hardware yet.
+
+## D44 — Coordinates are shown as d:mm:ss or h:mm:ss; values stay decimal
+
+*Decided 2026-11-19, in 0.0.37; right ascension joined in 0.0.38.*
+
+Every coordinate in degrees the user reads or types is in one form:
+`46:46:12`, `-0:30:00`. That covers the site's latitude and longitude, every
+declination, and the log lines that name them. Degrees are unpadded, then
+arcminutes and arcseconds of two digits each, in whole seconds. The sign
+belongs to the whole value, so `-0:30:00` is minus half a degree. A field
+also accepts decimal degrees, with a point or a comma, and rewrites them when
+it loses focus: `20.5` becomes `20:30:00`. Text it cannot read is left as typed,
+so the mistake stays on screen. Everything behind the display (settings, events,
+commands, the engine) still works in decimal degrees.
+
+Right ascension follows the same form in hours: `14:32:10`, unpadded hours,
+whole seconds of time. **A bare decimal right ascension is now hours**:
+`20.5` is `20:30:00`, i.e. 307.5°. Until 0.0.38 it was read as *degrees*, the
+form a solve result gives. That reading was dropped so every field reads a
+decimal in the unit it shows, and the field's label says "decimal hours".
+Someone used to the old reading who types `218.04` is refused, because that is
+24 hours or more. A value under 24 typed as degrees is not refused: it is read
+as hours, and lands at fifteen times the angle. The label is the only guard
+against that.
+
+**Whole seconds are enough to read.** Half an arcsecond of latitude, the
+most the rounding can hide, biases the altitude reading by under 0.01'. A
+whole second of time is 15″ of right ascension. That is coarse for a reading,
+but it only places a slew target, and a plate solve then measures where the
+telescope actually points.
+
+**They are not enough to read back.** A field shown and then confirmed
+untouched would return a value up to half an arcsecond from the one it was
+seeded with, or 7.5″ for a right ascension. Opening Settings to change something else would then reconfigure
+the site, and an accepted slew proposal would arrive as an edited one (D16,
+D18). So a field returns the exact value it was seeded from while its text is
+the text it was seeded with (`AngleEntry`). Tests pin this for the site and both
+proposed coordinates.
+
+**The log keeps every digit.** A site line reads
+`latitude 51:28:38 (51.47733°)`. The site is the one input the software cannot
+check, and whole arcseconds are about 30 m. The engine also reports a driver
+that "kept" a different site from one arcsecond's difference, and whole
+arcseconds alone could print the written and kept values as the same text.

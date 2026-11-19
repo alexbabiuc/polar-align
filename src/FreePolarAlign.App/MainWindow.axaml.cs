@@ -109,6 +109,12 @@ public partial class MainWindow : Window
         _ = window.ShowDialog(this);
     }
 
+    private void OnProposalRaLostFocus(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+        (DataContext as MainWindowViewModel)?.NormaliseProposalRaText();
+
+    private void OnProposalDecLostFocus(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+        (DataContext as MainWindowViewModel)?.NormaliseProposalDecText();
+
     private void OnStatusTick(object? sender, EventArgs e)
     {
         if (DataContext is MainWindowViewModel viewModel)

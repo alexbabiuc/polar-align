@@ -918,7 +918,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         }
 
         string message =
-            $"The mount reports its site as {reported.LatitudeDegrees:F4}°, {reported.LongitudeDegrees:F4}°, " +
+            $"The mount reports its site as {CoordinateText.FormatDegrees(reported.LatitudeDegrees)}, {CoordinateText.FormatDegrees(reported.LongitudeDegrees)}, " +
             $"{reported.HeightMeters:F0} m, which differs from the site you entered. Yours is being used.";
 
         if (latitudeDifference > SiteLatitudeDisagreementDegrees)
@@ -1023,8 +1023,13 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         Math.Abs(a.LongitudeDegrees - b.LongitudeDegrees) <= 1.0 / 3600.0 &&
         Math.Abs(a.HeightMeters - b.HeightMeters) <= 1.0;
 
+    /// <summary>
+    /// As d:mm:ss, with the exact value after it: <see cref="SameSite"/> calls
+    /// two sites different from one arcsecond, and whole arcseconds alone could
+    /// show what was written and what the driver kept as the same text.
+    /// </summary>
     private static string DescribeSite(GeodeticLocation site) => FormattableString.Invariant(
-        $"{site.LatitudeDegrees:F5}°, {site.LongitudeDegrees:F5}°, {site.HeightMeters:F0} m");
+        $"{CoordinateText.FormatDegrees(site.LatitudeDegrees)} ({site.LatitudeDegrees:F5}°), {CoordinateText.FormatDegrees(site.LongitudeDegrees)} ({site.LongitudeDegrees:F5}°), {site.HeightMeters:F0} m");
 
     // ---- Camera settings ----
 

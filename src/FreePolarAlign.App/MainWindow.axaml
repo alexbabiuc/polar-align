@@ -534,6 +534,12 @@
           </Border>
 
           <!--
+            Every message below is capped at eight lines, with the whole of it
+            on hover (D46). Eight because the engine's own longest explanations
+            run to about 330 characters, seven lines at this column's width; the
+            cap is for text nobody wrote for this panel, such as a solver's.
+          -->
+          <!--
             Solve and sync (D45), between sequences, where the next step and a
             fault are read: the outcome, and on success where the mount now
             says it points.
@@ -544,7 +550,8 @@
               <TextBlock Text="{Binding SyncTitle}" FontWeight="Bold" />
               <TextBlock Text="{Binding SyncCoordinatesText}" FontSize="15" FontWeight="Bold" FontFamily="monospace"
                          IsVisible="{Binding IsSyncSucceeded}" />
-              <TextBlock Text="{Binding SyncDetail}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding SyncDetail}" TextWrapping="Wrap" MaxLines="8" TextTrimming="CharacterEllipsis"
+                         ToolTip.Tip="{Binding SyncDetail}" />
             </StackPanel>
           </Border>
 
@@ -557,7 +564,8 @@
                   IsVisible="{Binding HasSamplingStatus}">
             <StackPanel Spacing="4">
               <TextBlock Text="SAMPLING" FontWeight="Bold" Foreground="#C8C8C8" FontSize="12" />
-              <TextBlock Text="{Binding SamplingStatusText}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding SamplingStatusText}" TextWrapping="Wrap" MaxLines="8" TextTrimming="CharacterEllipsis"
+                         ToolTip.Tip="{Binding SamplingStatusText}" />
             </StackPanel>
           </Border>
 
@@ -565,7 +573,8 @@
                   IsVisible="{Binding HasEntryError}">
             <StackPanel Spacing="4">
               <TextBlock Text="CHECK WHAT YOU TYPED" FontWeight="Bold" Foreground="#FFB0B0" />
-              <TextBlock Text="{Binding EntryError}" TextWrapping="Wrap" Foreground="#FFDADA" />
+              <TextBlock Text="{Binding EntryError}" TextWrapping="Wrap" Foreground="#FFDADA" MaxLines="8" TextTrimming="CharacterEllipsis"
+                         ToolTip.Tip="{Binding EntryError}" />
             </StackPanel>
           </Border>
 
@@ -573,7 +582,8 @@
                   IsVisible="{Binding HasRejectionReason}">
             <StackPanel Spacing="4">
               <TextBlock Text="NOT POSSIBLE YET" FontWeight="Bold" Foreground="#E8E8B0" />
-              <TextBlock Text="{Binding RejectionReason}" TextWrapping="Wrap" Foreground="#F0F0D0" />
+              <TextBlock Text="{Binding RejectionReason}" TextWrapping="Wrap" Foreground="#F0F0D0" MaxLines="8" TextTrimming="CharacterEllipsis"
+                         ToolTip.Tip="{Binding RejectionReason}" />
             </StackPanel>
           </Border>
 
@@ -581,7 +591,8 @@
                   IsVisible="{Binding HasWithheldReason}">
             <StackPanel Spacing="4">
               <TextBlock Text="RESULT WITHHELD" FontWeight="Bold" Foreground="#FFB0B0" />
-              <TextBlock Text="{Binding WithheldReason}" TextWrapping="Wrap" Foreground="#FFDADA" />
+              <TextBlock Text="{Binding WithheldReason}" TextWrapping="Wrap" Foreground="#FFDADA" MaxLines="8" TextTrimming="CharacterEllipsis"
+                         ToolTip.Tip="{Binding WithheldReason}" />
             </StackPanel>
           </Border>
 
@@ -589,7 +600,8 @@
                   IsVisible="{Binding HasFaultReason}">
             <StackPanel Spacing="4">
               <TextBlock Text="SEQUENCE FAULTED" FontWeight="Bold" Foreground="#FFB0B0" />
-              <TextBlock Text="{Binding FaultReason}" TextWrapping="Wrap" Foreground="#FFDADA" />
+              <TextBlock Text="{Binding FaultReason}" TextWrapping="Wrap" Foreground="#FFDADA" MaxLines="8" TextTrimming="CharacterEllipsis"
+                         ToolTip.Tip="{Binding FaultReason}" />
             </StackPanel>
           </Border>
 

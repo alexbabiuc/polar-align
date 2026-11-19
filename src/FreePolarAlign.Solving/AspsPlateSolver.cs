@@ -50,7 +50,8 @@ public sealed class AspsPlateSolver : ExternalProcessSolver
             string output = (outcome.StandardOutput + "\n" + outcome.StandardError).Trim();
             return PlateSolveResult.Failed(PlateSolveFailureReason.SolverError,
                 $"ASPS exited with code {outcome.ExitCode} and wrote no result file" +
-                (output.Length == 0 ? "." : $": {output}"));
+                (PlateSolveResult.QuotableLine(output) is { } line ? $": {line}" : "."),
+                output);
         }
 
         string[] lines;
@@ -148,7 +149,8 @@ public sealed class AspsPlateSolver : ExternalProcessSolver
             scale <= 0.0)
         {
             return PlateSolveResult.Failed(PlateSolveFailureReason.SolverError,
-                $"ASPS reported OK but its result file was not in the documented form: {string.Join(" | ", lines)}");
+                "ASPS reported OK but its result file was not in the documented form.",
+                string.Join(Environment.NewLine, lines));
         }
 
         (double cd11, double cd12, double cd21, double cd22) = SolutionGeometry.CdMatrix(scale, rotation, mirrored: false);
@@ -169,26 +171,32 @@ public sealed class AspsPlateSolver : ExternalProcessSolver
     /// <summary>The error messages the vendor document lists, mapped to what they mean here.</summary>
     internal static PlateSolveResult ClassifyError(string message)
     {
+        // ASPS's error is the one line of its result file the vendor documents,
+        // short as a rule; anything longer goes to the detail (D46).
         string lower = message.ToLowerInvariant();
-        string text = message.Length == 0 ? "ASPS reported an error without a message." : $"ASPS: {message}";
+        string? quotable = PlateSolveResult.QuotableLine(message);
+        string text = message.Length == 0 ? "ASPS reported an error without a message."
+            : quotable is not null ? $"ASPS: {quotable}"
+            : "ASPS reported an error.";
+        string? detail = quotable is null ? message : null;
 
         if (lower.Contains("cannot solve"))
         {
-            return PlateSolveResult.Failed(PlateSolveFailureReason.NoMatchFound, text);
+            return PlateSolveResult.Failed(PlateSolveFailureReason.NoMatchFound, text, detail);
         }
 
         if (lower.Contains("index") || lower.Contains("astrometry.net library"))
         {
             return PlateSolveResult.Failed(PlateSolveFailureReason.SolverError,
-                text + " Install the indexes for this field size from ASPS's Index Installation Wizard.");
+                text + " Install the indexes for this field size from ASPS's Index Installation Wizard.", detail);
         }
 
         if (lower.Contains("not found") || lower.Contains("accepts only") || lower.Contains("invalid fits") || lower.Contains("cannot copy image"))
         {
-            return PlateSolveResult.Failed(PlateSolveFailureReason.InvalidImage, text);
+            return PlateSolveResult.Failed(PlateSolveFailureReason.InvalidImage, text, detail);
         }
 
-        return PlateSolveResult.Failed(PlateSolveFailureReason.SolverError, text);
+        return PlateSolveResult.Failed(PlateSolveFailureReason.SolverError, text, detail);
     }
 
     /// <summary>

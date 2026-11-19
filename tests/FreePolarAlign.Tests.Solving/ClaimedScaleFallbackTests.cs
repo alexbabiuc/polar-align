@@ -127,7 +127,11 @@ public class ClaimedScaleFallbackTests
         Assert.Single(inner.Requests);
     }
 
-    /// <summary>A log that says what was tried is far easier to act on than "not solved".</summary>
+    /// <summary>
+    /// A log that says what was tried is far easier to act on than "not solved".
+    /// Each try's report goes in the detail, for the log; the message says both
+    /// were made, in one sentence, for the screen (D46).
+    /// </summary>
     [Fact]
     public async Task BothFailing_SaysWhatEachTryFound()
     {
@@ -139,7 +143,9 @@ public class ClaimedScaleFallbackTests
         PlateSolveResult result = await new ClaimedScaleFallbackSolver(inner, clock).SolveAsync(Claimed);
 
         Assert.Equal(PlateSolveFailureReason.NoMatchFound, result.FailureReason);
-        Assert.Contains("with the scale", result.Message);
-        Assert.Contains("without it", result.Message);
+        Assert.Contains("again without a scale", result.Message);
+        Assert.DoesNotContain("with the scale", result.Message);
+        Assert.Contains("with the scale", result.Detail);
+        Assert.Contains("without it", result.Detail);
     }
 }

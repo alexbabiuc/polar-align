@@ -96,12 +96,14 @@ public enum SamplingActivity
 /// solve that worked. Failures while the mount is being turned are normal
 /// (D26), so the count is what the user needs, not the latest failure alone.
 /// </param>
+/// <param name="SolverOutputInLog">The last failure came with the solver's own output, which only the log shows (D46).</param>
 public sealed record SamplingView(
     SamplingActivity Activity,
     SampleTrigger Trigger = SampleTrigger.Periodic,
     DateTimeOffset? SolveDueUtc = null,
     string? Detail = null,
-    int ConsecutiveFailures = 0)
+    int ConsecutiveFailures = 0,
+    bool SolverOutputInLog = false)
 {
     public static SamplingView Idle { get; } = new(SamplingActivity.None);
 }
@@ -121,13 +123,15 @@ public enum SyncActivity
 
 /// <param name="RaDegrees">For <see cref="SyncActivity.Synced"/>: what the mount now reports, J2000.</param>
 /// <param name="CorrectionArcminutes">For <see cref="SyncActivity.Synced"/>: how far out the mount had been.</param>
-/// <param name="Detail">For a failure: why, in the engine's words.</param>
+/// <param name="Detail">For a failure: why, in one sentence (D46).</param>
+/// <param name="SolverOutputInLog">The failure came with the solver's own output, which only the log shows.</param>
 public sealed record SyncView(
     SyncActivity Activity,
     double? RaDegrees = null,
     double? DecDegrees = null,
     double? CorrectionArcminutes = null,
-    string? Detail = null);
+    string? Detail = null,
+    bool SolverOutputInLog = false);
 
 /// <summary>
 /// Everything the UI shows, reconstructed entirely from the engine's event

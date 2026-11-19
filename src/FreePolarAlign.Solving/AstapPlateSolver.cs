@@ -138,8 +138,7 @@ public sealed class AstapPlateSolver : ExternalProcessSolver
         if (outcome.ExitCode == 0)
         {
             return PlateSolveResult.Failed(PlateSolveFailureReason.SolverError,
-                "ASTAP exited successfully but wrote no solution" +
-                (string.IsNullOrEmpty(detail) ? "." : $": {detail}"));
+                "ASTAP exited successfully but wrote no solution" + Quoted(detail) + ".", detail);
         }
 
         return ClassifyExitCode(outcome.ExitCode, detail);
@@ -148,25 +147,33 @@ public sealed class AstapPlateSolver : ExternalProcessSolver
     /// <summary>
     /// ASTAP's documented exit codes. Text matching is kept for any other code,
     /// since a newer ASTAP may add some and its wording is the only clue then.
+    ///
+    /// ASTAP's own words go in the message only when they are one short line,
+    /// as the <c>ERROR=</c> line of its result file is ("Not enough stars.").
+    /// Its console output, which is what is left when there is no such line,
+    /// goes to the detail (D46).
     /// </summary>
     internal static PlateSolveResult ClassifyExitCode(int exitCode, string detail)
     {
-        string suffix = string.IsNullOrWhiteSpace(detail) ? string.Empty : $" ({detail})";
+        string quoted = Quoted(detail);
 
         return exitCode switch
         {
             1 => PlateSolveResult.Failed(PlateSolveFailureReason.NoMatchFound,
-                "ASTAP could not match the field against its star database" + suffix + "."),
+                "ASTAP could not match the field against its star database" + quoted + ".", detail),
             2 => PlateSolveResult.Failed(PlateSolveFailureReason.NoStarsDetected,
-                "ASTAP did not detect enough stars in the image" + suffix + "."),
+                "ASTAP did not detect enough stars in the image" + quoted + ".", detail),
             16 => PlateSolveResult.Failed(PlateSolveFailureReason.InvalidImage,
-                "ASTAP could not read the image" + suffix + "."),
+                "ASTAP could not read the image" + quoted + ".", detail),
             32 or 33 => PlateSolveResult.Failed(PlateSolveFailureReason.SolverError,
-                "ASTAP could not find or read its star database" + suffix +
-                ". Install one that covers this field size (D05 for 0.6-6 degree fields, G05 for wider)."),
+                "ASTAP could not find or read its star database" + quoted +
+                ". Install one that covers this field size (D05 for 0.6-6 degree fields, G05 for wider).", detail),
             _ => ClassifyFailureText(detail),
         };
     }
+
+    private static string Quoted(string detail) =>
+        PlateSolveResult.QuotableLine(detail) is { } line ? $" ({line.TrimEnd('.')})" : string.Empty;
 
     private static Dictionary<string, string> ReadIni(string path)
     {
@@ -205,17 +212,20 @@ public sealed class AstapPlateSolver : ExternalProcessSolver
         if (lower.Contains("no solution") || lower.Contains("not solved") || lower.Contains("failed to solve") || lower.Contains("solution not found"))
         {
             return PlateSolveResult.Failed(PlateSolveFailureReason.NoMatchFound,
-                "ASTAP could not match the field against its star database.");
+                "ASTAP could not match the field against its star database.", output);
         }
 
         if (lower.Contains("no stars") || lower.Contains("star detect") || lower.Contains("too few star") || lower.Contains("not enough stars"))
         {
             return PlateSolveResult.Failed(PlateSolveFailureReason.NoStarsDetected,
-                "ASTAP did not detect enough stars in the image.");
+                "ASTAP did not detect enough stars in the image.", output);
         }
 
         return PlateSolveResult.Failed(PlateSolveFailureReason.SolverError,
-            string.IsNullOrWhiteSpace(output.Trim()) ? "ASTAP exited with a non-zero status and no output." : $"ASTAP reported an error: {output.Trim()}");
+            string.IsNullOrWhiteSpace(output)
+                ? "ASTAP exited with a non-zero status and no output."
+                : "ASTAP reported an error" + Quoted(output) + ".",
+            output);
     }
 
     /// <summary>

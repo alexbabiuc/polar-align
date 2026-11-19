@@ -63,11 +63,18 @@ public sealed class ClaimedScaleFallbackSolver : ISolver
             request with { ApproximateScaleArcsecPerPixel = null, ScaleToleranceFraction = null, Timeout = remaining },
             cancellationToken).ConfigureAwait(false);
 
+        // The second try's sentence, which says what the solver found, and that
+        // both were made; what each try reported, in full, for the log (D46).
         return second.Success || second.FailureReason is not { } reason
             ? second
             : PlateSolveResult.Failed(reason,
-                $"Not solved at the entered focal length's scale ({first.Message}) nor without a scale ({second.Message}).");
+                $"{second.Message} Tried at the entered focal length's scale and again without a scale.",
+                $"At the entered focal length's scale:{Environment.NewLine}{Report(first)}{Environment.NewLine}" +
+                $"Without a scale:{Environment.NewLine}{Report(second)}");
     }
+
+    private static string Report(PlateSolveResult result) =>
+        result.Detail is { } detail ? $"{result.Message}{Environment.NewLine}{detail}" : result.Message ?? string.Empty;
 
     /// <summary>
     /// Only a claimed scale and only "no match": a frame with too few stars, or

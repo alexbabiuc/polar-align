@@ -132,11 +132,12 @@ public static class EngineEventNarrator
             // While the bolts are being turned most frames fail, and that is the
             // user's pace rather than anything to warn about (D26, D29).
             SolveFailedEvent { Trigger: SampleTrigger.Tracking } e => Info(
-                $"Live reading: solve failed ({InARow(e)}): {e.Reason}"),
+                $"Live reading: solve failed ({InARow(e)}): {e.Reason}{SolverOutput(e.Detail)}"),
 
             SolveFailedEvent e => new NarratedEvent(LogSeverity.Warning, Inv(
                 $"Solve failed ({InARow(e)}): {e.Reason}",
-                $"{(e.KeptFramePath is { } kept ? $" Frame kept as {kept}." : string.Empty)}")),
+                $"{(e.KeptFramePath is { } kept ? $" Frame kept as {kept}." : string.Empty)}",
+                $"{SolverOutput(e.Detail)}")),
 
             SampleSkippedEvent e => Info($"Not a sample: {e.Reason}"),
 
@@ -196,7 +197,8 @@ public static class EngineEventNarrator
             MountSyncFailedEvent e => new NarratedEvent(LogSeverity.Warning, Inv(
                 $"Solve & sync: {(e.Stage == MountSyncStage.Solve ? "solving" : "syncing")} failed, ",
                 $"the mount was not synced. {e.Reason}",
-                $"{(e.KeptFramePath is null ? string.Empty : $" Frame kept: {e.KeptFramePath}")}")),
+                $"{(e.KeptFramePath is null ? string.Empty : $" Frame kept: {e.KeptFramePath}")}",
+                $"{SolverOutput(e.Detail)}")),
 
             _ => Info(engineEvent.GetType().Name),
         };
@@ -305,6 +307,13 @@ public static class EngineEventNarrator
             ? Info(how)
             : new NarratedEvent(LogSeverity.Warning, Inv($"{how} {e.Requested}×{e.Requested} was asked for, and the camera driver would not change to it."));
     }
+
+    /// <summary>
+    /// The solver's own output under the line that summarised it, so the log
+    /// keeps everything the screen leaves out (D46).
+    /// </summary>
+    private static string SolverOutput(string? detail) =>
+        detail is null ? string.Empty : $"{Environment.NewLine}Solver output:{Environment.NewLine}{detail}";
 
     private static string InARow(SolveFailedEvent e) => e.Solver is null
         ? Inv($"{e.ConsecutiveFailures} in a row")

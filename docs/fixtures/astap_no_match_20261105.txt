@@ -1,0 +1,111 @@
+Using star database D50
+Trying FOV: 9,5
+Cropping image x 0,54
+ASTAP solver version CLI-2025.04.12
+Search radius: 10.000 degrees, 
+Start position: 03: 12  21.4, +65d 00  00
+Image height: 9,50 degrees
+Binning: 1x1
+Image dimensions: 6224x4168
+Quad tolerance: 0.007
+Minimum star size: 1.5"
+Speed: normal
+1496 stars, 1153 quads selected in the image. 1002 database stars, 772 database quads required for the 5,14d square search window. Step size 5,14d. Oversize 1,00
+10d,Trying FOV: 6,3
+Creating grayscale x 2 binning image for solving/star alignment.
+Cropping image x 0,81
+ASTAP solver version CLI-2025.04.12
+Search radius: 10.000 degrees, 
+Start position: 03: 12  21.4, +65d 00  00
+Image height: 6,33 degrees
+Binning: 2x2
+Image dimensions: 6224x4168
+Quad tolerance: 0.007
+Minimum star size: 1.5"
+Speed: normal
+417 stars, 326 quads selected in the image. 279 database stars, 218 database quads required for the 5,14d square search window. Step size 5,14d. Oversize 1,00
+7d,Trying FOV: 4,2
+Creating grayscale x 2 binning image for solving/star alignment.
+ASTAP solver version CLI-2025.04.12
+Search radius: 10.000 degrees, 
+Start position: 03: 12  21.4, +65d 00  00
+Image height: 4,22 degrees
+Binning: 2x2
+Image dimensions: 6224x4168
+Quad tolerance: 0.007
+Minimum star size: 1.5"
+Speed: normal
+597 stars, 453 quads selected in the image. 400 database stars, 304 database quads required for the 4,22d square search window. Step size 4,22d. Oversize 1,00
+6d,11d,Trying FOV: 2,8
+Creating grayscale x 2 binning image for solving/star alignment.
+ASTAP solver version CLI-2025.04.12
+Search radius: 10.000 degrees, 
+Start position: 03: 12  21.4, +65d 00  00
+Image height: 2,81 degrees
+Binning: 2x2
+Image dimensions: 6224x4168
+Quad tolerance: 0.007
+Minimum star size: 1.5"
+Speed: normal
+597 stars, 453 quads selected in the image. 400 database stars, 304 database quads required for the 2,81d square search window. Step size 2,81d. Oversize 1,00
+4d,8d,11d,Trying FOV: 1,9
+Creating grayscale x 2 binning image for solving/star alignment.
+ASTAP solver version CLI-2025.04.12
+Search radius: 10.000 degrees, 
+Start position: 03: 12  21.4, +65d 00  00
+Image height: 1,88 degrees
+Binning: 2x2
+Image dimensions: 6224x4168
+Quad tolerance: 0.007
+Minimum star size: 1.5"
+Speed: normal
+597 stars, 453 quads selected in the image. 400 database stars, 304 database quads required for the 1,88d square search window. Step size 1,88d. Oversize 1,00
+3d,5d,8d,10d,Trying FOV: 1,3
+Creating grayscale x 2 binning image for solving/star alignment.
+ASTAP solver version CLI-2025.04.12
+Search radius: 10.000 degrees, 
+Start position: 03: 12  21.4, +65d 00  00
+Image height: 1,25 degrees
+Binning: 2x2
+Image dimensions: 6224x4168
+Quad tolerance: 0.007
+Minimum star size: 1.5"
+Speed: normal
+597 stars, 453 quads selected in the image. 400 database stars, 304 database quads required for the 1,25d square search window. Step size 1,25d. Oversize 1,00
+2d,4d,5d,7d,9d,Trying FOV: 0,8
+Creating grayscale x 2 binning image for solving/star alignment.
+ASTAP solver version CLI-2025.04.12
+Search radius: 10.000 degrees, 
+Start position: 03: 12  21.4, +65d 00  00
+Image height: 0,83 degrees
+Binning: 2x2
+Image dimensions: 6224x4168
+Quad tolerance: 0.007
+Minimum star size: 1.5"
+Speed: normal
+568 stars, 434 quads selected in the image. 380 database stars, 290 database quads required for the 0,83d square search window. Step size 0,83d. Oversize 1,00
+1d,2d,4d,5d,6d,7d,9d,10d,Trying FOV: 0,6
+Creating grayscale x 2 binning image for solving/star alignment.
+ASTAP solver version CLI-2025.04.12
+Search radius: 10.000 degrees, 
+Start position: 03: 12  21.4, +65d 00  00
+Image height: 0,56 degrees
+Binning: 2x2
+Image dimensions: 6224x4168
+Quad tolerance: 0.007
+Minimum star size: 1.5"
+Speed: normal
+461 stars, 358 quads selected in the image. 309 database stars, 240 database quads required for the 0,56d square search window. Step size 0,56d. Oversize 1,00
+1d,2d,2d,3d,4d,5d,6d,7d,7d,8d,9d,10d,Trying FOV: 0,4
+Creating grayscale x 2 binning image for solving/star alignment.
+ASTAP solver version CLI-2025.04.12
+Search radius: 10.000 degrees, 
+Start position: 03: 12  21.4, +65d 00  00
+Image height: 0,37 degrees
+Binning: 2x2
+Image dimensions: 6224x4168
+Quad tolerance: 0.007
+Minimum star size: 1.5"
+Speed: normal
+268 stars, 203 quads selected in the image. 179 database stars, 136 database quads required for the 0,37d square search window. Step size 0,37d. Oversize 1,00
+1d,1d,2d,2d,3d,3d,4d,4d,5d,5d,6d,7d,7d,8d,8d,9d,10d,10d,No solution found!  :()

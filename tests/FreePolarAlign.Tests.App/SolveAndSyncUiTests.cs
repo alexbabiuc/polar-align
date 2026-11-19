@@ -187,6 +187,20 @@ public class SolveAndSyncUiTests
         Assert.Empty(viewModel.SyncCoordinatesText);
     }
 
+    /// <summary>D46: the panel gives the solver's sentence and sends the rest to the log.</summary>
+    [Fact]
+    public void AFailedSolve_ShowsTheSentenceAndPointsAtTheLog()
+    {
+        var (viewModel, engine) = Build();
+        engine.Publish(CameraConnected, MountConnected, Tracking,
+            new MountSyncStartedEvent(),
+            new MountSyncFailedEvent(MountSyncStage.Solve, "ASTAP could not match the field.",
+                Detail: SolverOutputTests.AstapOutput));
+
+        Assert.Equal(
+            $"ASTAP could not match the field. {AlignmentFormatting.SolverOutputInLog}", viewModel.SyncDetail);
+    }
+
     /// <summary>A result about the mount is not left up once a sequence, or another mount, is in play.</summary>
     [Fact]
     public void TheResult_GoesWhenASequenceStartsOrTheMountGoes()

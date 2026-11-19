@@ -926,6 +926,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
             "Solving the next frame. The mount is synced to it once it solves; nothing moves.",
         { Activity: SyncActivity.Synced, CorrectionArcminutes: { } correction } =>
             FormattableString.Invariant($"The mount now reports where the telescope points. Its own position had been {correction:F1}' out."),
+        { Detail: { } detail, SolverOutputInLog: true } => $"{detail} {AlignmentFormatting.SolverOutputInLog}",
         { Detail: { } detail } => detail,
         _ => string.Empty,
     };

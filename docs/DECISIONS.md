@@ -2514,3 +2514,67 @@ richer. The engine relies only on the read-back.
 
 **Cost.** One button, one panel, and one method on `IMount`. Not tried on
 hardware; see docs/DEVICE-COMPATIBILITY.md.
+
+## D46 — A failed solve gives a sentence for the screen and its output for the log
+
+*Decided 2026-11-19, in 0.0.41.*
+
+A failed solve carries two texts. `PlateSolveResult.Message` is one short
+sentence of ours: what failed and, where there is one, what to do. `Detail` is
+what the solver itself printed, word for word. The events that report a failed
+solve, `SolveFailedEvent` and `MountSyncFailedEvent`, carry both.
+
+- **The log** writes the sentence, then "Solver output:" and the detail
+  underneath. Nothing is lost from it.
+- **The right-hand panels** show the sentence followed by "Full solver output in
+  the log." That hint appears only when there is output to find.
+
+**Why.** The user asked for it, after the right-hand panel filled with solver
+output. The logs of 2026-11-05 (0.0.32) show how much there was:
+
+- **ASTAP:** one failure was 123 log lines and about 5,500 characters. ASTAP's
+  whole console transcript (version, search radius and star counts, repeated for
+  every field size it tried) was pasted into the message. That happened once for
+  the attempt at the entered focal length and again for the retry without a
+  scale (D41).
+- **Watney:** about 440 characters of search statistics, also twice.
+
+Up to 0.0.40 the sampling panel showed all of it, and so did the new Solve &
+sync panel (D45). That is what diagnoses a failure, and it is not readable in a
+column about fifty characters wide.
+
+**A solver's own words stay on screen when they are one short line.**
+`PlateSolveResult.QuotableLine` accepts one line of at most 120 characters.
+ASTAP's `ERROR=` line ("Not enough stars.") and ASPS's documented one-line
+errors fit, and they are what a user can act on. A console transcript never fits.
+The install hint for a missing ASTAP star database used to come after the pasted
+transcript; it now comes first.
+
+**The focal-length fallback says both tries in one sentence:** the second try's
+sentence, then "Tried at the entered focal length's scale and again without a
+scale." The detail holds both reports, each under its own label.
+
+**The enum name is gone from the screen.** "Could not solve (NoMatchFound):" only
+repeated what the solver's sentence says. The sampling line reads "Last solve
+failed (3 in a row): ASTAP could not match the field against its star database."
+
+**A cap for anything else.** Every message in the right-hand column (sync,
+sampling, entry error, refusal, withheld, fault) is cut at eight lines, ending
+in "…", with the whole of it on hover. Eight rather than the four first
+proposed: the column is 360 px wide, about fifty characters a line, and the
+engine's own longest explanations run to about 330 characters, about seven
+lines. Four would have cut the declination-restart message in the same logs. The
+cap is for text nobody wrote for this panel. Measured headless: ASTAP's
+transcript as a fault reason took 148 lines (2,072 px) without the cap.
+
+**Pinned** with ASTAP's real output for the blind retry, which was 111 lines and
+4,501 characters, kept as `docs/fixtures/astap_no_match_20261105.txt`:
+
+- `FailureMessageTests`: the transcript goes to the detail, the message stays
+  under 200 characters on one line, and both tries survive the fallback;
+- `SolverOutputTests` and `SolveAndSyncUiTests`: the log keeps the transcript
+  and the panels do not show it;
+- `WindowLayoutTests`: the eight-line cap, measured. It fails without the cap.
+
+**For a new solver:** its own output goes in `Detail`, and its message is a
+sentence of ours.

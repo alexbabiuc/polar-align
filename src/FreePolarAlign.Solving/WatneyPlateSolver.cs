@@ -123,6 +123,7 @@ public sealed class WatneyPlateSolver : ISolver, IDisposable
             return watneyResult.StarsDetected == 0
                 ? PlateSolveResult.Failed(PlateSolveFailureReason.NoStarsDetected, "No stars were detected in the image.")
                 : PlateSolveResult.Failed(PlateSolveFailureReason.NoMatchFound,
+                    $"Watney detected {watneyResult.StarsDetected} star(s) but could not match them against its quad database.",
                     $"No index match found after searching {watneyResult.AreasSearched} area(s) using {watneyResult.StarsUsedInSolve} of {watneyResult.StarsDetected} detected star(s).");
         }
 

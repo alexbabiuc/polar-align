@@ -13,6 +13,12 @@ namespace FreePolarAlign.App.ViewModels;
 public static class AlignmentFormatting
 {
     /// <summary>
+    /// Said after a failure whose solver output was left off the screen (D46),
+    /// so nobody concludes the solver gave no reason.
+    /// </summary>
+    public const string SolverOutputInLog = "Full solver output in the log.";
+
+    /// <summary>
     /// D2/roadmap: a success *indication*, not an error budget. The measurement
     /// itself is required to be far better than this (see "What 10 arcminutes
     /// means" in DECISIONS.md); this constant is purely the point at which the
@@ -253,7 +259,8 @@ public static class AlignmentFormatting
             SamplingActivity.Solving => "Solving...",
             SamplingActivity.Skipped => sampling.Detail,
             SamplingActivity.Failed => FormattableString.Invariant(
-                $"Last solve failed ({sampling.ConsecutiveFailures} in a row): {sampling.Detail}"),
+                $"Last solve failed ({sampling.ConsecutiveFailures} in a row): {sampling.Detail}") +
+                (sampling.SolverOutputInLog ? " " + SolverOutputInLog : string.Empty),
             SamplingActivity.Sampled => "Sample taken.",
             SamplingActivity.Live => "Live: every frame is solved, and the figures are from the latest.",
             _ => null,

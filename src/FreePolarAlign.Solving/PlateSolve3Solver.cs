@@ -50,8 +50,9 @@ public sealed class PlateSolve3Solver : ExternalProcessSolver
             string output = (outcome.StandardOutput + "\n" + outcome.StandardError).Trim();
             return PlateSolveResult.Failed(PlateSolveFailureReason.SolverError,
                 $"PlateSolve3 exited with code {outcome.ExitCode} and wrote no result file" +
-                (output.Length == 0 ? "." : $": {output}") +
-                " Check that its star catalogue is installed.");
+                (PlateSolveResult.QuotableLine(output) is { } line ? $": {line}" : ".") +
+                " Check that its star catalogue is installed.",
+                output);
         }
 
         string[] lines;
@@ -114,7 +115,8 @@ public sealed class PlateSolve3Solver : ExternalProcessSolver
         if (position is null || scaleAndRotation is null || scaleAndRotation[0] <= 0.0)
         {
             return PlateSolveResult.Failed(PlateSolveFailureReason.SolverError,
-                $"PlateSolve3 reported a solution but its result file was not in the expected form: {string.Join(" | ", lines)}");
+                "PlateSolve3 reported a solution but its result file was not in the expected form.",
+                string.Join(Environment.NewLine, lines));
         }
 
         double toDegrees = 180.0 / Math.PI;

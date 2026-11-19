@@ -72,10 +72,13 @@ public class WindowLayoutTests
                 CancellationToken.None)
             .GetAwaiter().GetResult();
 
-    /// <summary>An engine that never says anything, so the window lays out in its initial state.</summary>
-    private sealed class SilentEngine : IAlignmentEngine
+    /// <summary>
+    /// An engine that says only what it is given, to whoever subscribes, so the
+    /// window lays out in its initial state or in the one those events make.
+    /// </summary>
+    private sealed class SilentEngine(IReadOnlyList<EngineEvent>? said = null) : IAlignmentEngine
     {
-        public IObservable<EngineEvent> Events { get; } = new NeverPublishes();
+        public IObservable<EngineEvent> Events { get; } = new NeverPublishes(said ?? Array.Empty<EngineEvent>());
 
         public ValueTask SendAsync(EngineCommand command, CancellationToken cancellationToken = default) =>
             ValueTask.CompletedTask;
@@ -84,9 +87,17 @@ public class WindowLayoutTests
         {
         }
 
-        private sealed class NeverPublishes : IObservable<EngineEvent>
+        private sealed class NeverPublishes(IReadOnlyList<EngineEvent> said) : IObservable<EngineEvent>
         {
-            public IDisposable Subscribe(IObserver<EngineEvent> observer) => new Nothing();
+            public IDisposable Subscribe(IObserver<EngineEvent> observer)
+            {
+                foreach (EngineEvent engineEvent in said)
+                {
+                    observer.OnNext(engineEvent);
+                }
+
+                return new Nothing();
+            }
 
             private sealed class Nothing : IDisposable
             {
@@ -103,12 +114,13 @@ public class WindowLayoutTests
     /// now open the log instead, and the parameter stays to prove the window's
     /// layout no longer depends on them.
     /// </param>
-    private static void WithWindow(double width, double height, bool withWarnings, Action<Window> assertions)
+    private static void WithWindow(
+        double width, double height, bool withWarnings, Action<Window> assertions, IReadOnlyList<EngineEvent>? said = null)
     {
         OnUiThread(() =>
         {
             var viewModel = new MainWindowViewModel(
-                new SilentEngine(),
+                new SilentEngine(said),
                 catalog: null,
                 settingsStore: null,
                 settings: null,
@@ -155,6 +167,35 @@ public class WindowLayoutTests
     /// whole subtree rather than against the frame view alone, since which
     /// control overflows is not the point.
     /// </summary>
+    /// <summary>
+    /// D46: a message nobody wrote for the right-hand column -- here ASTAP's
+    /// 111-line transcript of one failed attempt, as a fault reason -- is cut at
+    /// eight lines rather than pushing everything else out of the column.
+    /// </summary>
+    [Fact]
+    public void ALongMessageOnTheRight_IsCutAtEightLines()
+    {
+        string transcript = SolverOutputTests.AstapOutput;
+        var said = new EngineEvent[]
+        {
+            new SessionStartedEvent(new SessionConfiguration(6, 70.0)),
+            new SessionFaultedEvent(transcript),
+        };
+
+        WithWindow(1380.0, 880.0, withWarnings: false, window =>
+        {
+            TextBlock reason = window.GetLogicalDescendants().OfType<TextBlock>().Single(t => t.Text == transcript);
+            var oneLine = new TextBlock { Text = "x", FontSize = reason.FontSize, FontFamily = reason.FontFamily };
+            oneLine.Measure(Size.Infinity);
+            double lineHeight = oneLine.DesiredSize.Height;
+
+            Assert.True(reason.Bounds.Height > 0.0, "the fault reason was not laid out");
+            Assert.True(
+                reason.Bounds.Height <= 8.5 * lineHeight,
+                $"the fault reason took {reason.Bounds.Height:F0}px, {reason.Bounds.Height / lineHeight:F1} lines");
+        }, said);
+    }
+
     /// <summary>
     /// The window opens maximized, because the user asked for it. Width and
     /// Height stay in the markup as the size it restores to.

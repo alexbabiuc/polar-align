@@ -153,9 +153,10 @@ public sealed partial class AlignmentSession
                 string? kept = _frameStore.KeepFailed(frame.FitsPath, UtcNow);
                 _events.Publish(new MountSyncFailedEvent(
                     MountSyncStage.Solve,
-                    $"Could not solve the frame ({result.FailureReason}): {result.Message}",
+                    result.Message ?? $"The frame did not solve ({result.FailureReason}).",
                     kept,
-                    SolverOf(result)));
+                    SolverOf(result),
+                    result.Detail));
                 return;
             }
 

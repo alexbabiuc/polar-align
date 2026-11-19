@@ -611,14 +611,17 @@ public sealed record SolveStartedEvent(SampleTrigger Trigger, string FitsPath) :
 /// being moved, so a count of them measures the user's pace rather than a
 /// fault (D26).
 /// </summary>
+/// <param name="Reason">One short sentence, fit for the screen (D46).</param>
 /// <param name="KeptFramePath">Where the frame was kept for diagnosis (D26: the last 20), or null if it could not be.</param>
 /// <param name="Solver">Which solver tried, for the log.</param>
+/// <param name="Detail">The solver's own output, verbatim, for the log only (D46); null when it said nothing more.</param>
 public sealed record SolveFailedEvent(
     SampleTrigger Trigger,
     string Reason,
     int ConsecutiveFailures,
     string? KeptFramePath = null,
-    string? Solver = null) : EngineEvent;
+    string? Solver = null,
+    string? Detail = null) : EngineEvent;
 
 /// <summary>
 /// A solve succeeded but did not become a sample: the mount has not turned far
@@ -739,12 +742,15 @@ public sealed record MountSyncedEvent(
 public sealed record MountSyncCancelledEvent(string Reason) : EngineEvent;
 
 /// <summary>A solve-and-sync that left the mount as it was (D45).</summary>
+/// <param name="Reason">One short sentence, fit for the screen (D46).</param>
 /// <param name="KeptFramePath">For a failed solve, where the frame was kept for diagnosis (D26), or null.</param>
+/// <param name="Detail">For a failed solve, the solver's own output, for the log only (D46).</param>
 public sealed record MountSyncFailedEvent(
     MountSyncStage Stage,
     string Reason,
     string? KeptFramePath = null,
-    string? Solver = null) : EngineEvent;
+    string? Solver = null,
+    string? Detail = null) : EngineEvent;
 
 /// <summary>
 /// The message-shaped engine boundary (D6). The UI (or, later, a remote

@@ -155,6 +155,7 @@ public static class EngineEventReducer
                     SolveDueUtc = null,
                     Detail = e.Reason,
                     ConsecutiveFailures = e.ConsecutiveFailures,
+                    SolverOutputInLog = e.Detail is not null,
                 },
             },
 
@@ -401,7 +402,8 @@ public static class EngineEventReducer
             {
                 Sync = new SyncView(
                     e.Stage == MountSyncStage.Solve ? SyncActivity.SolveFailed : SyncActivity.SyncFailed,
-                    Detail: e.Reason),
+                    Detail: e.Reason,
+                    SolverOutputInLog: e.Detail is not null),
                 StatusMessage = e.Stage == MountSyncStage.Solve
                     ? "Solve & sync: the frame did not solve, so the mount was not synced."
                     : "Solve & sync: the mount was not synced -- see the note on the right.",

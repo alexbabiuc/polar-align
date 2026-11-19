@@ -28,6 +28,7 @@
   <ItemGroup>
     <None Include="..\..\docs\fixtures\tycho2_subset.csv" Link="fixtures\tycho2_subset.csv" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\docs\fixtures\asi290mm_800mm_20261005T180537.fits" Link="fixtures\asi290mm_800mm_20261005T180537.fits" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\docs\fixtures\astap_no_match_20261105.txt" Link="fixtures\astap_no_match_20261105.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

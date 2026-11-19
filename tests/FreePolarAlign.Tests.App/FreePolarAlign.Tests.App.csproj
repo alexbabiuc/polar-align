@@ -34,4 +34,8 @@
     <ProjectReference Include="..\FreePolarAlign.Tests.Support\FreePolarAlign.Tests.Support.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\..\docs\fixtures\astap_no_match_20261105.txt" Link="fixtures\astap_no_match_20261105.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

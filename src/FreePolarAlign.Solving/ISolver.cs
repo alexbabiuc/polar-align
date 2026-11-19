@@ -82,6 +82,12 @@ public sealed record PlateSolveSolution(
 /// <see cref="PlateSolveFailureReason"/> with a human-readable message. Modeled
 /// as a closed result type rather than throwing, since "no match" is an
 /// expected, common outcome and not exceptional control flow.
+///
+/// A failure says what happened twice over (D46): <see cref="Message"/> is one
+/// short sentence of this application's, fit for a panel the user glances at,
+/// and <see cref="Detail"/> is whatever the solver itself said, verbatim, for
+/// the log. ASTAP's console output for one failed frame ran to 123 lines; it
+/// is what diagnoses the failure and what nobody should have to read on screen.
 /// </summary>
 public sealed record PlateSolveResult
 {
@@ -99,7 +105,17 @@ public sealed record PlateSolveResult
 
     public PlateSolveFailureReason? FailureReason { get; }
 
+    /// <summary>
+    /// One sentence, ours: what failed and, where there is one, what to do.
+    /// A solver's own one-line reason may be quoted in it; its full output never is.
+    /// </summary>
     public string? Message { get; }
+
+    /// <summary>
+    /// The solver's own output, verbatim, or null when it said nothing beyond
+    /// <see cref="Message"/>. For the log only.
+    /// </summary>
+    public string? Detail { get; private init; }
 
     /// <summary>
     /// Which solver produced this, when something routing between solvers has
@@ -112,12 +128,27 @@ public sealed record PlateSolveResult
     public static PlateSolveResult Succeeded(PlateSolveSolution solution) =>
         new(true, solution, null, null);
 
-    public static PlateSolveResult Failed(PlateSolveFailureReason reason, string message) =>
-        new(false, null, reason, message);
+    /// <param name="detail">The solver's own output, for the log; blank is taken as none.</param>
+    public static PlateSolveResult Failed(PlateSolveFailureReason reason, string message, string? detail = null) =>
+        new(false, null, reason, message) { Detail = string.IsNullOrWhiteSpace(detail) ? null : detail.Trim() };
 
     /// <summary>This result, attributed to <paramref name="solverName"/>.</summary>
     public PlateSolveResult From(string solverName) =>
-        new(Success, Solution, FailureReason, Message) { SolverName = solverName };
+        new(Success, Solution, FailureReason, Message) { SolverName = solverName, Detail = Detail };
+
+    /// <summary>
+    /// <paramref name="text"/> when it is short enough to quote in a
+    /// <see cref="Message"/> -- one line of at most <paramref name="maximumLength"/>
+    /// characters -- and null otherwise. A solver's one-line reason ("Not
+    /// enough stars.") is worth having on screen; a console transcript is not.
+    /// </summary>
+    public static string? QuotableLine(string? text, int maximumLength = 120)
+    {
+        string? trimmed = text?.Trim();
+        return string.IsNullOrEmpty(trimmed) || trimmed.Length > maximumLength || trimmed.Contains('\n')
+            ? null
+            : trimmed;
+    }
 }
 
 /// <summary>

@@ -112,7 +112,11 @@ public class WatneyResultMappingTests
 
         Assert.False(result.Success);
         Assert.Equal(PlateSolveFailureReason.NoMatchFound, result.FailureReason);
-        Assert.Contains("200", result.Message);
+
+        // The stars found are worth a glance; the search's statistics are for
+        // the log (D46).
+        Assert.Contains("40 star", result.Message);
+        Assert.Contains("200 area", result.Detail);
     }
 
     [Fact]

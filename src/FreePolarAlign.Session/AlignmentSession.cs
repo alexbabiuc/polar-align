@@ -2680,10 +2680,11 @@ public sealed partial class AlignmentSession : IAlignmentEngine, IDisposable
 
         _events.Publish(new SolveFailedEvent(
             trigger,
-            $"Could not solve ({result.FailureReason}): {result.Message}",
+            result.Message ?? $"The frame did not solve ({result.FailureReason}).",
             _consecutiveSolveFailures,
             kept,
-            SolverOf(result)));
+            SolverOf(result),
+            result.Detail));
 
         if (_tracking is not null)
         {

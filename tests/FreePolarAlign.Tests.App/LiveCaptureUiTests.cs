@@ -213,10 +213,29 @@ public sealed class LiveCaptureUiTests : IDisposable
             new SessionConfiguration(6, 70.0), new TestClock(),
             renderPreview: new RecordingRenderer().Render);
 
-        LogEntry entry = Assert.Single(viewModel.Log);
-        Assert.Equal(LogSeverity.Warning, entry.Severity);
+        LogEntry entry = Assert.Single(viewModel.Log, e => e.Severity == LogSeverity.Warning);
         Assert.Contains("No Watney quad database found.", entry.Text, StringComparison.Ordinal);
         Assert.Null(typeof(MainWindowViewModel).GetProperty("HasWarnings"));
+    }
+
+    /// <summary>
+    /// The on-screen log opens with the build, as the file does. It was once in
+    /// the file only, so a screenshot of the log -- often all that gets sent --
+    /// could not say which version it came from. Asserted with no session log,
+    /// the case where the screen is the only record.
+    /// </summary>
+    [Fact]
+    public void Log_OpensWithTheBuild()
+    {
+        var viewModel = new MainWindowViewModel(
+            new PublishingEngine(), catalog: null, settingsStore: null, settings: null, log: null,
+            warnings: Array.Empty<string>(),
+            new SessionConfiguration(6, 70.0), new TestClock(),
+            renderPreview: new RecordingRenderer().Render);
+
+        LogEntry first = viewModel.Log[0];
+        Assert.Equal(LogSeverity.Info, first.Severity);
+        Assert.EndsWith(AppVersion.Describe(), first.Text, StringComparison.Ordinal);
     }
 
     /// <summary>

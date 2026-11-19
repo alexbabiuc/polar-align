@@ -155,8 +155,16 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         // Where the full log is written is the log's first line rather than a row
         // of its own under the buttons: that row cost the frame view a line of
         // height on every screen to say something read once.
+        //
+        // The build comes first, as it does in the file: a screenshot of this
+        // log is as often what gets sent as the file is, and it is only worth
+        // reading against the build that produced it. Shown even when no file
+        // could be opened, since then the screen is the only record.
         DateTimeOffset startedAt = _time.GetUtcNow();
-        var startupLog = new List<LogEntry>();
+        var startupLog = new List<LogEntry>
+        {
+            new(startedAt, LogSeverity.Info, AppVersion.Describe()),
+        };
         if (LogPath is not null)
         {
             startupLog.Add(new LogEntry(startedAt, LogSeverity.Info, $"Full session log: {LogPath}"));

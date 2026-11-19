@@ -236,7 +236,8 @@ public class DeferredDispatcherTests
         Assert.NotNull(viewModel.State.CurrentEstimate);
         Assert.Equal(1.1, viewModel.State.CurrentEstimate!.TotalErrorArcminutes, precision: 6);
         Assert.Null(viewModel.State.WithheldReason);
-        Assert.Equal(3, viewModel.Log.Count);
+        // Three events, after the build line every log opens with.
+        Assert.Equal(4, viewModel.Log.Count);
     }
 
     /// <summary>

@@ -34,6 +34,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     private readonly IAlignmentEngine? _engine;
     private readonly DeviceCatalog? _catalog;
     private readonly ISettingsStore? _settingsStore;
+    private bool _isLogVisible;
     private readonly SessionLog? _log;
     private readonly Action<Action> _postToUiThread;
     private readonly IDisposable? _subscription;
@@ -105,6 +106,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         _settingsStore = settingsStore;
         _log = log;
         _settings = settings ?? AppSettings.Empty;
+        _isLogVisible = !_settings.IsLogHidden;
         _postToUiThread = postToUiThread ?? (action => action());
         _saveTarget = saveTarget;
         _renderPreview = renderPreview ?? FramePreviewLoader.Render;
@@ -651,6 +653,22 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     /// queueing them behind something it cannot see.
     /// </summary>
     public bool IsCameraSetupDialogOpen => State.CameraSetupDialogOpen;
+
+    /// <summary>
+    /// Whether the log panel is shown, as it was last left. Kept here rather
+    /// than only in the window so it outlives the session.
+    /// </summary>
+    public bool IsLogVisible
+    {
+        get => _isLogVisible;
+        set
+        {
+            if (SetField(ref _isLogVisible, value))
+            {
+                Remember(_settings with { IsLogHidden = !value });
+            }
+        }
+    }
 
     /// <summary>
     /// Where the sky background is placed in the preview. This is the "make it

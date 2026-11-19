@@ -196,6 +196,13 @@ public sealed record AppSettings
     /// <summary>Where the PS3 executable is, or null if not set.</summary>
     public string? Ps3Path { get; init; }
 
+    /// <summary>
+    /// True when the log panel was last left hidden. Stored as hidden rather
+    /// than visible so a file written before it existed reads as the log
+    /// showing, which is how every earlier version started.
+    /// </summary>
+    public bool IsLogHidden { get; init; }
+
     public string? CameraProviderName { get; init; }
 
     public string? CameraDeviceId { get; init; }

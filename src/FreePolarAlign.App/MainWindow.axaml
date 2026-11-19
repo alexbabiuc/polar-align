@@ -615,23 +615,33 @@
       shows seven or eight lines, which is what anyone reads here before opening
       the file itself; it was 170, taken from the frame view, which needed it
       more on a window at the 720px minimum.
-    -->
-    <Grid Grid.Row="2" RowDefinitions="Auto,120" RowSpacing="6">
-      <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
-        <Button Content="Start sequence" Command="{Binding StartCommand}"
-                ToolTip.Tip="Needs a camera and a site, which is entered in Settings. With no mount connected, positions come from blind solves and you move the telescope by hand." />
-        <Button Content="Record sample" Command="{Binding RecordSampleCommand}"
-                ToolTip.Tip="Uses the next frame to start as a sample now, whatever the spacing and settling checks say. The frame on screen is never used: it may have been exposed while the telescope was moving." />
-        <Button Content="Stop sequence" Command="{Binding CancelCommand}"
-                ToolTip.Tip="Ends the sequence and keeps the last figure on screen. A slew the sequence started is stopped; the mount keeps tracking." />
-        <Button Content="Abort" Command="{Binding AbortCommand}" Background="#5A1E1E"
-                ToolTip.Tip="Ends the sequence, stops any slew and turns tracking off. Only with a mount connected." />
-        <Button Content="Solve &amp; sync" Command="{Binding SolveAndSyncCommand}"
-                IsVisible="{Binding IsMountConnected}"
-                ToolTip.Tip="Solves the next frame and tells the mount that is where it points. Nothing moves. Between sequences, with a camera connected and the mount tracking and still." />
-      </StackPanel>
 
-      <Border Grid.Row="1" BorderBrush="#4A4A4A" BorderThickness="1" CornerRadius="4">
+      The log can be hidden, giving its 120px back to the columns above; a
+      StackPanel rather than a Grid row so the gap above it goes too. Hiding it
+      is a view matter only: the log keeps filling, and the session file is
+      written either way. Whether it is shown is remembered between runs.
+    -->
+    <StackPanel Grid.Row="2" Spacing="6">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+          <Button Content="Start sequence" Command="{Binding StartCommand}"
+                  ToolTip.Tip="Needs a camera and a site, which is entered in Settings. With no mount connected, positions come from blind solves and you move the telescope by hand." />
+          <Button Content="Record sample" Command="{Binding RecordSampleCommand}"
+                  ToolTip.Tip="Uses the next frame to start as a sample now, whatever the spacing and settling checks say. The frame on screen is never used: it may have been exposed while the telescope was moving." />
+          <Button Content="Stop sequence" Command="{Binding CancelCommand}"
+                  ToolTip.Tip="Ends the sequence and keeps the last figure on screen. A slew the sequence started is stopped; the mount keeps tracking." />
+          <Button Content="Abort" Command="{Binding AbortCommand}" Background="#5A1E1E"
+                  ToolTip.Tip="Ends the sequence, stops any slew and turns tracking off. Only with a mount connected." />
+          <Button Content="Solve &amp; sync" Command="{Binding SolveAndSyncCommand}"
+                  IsVisible="{Binding IsMountConnected}"
+                  ToolTip.Tip="Solves the next frame and tells the mount that is where it points. Nothing moves. Between sequences, with a camera connected and the mount tracking and still." />
+        </StackPanel>
+        <ToggleButton Grid.Column="1" Content="Log" IsChecked="{Binding IsLogVisible, Mode=TwoWay}"
+                      ToolTip.Tip="Shows or hides the log. Hidden, it keeps recording, and the session log file is written as before." />
+      </Grid>
+
+      <Border Height="120" BorderBrush="#4A4A4A" BorderThickness="1" CornerRadius="4"
+              IsVisible="{Binding IsLogVisible}">
         <ListBox x:Name="LogList" Classes="log" ItemsSource="{Binding Log}" Background="#101010" FontFamily="monospace" FontSize="12">
           <ListBox.ItemTemplate>
             <DataTemplate x:DataType="vm:LogEntry">
@@ -642,7 +652,7 @@
           </ListBox.ItemTemplate>
         </ListBox>
       </Border>
-    </Grid>
+    </StackPanel>
   </Grid>
 
     <!--

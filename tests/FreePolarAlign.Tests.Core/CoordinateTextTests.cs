@@ -207,10 +207,11 @@ public class CoordinateTextTests
         Assert.Equal(degrees, reparsed, tolerance: ArcsecondInDegrees);
     }
 
-    /// <summary>The hours counterpart of the d:mm:ss form, unpadded and in whole seconds (D44).</summary>
+    /// <summary>The hours counterpart of the dd:mm:ss form: two-digit hours, whole seconds (D44).</summary>
     [Theory]
     [InlineData(157.5, "10:30:00")]
-    [InlineData(0.0, "0:00:00")]
+    [InlineData(82.5, "05:30:00")]
+    [InlineData(0.0, "00:00:00")]
     [InlineData(218.04, "14:32:10")]
     [InlineData(-15.0, "23:00:00")]
     public void RightAscension_IsShownAsHoursMinutesSeconds(double degrees, string expected)
@@ -227,7 +228,7 @@ public class CoordinateTextTests
     {
         string text = CoordinateText.FormatRightAscension(359.99999);
 
-        Assert.Equal("0:00:00", text);
+        Assert.Equal("00:00:00", text);
         Assert.True(CoordinateText.TryParseRightAscension(text, out double reparsed), text);
         Assert.InRange(reparsed, 0.0, 360.0);
     }
@@ -249,20 +250,21 @@ public class CoordinateTextTests
     }
 
     /// <summary>
-    /// The one form every coordinate in degrees is shown in: degrees, then
-    /// arcminutes and arcseconds of two digits each, whole seconds. "20.5" is
+    /// The one form every coordinate in degrees is shown in: degrees,
+    /// arcminutes and arcseconds, each zero-padded to two digits, whole seconds. "20.5" is
     /// the case asked for by name; the rest are the edges of the rounding --
     /// a carry through both fields, and a sign that must belong to the whole
     /// value below one degree and vanish when rounding leaves nothing.
     /// </summary>
     [Theory]
     [InlineData(20.5, "20:30:00")]
+    [InlineData(7.5, "07:30:00")]
     [InlineData(46.77, "46:46:12")]
-    [InlineData(-0.5, "-0:30:00")]
+    [InlineData(-0.5, "-00:30:00")]
     [InlineData(-122.4194, "-122:25:10")]
     [InlineData(41.99999, "42:00:00")]
-    [InlineData(-0.0001, "0:00:00")]
-    [InlineData(0.0, "0:00:00")]
+    [InlineData(-0.0001, "00:00:00")]
+    [InlineData(0.0, "00:00:00")]
     public void Degrees_AreShownAsDegreesMinutesSeconds(double degrees, string expected)
     {
         Assert.Equal(expected, CoordinateText.FormatDegrees(degrees));

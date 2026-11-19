@@ -497,11 +497,11 @@
 
               <StackPanel Spacing="4" IsVisible="{Binding ProposalRequiresMotion}">
                 <TextBlock Classes="label" TextWrapping="Wrap"
-                           Text="Right ascension: h:mm:ss (14:32:10) or decimal hours (14.5)" />
+                           Text="Right ascension: hh:mm:ss (14:32:10) or decimal hours (14.5)" />
                 <TextBox Text="{Binding ProposalRaText, Mode=TwoWay}" FontFamily="monospace"
                          LostFocus="OnProposalRaLostFocus" />
                 <TextBlock Classes="label" TextWrapping="Wrap"
-                           Text="Declination: d:mm:ss (-12:30:00) or decimal degrees (-12.5)" />
+                           Text="Declination: dd:mm:ss (-12:30:00) or decimal degrees (-12.5)" />
                 <TextBox Text="{Binding ProposalDecText, Mode=TwoWay}" FontFamily="monospace"
                          LostFocus="OnProposalDecLostFocus" />
                 <TextBlock Classes="label" TextWrapping="Wrap"

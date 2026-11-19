@@ -1024,7 +1024,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         Math.Abs(a.HeightMeters - b.HeightMeters) <= 1.0;
 
     /// <summary>
-    /// As d:mm:ss, with the exact value after it: <see cref="SameSite"/> calls
+    /// As dd:mm:ss, with the exact value after it: <see cref="SameSite"/> calls
     /// two sites different from one arcsecond, and whole arcseconds alone could
     /// show what was written and what the driver kept as the same text.
     /// </summary>

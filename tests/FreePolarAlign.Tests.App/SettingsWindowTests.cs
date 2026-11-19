@@ -351,7 +351,7 @@ public class SettingsWindowTests
         window.NormaliseSiteText();
 
         Assert.Equal("20:30:00", window.LatitudeText);
-        Assert.Equal("-0:07:12", window.LongitudeText);
+        Assert.Equal("-00:07:12", window.LongitudeText);
 
         window.SaveCommand.Execute(null);
         Assert.Equal(new StoredSite(20.5, -0.12, 0.0), Assert.Single(saved).Site);
@@ -608,7 +608,7 @@ public class SettingsWindowTests
         window.CopyFromMountCommand.Execute(null);
 
         Assert.Equal("51:28:38", window.LatitudeText);
-        Assert.Equal("-0:00:05", window.LongitudeText);
+        Assert.Equal("-00:00:05", window.LongitudeText);
         Assert.Equal("47", window.HeightText);
         Assert.Empty(engine.Commands);
         Assert.Equal(Bucharest, store.Saved.Site);

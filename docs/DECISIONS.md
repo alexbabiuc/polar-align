@@ -2386,22 +2386,24 @@ are already a pixel or two, can be made worse. That is why it is offered and off
 by default, not applied. Only 1×1 and 2×2 are offered; the engine accepts up to
 4×4. None of the three driver paths has run against hardware yet.
 
-## D44 — Coordinates are shown as d:mm:ss or h:mm:ss; values stay decimal
+## D44 — Coordinates are shown as dd:mm:ss or hh:mm:ss; values stay decimal
 
-*Decided 2026-11-19, in 0.0.37; right ascension joined in 0.0.38.*
+*Decided 2026-11-19, in 0.0.37; right ascension joined in 0.0.38, zero-padding
+in 0.0.39.*
 
 Every coordinate in degrees the user reads or types is in one form:
-`46:46:12`, `-0:30:00`. That covers the site's latitude and longitude, every
-declination, and the log lines that name them. Degrees are unpadded, then
-arcminutes and arcseconds of two digits each, in whole seconds. The sign
-belongs to the whole value, so `-0:30:00` is minus half a degree. A field
+`46:46:12`, `-00:30:00`. That covers the site's latitude and longitude, every
+declination, and the log lines that name them. Degrees, arcminutes and
+arcseconds take at least two digits each, zero-padded (`07:05:00`), in whole
+seconds; a longitude past 99° takes three. The sign
+belongs to the whole value, so `-00:30:00` is minus half a degree. A field
 also accepts decimal degrees, with a point or a comma, and rewrites them when
 it loses focus: `20.5` becomes `20:30:00`. Text it cannot read is left as typed,
 so the mistake stays on screen. Everything behind the display (settings, events,
 commands, the engine) still works in decimal degrees.
 
-Right ascension follows the same form in hours: `14:32:10`, unpadded hours,
-whole seconds of time. **A bare decimal right ascension is now hours**:
+Right ascension follows the same form in hours: `14:32:10`, `05:30:00`,
+two-digit hours, whole seconds of time. **A bare decimal right ascension is now hours**:
 `20.5` is `20:30:00`, i.e. 307.5°. Until 0.0.38 it was read as *degrees*, the
 form a solve result gives. That reading was dropped so every field reads a
 decimal in the unit it shows, and the field's label says "decimal hours".

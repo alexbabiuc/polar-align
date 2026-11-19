@@ -26,10 +26,10 @@
                 IsEnabled="{Binding CanChangeSite}">
             <TextBlock Grid.Row="0" Grid.Column="0" Text="Latitude °N" VerticalAlignment="Center" />
             <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding LatitudeText, Mode=TwoWay}"
-                     PlaceholderText="d:mm:ss or decimal degrees" LostFocus="OnSiteLostFocus" />
+                     PlaceholderText="dd:mm:ss or decimal degrees" LostFocus="OnSiteLostFocus" />
             <TextBlock Grid.Row="1" Grid.Column="0" Text="Longitude °E" VerticalAlignment="Center" />
             <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding LongitudeText, Mode=TwoWay}"
-                     PlaceholderText="d:mm:ss or decimal degrees" LostFocus="OnSiteLostFocus" />
+                     PlaceholderText="dd:mm:ss or decimal degrees" LostFocus="OnSiteLostFocus" />
             <TextBlock Grid.Row="2" Grid.Column="0" Text="Altitude m" VerticalAlignment="Center" />
             <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding HeightText, Mode=TwoWay}" />
           </Grid>

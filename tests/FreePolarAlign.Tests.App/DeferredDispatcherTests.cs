@@ -261,8 +261,8 @@ public class DeferredDispatcherTests
     }
 
     /// <summary>
-    /// A proposal seeds the editable coordinate fields, shown as h:mm:ss and
-    /// d:mm:ss (D44). Confirming them without editing sends back exactly what
+    /// A proposal seeds the editable coordinate fields, shown as hh:mm:ss and
+    /// dd:mm:ss (D44). Confirming them without editing sends back exactly what
     /// was proposed, so the engine can tell an acceptance from an override (D18).
     /// </summary>
     [Fact]
@@ -277,7 +277,7 @@ public class DeferredDispatcherTests
 
         // Shown in whole seconds; that confirming them untouched sends back
         // exactly what was proposed is pinned in LiveCaptureUiTests.
-        Assert.Equal("9:43:39", viewModel.ProposalRaText);
+        Assert.Equal("09:43:39", viewModel.ProposalRaText);
         Assert.Equal("68:05:56", viewModel.ProposalDecText);
     }
 }

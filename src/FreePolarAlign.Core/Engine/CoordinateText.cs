@@ -121,19 +121,19 @@ public static class CoordinateText
     }
 
     /// <summary>
-    /// Right ascension as "h:mm:ss" -- "10:30:00" -- the hours counterpart of
+    /// Right ascension as "hh:mm:ss" -- "10:30:00", "05:30:00" -- the hours counterpart of
     /// <see cref="FormatDegrees"/>, in whole seconds of time (D44). A value that
-    /// rounds up to 24 hours is shown as 0:00:00, which is where it is.
+    /// rounds up to 24 hours is shown as 00:00:00, which is where it is.
     /// </summary>
     public static string FormatRightAscension(double degrees)
     {
         long totalSeconds = (long)Math.Round(Normalise360(degrees) / 15.0 * 3600.0, MidpointRounding.AwayFromZero)
                             % (24 * 3600);
-        return FormattableString.Invariant($"{totalSeconds / 3600}:{totalSeconds / 60 % 60:00}:{totalSeconds % 60:00}");
+        return FormattableString.Invariant($"{totalSeconds / 3600:00}:{totalSeconds / 60 % 60:00}:{totalSeconds % 60:00}");
     }
 
     /// <summary>
-    /// An angle in degrees as "d:mm:ss" -- "46:46:12", "-0:30:00" -- which is how
+    /// An angle in degrees as "dd:mm:ss" -- "46:46:12", "-00:30:00" -- which is how
     /// every coordinate in degrees is shown to the user. Whole arcseconds: a
     /// latitude off by the half-arcsecond this can round away biases the
     /// altitude reading by under a hundredth of an arcminute. The sign belongs
@@ -147,7 +147,7 @@ public static class CoordinateText
         long whole = totalSeconds / 3600;
         long minutes = totalSeconds / 60 % 60;
         long seconds = totalSeconds % 60;
-        return FormattableString.Invariant($"{sign}{whole}:{minutes:00}:{seconds:00}");
+        return FormattableString.Invariant($"{sign}{whole:00}:{minutes:00}:{seconds:00}");
     }
 
     private static bool LooksSexagesimal(string text) =>

@@ -251,7 +251,7 @@ public sealed class SettingsViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Rewrites whatever readable was typed into the site fields as "d:mm:ss",
+    /// Rewrites whatever readable was typed into the site fields as "dd:mm:ss",
     /// so "20.5" becomes "20:30:00". Called when a field loses focus rather than
     /// on every keystroke, which would rewrite "20." out from under the typing.
     /// </summary>
@@ -442,13 +442,13 @@ public sealed class SettingsViewModel : ViewModelBase
 
         if (!_latitude.TryRead(LatitudeText, out double latitude))
         {
-            problem = "Latitude must be between -90 and 90 degrees, as d:mm:ss or decimal degrees. North is positive.";
+            problem = "Latitude must be between -90 and 90 degrees, as dd:mm:ss or decimal degrees. North is positive.";
             return false;
         }
 
         if (!_longitude.TryRead(LongitudeText, out double longitude))
         {
-            problem = "Longitude must be between -180 and 180 degrees, as d:mm:ss or decimal degrees. East is positive.";
+            problem = "Longitude must be between -180 and 180 degrees, as dd:mm:ss or decimal degrees. East is positive.";
             return false;
         }
 

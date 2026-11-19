@@ -412,14 +412,14 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Rewrites a readable right ascension as "h:mm:ss", so "20.5" becomes
+    /// Rewrites a readable right ascension as "hh:mm:ss", so "20.5" becomes
     /// "20:30:00". Called when the field loses focus, not on every keystroke.
     /// </summary>
     public void NormaliseProposalRaText() =>
         ProposalRaText = _proposalRa.Normalise(ProposalRaText);
 
     /// <summary>
-    /// Rewrites a readable declination as "d:mm:ss", so "20.5" becomes
+    /// Rewrites a readable declination as "dd:mm:ss", so "20.5" becomes
     /// "20:30:00". Called when the field loses focus, not on every keystroke.
     /// </summary>
     public void NormaliseProposalDecText() =>

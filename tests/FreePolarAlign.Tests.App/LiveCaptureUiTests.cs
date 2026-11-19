@@ -392,7 +392,7 @@ public sealed class LiveCaptureUiTests : IDisposable
         engine.Publish(CameraConnected, SiteConfirmed, Started);
         engine.Publish(new SlewProposedEvent(2, 6, 145.912345, 68.098765, 26.0, 71.0, RequiresMotion: true, "Slew 26° west."));
 
-        Assert.Equal("9:43:39", viewModel.ProposalRaText);
+        Assert.Equal("09:43:39", viewModel.ProposalRaText);
         Assert.Equal("68:05:56", viewModel.ProposalDecText);
         viewModel.NormaliseProposalRaText();
         viewModel.NormaliseProposalDecText();

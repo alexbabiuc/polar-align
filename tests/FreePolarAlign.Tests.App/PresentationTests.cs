@@ -316,7 +316,7 @@ public class PresentationTests
     /// The site is logged with every digit it was given. It is the one input the
     /// software cannot check for itself, and the first thing to re-examine the
     /// morning after a result that looked wrong -- so a log that rounded it to
-    /// two decimal places would have thrown away the evidence. Shown as d:mm:ss
+    /// two decimal places would have thrown away the evidence. Shown as dd:mm:ss
     /// like every coordinate, whole arcseconds would round it too, so the exact
     /// value follows.
     /// </summary>
@@ -326,7 +326,7 @@ public class PresentationTests
         UiState state = After(Fresh(), new SiteConfiguredEvent(51.47733, -0.00139, 47.0));
 
         Assert.Contains(state.Log, entry => entry.Text.Contains("51:28:38 (51.47733°)", StringComparison.Ordinal));
-        Assert.Contains(state.Log, entry => entry.Text.Contains("-0:00:05 (-0.00139°)", StringComparison.Ordinal));
+        Assert.Contains(state.Log, entry => entry.Text.Contains("-00:00:05 (-0.00139°)", StringComparison.Ordinal));
     }
 
     /// <summary>

@@ -187,7 +187,7 @@ public static class EngineEventNarrator
     }
 
     /// <summary>
-    /// A site as d:mm:ss, as every coordinate is shown, followed by the value
+    /// A site as dd:mm:ss, as every coordinate is shown, followed by the value
     /// with every digit it was given. The site is the one input the software
     /// cannot check, and the first thing re-examined the morning after a result
     /// that looked wrong; whole arcseconds are about 30 m, and would throw away

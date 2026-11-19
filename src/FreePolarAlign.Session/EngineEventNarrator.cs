@@ -182,6 +182,20 @@ public static class EngineEventNarrator
 
             SessionCompletedEvent => Info("Sequence finished."),
 
+            MountSyncStartedEvent => Info("Solve & sync: solving the next frame, then syncing the mount to it."),
+
+            // Every digit as well as the display form, as for the site: the log
+            // is where a goto that misses afterwards is traced back to this.
+            MountSyncedEvent e => Info(Inv(
+                $"Mount synced to RA {CoordinateText.FormatRightAscension(e.RaDegrees)} ({e.RaDegrees:F5}°), ",
+                $"Dec {CoordinateText.FormatDegrees(e.DecDegrees)} ({e.DecDegrees:F5}°){SolvedBy(e.Solver)}. ",
+                $"Its own position had been {e.CorrectionArcminutes:F1}' out.")),
+
+            MountSyncFailedEvent e => new NarratedEvent(LogSeverity.Warning, Inv(
+                $"Solve & sync: {(e.Stage == MountSyncStage.Solve ? "solving" : "syncing")} failed, ",
+                $"the mount was not synced. {e.Reason}",
+                $"{(e.KeptFramePath is null ? string.Empty : $" Frame kept: {e.KeptFramePath}")}")),
+
             _ => Info(engineEvent.GetType().Name),
         };
     }

@@ -208,6 +208,7 @@ public static class EngineEventReducer
                 PlannedPointCount = 0,
                 PlannedSweepDegrees = null,
                 RequestedSweepDegrees = e.Configuration.RequestedSweepDegrees,
+                Sync = null,
                 StatusMessage = "Sequence started.",
             },
 
@@ -372,6 +373,31 @@ public static class EngineEventReducer
                 Proposal = null,
                 Sampling = SamplingView.Idle,
                 StatusMessage = "Session complete.",
+            },
+
+            // D45: the result goes in the right-hand column, where the next
+            // step and a fault are read, and stays until a sequence starts.
+            MountSyncStartedEvent => withLog with
+            {
+                Sync = new SyncView(SyncActivity.InProgress),
+                RejectionReason = null,
+                StatusMessage = "Solving the next frame to sync the mount.",
+            },
+
+            MountSyncedEvent e => withLog with
+            {
+                Sync = new SyncView(SyncActivity.Synced, e.RaDegrees, e.DecDegrees, e.CorrectionArcminutes),
+                StatusMessage = "Mount synced to the solved position.",
+            },
+
+            MountSyncFailedEvent e => withLog with
+            {
+                Sync = new SyncView(
+                    e.Stage == MountSyncStage.Solve ? SyncActivity.SolveFailed : SyncActivity.SyncFailed,
+                    Detail: e.Reason),
+                StatusMessage = e.Stage == MountSyncStage.Solve
+                    ? "Solve & sync: the frame did not solve, so the mount was not synced."
+                    : "Solve & sync: the mount was not synced -- see the note on the right.",
             },
 
             _ => withLog,

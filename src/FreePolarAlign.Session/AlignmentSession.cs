@@ -104,7 +104,7 @@ public sealed record AlignmentSessionOptions(
 /// the direct consequence of a <see cref="CaptureNextPointCommand"/> or
 /// <see cref="ConfirmSlewCommand"/> that arrived from outside.
 /// </summary>
-public sealed class AlignmentSession : IAlignmentEngine, IDisposable
+public sealed partial class AlignmentSession : IAlignmentEngine, IDisposable
 {
     private readonly ISolver _solver;
     private readonly AlignmentSessionOptions _options;
@@ -450,6 +450,9 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
                 case AbortSessionCommand abort:
                     await AbortAsync(abort, cancellationToken).ConfigureAwait(false);
                     break;
+                case SolveAndSyncCommand:
+                    await BeginSyncAsync(cancellationToken).ConfigureAwait(false);
+                    break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(command), command, "Unrecognised engine command.");
             }
@@ -677,6 +680,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     private async Task ReleaseCameraAsync(CancellationToken cancellationToken)
     {
         await StopCaptureLoopAsync().ConfigureAwait(false);
+        AbandonSync(DeviceKind.Camera);
 
         if (_camera is null)
         {
@@ -720,6 +724,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
     {
         _latestMountPosition = null;
         _mountMoving = false;
+        AbandonSync(DeviceKind.Mount);
 
         if (_mount is null)
         {
@@ -1612,6 +1617,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
             StartSolve(armed.Trigger, frame);
         }
 
+        OfferFrameToSync(frame, startedUtc);
+
         return Task.CompletedTask;
     }
 
@@ -1654,6 +1661,16 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
     private async Task StartAsync(StartSessionCommand start, CancellationToken cancellationToken)
     {
+        // A sequence started now would take its samples against coordinates
+        // that are about to change under it (D45).
+        if (_sync is not null)
+        {
+            _events.Publish(new CommandRejectedEvent(
+                "Wait for Solve & sync to finish before starting a sequence: the coordinates the mount reports " +
+                "are about to change."));
+            return;
+        }
+
         ResetSession();
 
         if (_camera is null || !_camera.IsConnected)
@@ -2290,6 +2307,8 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
 
         _latestMountPosition = position;
         _mountMoving = moving;
+
+        CheckSyncStillValid(position, moving);
 
         _events.Publish(new MountStatusEvent(
             position.RaDegrees,
@@ -3326,6 +3345,7 @@ public sealed class AlignmentSession : IAlignmentEngine, IDisposable
         loop?.Cancel();
         _sessionCts.Cancel();
         _pendingDelay?.Cancel();
+        _sync?.Cancellation.Cancel();
 
         try
         {

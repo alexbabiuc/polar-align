@@ -258,6 +258,48 @@ public sealed class AscomMount : IMount
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// <c>SyncToCoordinates</c>, after <c>CanSync</c>, in the driver's own
+    /// equatorial system as a slew is. <c>CanSync</c> is consulted, unlike
+    /// <c>CanSetTracking</c> for a halt, because ASCOM makes it the documented
+    /// gate and a driver that says false has nothing better to say by throwing.
+    /// A driver that says true may still refuse, for instance a sync too far
+    /// from where it believes it points, and its own message is passed on.
+    /// </summary>
+    public Task SyncToCoordinatesAsync(double raDegrees, double decDegrees, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        bool canSync;
+        try
+        {
+            canSync = (bool)_telescope.CanSync;
+        }
+        catch (Exception)
+        {
+            canSync = false;
+        }
+
+        if (!canSync)
+        {
+            throw new NotSupportedException("the driver says it cannot sync (CanSync is false)");
+        }
+
+        var (driverRaDegrees, driverDecDegrees) = FromJ2000(
+            ReadEquatorialSystem(), raDegrees, decDegrees, _time.GetUtcNow().UtcDateTime);
+        try
+        {
+            _telescope.SyncToCoordinates(AscomMapping.RaDegreesToHours(driverRaDegrees), driverDecDegrees);
+        }
+        catch (Exception ex)
+        {
+            Exception cause = ex is System.Reflection.TargetInvocationException { InnerException: { } inner } ? inner : ex;
+            throw new AscomPlatformNotAvailableException($"the driver refused the sync ({cause.Message})", cause);
+        }
+
+        return Task.CompletedTask;
+    }
+
     private static void TrySet(string property, Action set, List<string> refusals)
     {
         try

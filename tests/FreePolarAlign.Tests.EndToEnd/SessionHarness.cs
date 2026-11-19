@@ -191,6 +191,30 @@ internal sealed class RecordingMount : IMount
         return _inner.HaltAsync(cancellationToken);
     }
 
+    private readonly List<(double Ra, double Dec)> _syncs = new();
+
+    /// <summary>Every sync the engine sent, accepted or not.</summary>
+    public IReadOnlyList<(double Ra, double Dec)> Syncs
+    {
+        get
+        {
+            lock (_syncs)
+            {
+                return _syncs.ToArray();
+            }
+        }
+    }
+
+    public Task SyncToCoordinatesAsync(double raDegrees, double decDegrees, CancellationToken cancellationToken = default)
+    {
+        lock (_syncs)
+        {
+            _syncs.Add((raDegrees, decDegrees));
+        }
+
+        return _inner.SyncToCoordinatesAsync(raDegrees, decDegrees, cancellationToken);
+    }
+
     public void Dispose() => _inner.Dispose();
 }
 
@@ -491,7 +515,8 @@ internal sealed class SessionHarness : IDisposable
         int binning = 1,
         bool realFrames = false,
         IReadOnlyList<int>? driverBins = null,
-        bool driverRefusesBinning = false)
+        bool driverRefusesBinning = false,
+        bool canSync = true)
     {
         Clock = new TestClock();
         Simulated = new SimulatedMount(new SimulatedMountOptions(
@@ -504,7 +529,8 @@ internal sealed class SessionHarness : IDisposable
             CanSlewAsync: canSlew,
             InitialMechanicalRotationDegrees: initialRotationDegrees,
             SiteWrites: siteWrites,
-            CanStopTracking: canStopTracking), Clock);
+            CanStopTracking: canStopTracking,
+            CanSync: canSync), Clock);
 
         Mount = new RecordingMount(Simulated);
         Camera = new StubCamera(Clock)

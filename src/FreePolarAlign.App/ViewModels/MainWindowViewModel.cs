@@ -209,7 +209,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         StartCommand = new RelayCommand(
             StartAsync,
             () => Ready && (!State.SessionActive || State.IsLiveReading) &&
-                  State.Camera.IsConnected && State.IsSiteConfigured);
+                  State.Camera.IsConnected && State.IsSiteConfigured && !IsSyncInProgress);
 
         RecordSampleCommand = new RelayCommand(
             () => SendAsync(new RecordSampleCommand()),
@@ -244,6 +244,16 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         AbortCommand = new RelayCommand(
             () => SendAsync(new AbortSessionCommand("Aborted by operator.")),
             () => Ready && State.SessionActive && State.Mount.IsConnected);
+
+        // Between sequences only, and only with something to sync (D45). The
+        // button is hidden without a mount, not merely disabled. A mount that
+        // is not tracking, or is moving, would leave the solved position before
+        // the sync reached it.
+        SolveAndSyncCommand = new RelayCommand(
+            () => SendAsync(new SolveAndSyncCommand()),
+            () => Ready && !State.SessionActive && State.Camera.IsConnected && State.Mount.IsConnected &&
+                  State.MountTracking == MountTrackingState.Tracking && !State.MountIsMoving &&
+                  !IsSyncInProgress);
 
         _subscription = _engine?.Events.Subscribe(new DelegateObserver<EngineEvent>(OnEngineEvent));
 
@@ -318,6 +328,9 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     public RelayCommand CancelCommand { get; }
 
     public RelayCommand AbortCommand { get; }
+
+    /// <summary>Solves the next frame and syncs the mount to it (D45).</summary>
+    public RelayCommand SolveAndSyncCommand { get; }
 
     public UiState State
     {
@@ -877,6 +890,45 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
     public bool HasFaultReason => State.FaultReason is not null;
 
     public string? FaultReason => State.FaultReason;
+
+    // ---- Solve and sync (D45) ----
+
+    /// <summary>
+    /// The result panel, shown between sequences while a mount is connected: a
+    /// "synced" left up after the mount has gone, or once a sequence runs,
+    /// would describe a mount that is no longer the one in front of the user.
+    /// </summary>
+    public bool HasSyncResult => State.Sync is not null && State.Mount.IsConnected && !State.SessionActive;
+
+    public bool IsSyncInProgress => State.Sync?.Activity == SyncActivity.InProgress;
+
+    public bool IsSyncSucceeded => State.Sync?.Activity == SyncActivity.Synced;
+
+    public bool IsSyncFailed => State.Sync?.Activity is SyncActivity.SolveFailed or SyncActivity.SyncFailed;
+
+    public string SyncTitle => State.Sync?.Activity switch
+    {
+        SyncActivity.InProgress => "SOLVE & SYNC",
+        SyncActivity.Synced => "MOUNT SYNCED",
+        SyncActivity.SolveFailed => "SOLVE FAILED -- MOUNT NOT SYNCED",
+        SyncActivity.SyncFailed => "SYNC FAILED -- MOUNT NOT SYNCED",
+        _ => string.Empty,
+    };
+
+    /// <summary>Where the mount now says it points, on success; empty otherwise.</summary>
+    public string SyncCoordinatesText => State.Sync is { Activity: SyncActivity.Synced } sync
+        ? AlignmentFormatting.Coordinates(sync.RaDegrees, sync.DecDegrees) + "   (J2000)"
+        : string.Empty;
+
+    public string SyncDetail => State.Sync switch
+    {
+        { Activity: SyncActivity.InProgress } =>
+            "Solving the next frame. The mount is synced to it once it solves; nothing moves.",
+        { Activity: SyncActivity.Synced, CorrectionArcminutes: { } correction } =>
+            FormattableString.Invariant($"The mount now reports where the telescope points. Its own position had been {correction:F1}' out."),
+        { Detail: { } detail } => detail,
+        _ => string.Empty,
+    };
 
     public bool HasRejectionReason => State.RejectionReason is not null;
 
@@ -1464,6 +1516,7 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         RestoreProposalCoordinatesCommand.RaiseCanExecuteChanged();
         CancelCommand.RaiseCanExecuteChanged();
         AbortCommand.RaiseCanExecuteChanged();
+        SolveAndSyncCommand.RaiseCanExecuteChanged();
     }
 
     /// <summary>
@@ -1531,6 +1584,13 @@ public sealed class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(GainDetailText),
         nameof(HasRejectionReason),
         nameof(RejectionReason),
+        nameof(HasSyncResult),
+        nameof(IsSyncInProgress),
+        nameof(IsSyncSucceeded),
+        nameof(IsSyncFailed),
+        nameof(SyncTitle),
+        nameof(SyncCoordinatesText),
+        nameof(SyncDetail),
         nameof(Log),
     };
 

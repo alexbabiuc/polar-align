@@ -58,6 +58,25 @@
       <Setter Property="CornerRadius" Value="4" />
       <Setter Property="Padding" Value="12" />
     </Style>
+    <!-- The solve-and-sync result (D45): grey while it runs, then green or red. -->
+    <Style Selector="Border.sync">
+      <Setter Property="Background" Value="#262626" />
+      <Setter Property="BorderBrush" Value="#4A4A4A" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="Padding" Value="10" />
+    </Style>
+    <Style Selector="Border.sync.synced">
+      <Setter Property="Background" Value="#1E3A28" />
+      <Setter Property="BorderBrush" Value="#3AB36A" />
+    </Style>
+    <Style Selector="Border.sync.failed">
+      <Setter Property="Background" Value="#5A1E1E" />
+      <Setter Property="BorderBrush" Value="#B33A3A" />
+    </Style>
+    <Style Selector="Border.sync TextBlock">
+      <Setter Property="Foreground" Value="#E8E8E8" />
+    </Style>
   </Window.Styles>
 
   <Panel>
@@ -515,6 +534,21 @@
           </Border>
 
           <!--
+            Solve and sync (D45), between sequences, where the next step and a
+            fault are read: the outcome, and on success where the mount now
+            says it points.
+          -->
+          <Border Classes="sync" Classes.synced="{Binding IsSyncSucceeded}" Classes.failed="{Binding IsSyncFailed}"
+                  IsVisible="{Binding HasSyncResult}">
+            <StackPanel Spacing="4">
+              <TextBlock Text="{Binding SyncTitle}" FontWeight="Bold" />
+              <TextBlock Text="{Binding SyncCoordinatesText}" FontSize="15" FontWeight="Bold" FontFamily="monospace"
+                         IsVisible="{Binding IsSyncSucceeded}" />
+              <TextBlock Text="{Binding SyncDetail}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+
+          <!--
             One line from the scheduling events (D26). Failed solves are counted
             here and not given a banner: while the mount is being turned most
             frames fail, and a warning that is always up is one nobody reads.
@@ -580,6 +614,9 @@
                 ToolTip.Tip="Ends the sequence and keeps the last figure on screen. A slew the sequence started is stopped; the mount keeps tracking." />
         <Button Content="Abort" Command="{Binding AbortCommand}" Background="#5A1E1E"
                 ToolTip.Tip="Ends the sequence, stops any slew and turns tracking off. Only with a mount connected." />
+        <Button Content="Solve &amp; sync" Command="{Binding SolveAndSyncCommand}"
+                IsVisible="{Binding IsMountConnected}"
+                ToolTip.Tip="Solves the next frame and tells the mount that is where it points. Nothing moves. Between sequences, with a camera connected and the mount tracking and still." />
       </StackPanel>
 
       <Border Grid.Row="1" BorderBrush="#4A4A4A" BorderThickness="1" CornerRadius="4">

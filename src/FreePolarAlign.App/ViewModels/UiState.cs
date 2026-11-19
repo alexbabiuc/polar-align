@@ -106,6 +106,29 @@ public sealed record SamplingView(
     public static SamplingView Idle { get; } = new(SamplingActivity.None);
 }
 
+/// <summary>Where a solve and sync has got to (D45).</summary>
+public enum SyncActivity
+{
+    InProgress,
+    Synced,
+
+    /// <summary>The frame did not solve, so the mount was left alone.</summary>
+    SolveFailed,
+
+    /// <summary>The frame solved, but the mount was not synced to it.</summary>
+    SyncFailed,
+}
+
+/// <param name="RaDegrees">For <see cref="SyncActivity.Synced"/>: what the mount now reports, J2000.</param>
+/// <param name="CorrectionArcminutes">For <see cref="SyncActivity.Synced"/>: how far out the mount had been.</param>
+/// <param name="Detail">For a failure: why, in the engine's words.</param>
+public sealed record SyncView(
+    SyncActivity Activity,
+    double? RaDegrees = null,
+    double? DecDegrees = null,
+    double? CorrectionArcminutes = null,
+    string? Detail = null);
+
 /// <summary>
 /// Everything the UI shows, reconstructed entirely from the engine's event
 /// stream (D6: the engine exposes no gettable state, so a caller that wants to
@@ -329,6 +352,12 @@ public sealed record UiState
     public double? PlannedSweepDegrees { get; init; }
 
     public double? RequestedSweepDegrees { get; init; }
+
+    /// <summary>
+    /// The latest solve and sync, until a sequence starts (D45). Null when there
+    /// has been none since.
+    /// </summary>
+    public SyncView? Sync { get; init; }
 
     public IReadOnlyList<LogEntry> Log { get; init; } = Array.Empty<LogEntry>();
 

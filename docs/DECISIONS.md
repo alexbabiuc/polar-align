@@ -2431,3 +2431,79 @@ proposed coordinates.
 check, and whole arcseconds are about 30 m. The engine also reports a driver
 that "kept" a different site from one arcsecond's difference, and whole
 arcseconds alone could print the written and kept values as the same text.
+
+## D45 — Solve & sync, between sequences, with a mount connected
+
+*Decided 2026-11-19, in 0.0.40.*
+
+**Solve & sync** solves the next frame and tells the mount that is where it
+points. Nothing moves. The button sits in the command bar beside Abort. It is
+hidden with no mount connected. It is disabled during a sequence, with no
+camera, while a sync is already running, and unless the mount reports that it is
+tracking and is not moving. The outcome goes in the right-hand column,
+where the next step and a fault are read:
+
+- a grey panel while it runs;
+- green **MOUNT SYNCED** with the coordinates the mount now reports, and how far
+  out its own position had been;
+- red **SOLVE FAILED** or **SYNC FAILED**, both ending **MOUNT NOT SYNCED**, with
+  the reason.
+
+The panel stays until a sequence starts or the mount disconnects.
+
+**Why.** The user asked for it. A mount's own position is off by however far it
+was badly aligned, badly started, or knocked. This application solves frames
+anyway, so syncing one costs a button.
+
+**Only between sequences.** A sync changes the coordinates the mount reports.
+Every sample a sequence takes is read against those coordinates, and a
+declination jump restarts the sequence (D18). The engine refuses the command
+during a sequence, and refuses to start a sequence while a sync is running,
+because the coordinates are about to change under it.
+
+**The next frame.** The frame on screen may have started before the button was
+pressed (D26's reasoning for Record sample). The engine solves the first frame
+to *start* after the command.
+
+**Tracking and still, from the command to the sync.** A solve takes seconds, or
+minutes when blind. Tracking keeps the telescope on the solved position in that
+time, so the solve can be synced as it is. Untracked, the sky turns past at 15″
+a second, and a 15 s solve would be synced 3.75′ out. A slew or a hand-controller
+move leaves the position altogether. So:
+
+- the engine reads the mount when the command arrives, and refuses it unless
+  the mount reports tracking and is not moving. A driver that does not report
+  tracking is refused too, since tracking cannot be confirmed;
+- every status poll while the sync is pending checks the same. A mount that
+  stops tracking or moves ends the sync at once, with the reason in the panel;
+  the solve under way is cancelled rather than waited for;
+- the mount is read once more just before the sync, since the last poll may be
+  two seconds old.
+
+An earlier draft of this decision synced an untracked mount, carrying the
+solved position forward by the drift measured between two readings. The user
+chose to require tracking instead: a sync on a stopped mount is rarely what is
+wanted, and some ASCOM drivers may refuse one anyway.
+
+**Read back, as for the site (D35).** After the sync, the engine reads the
+mount's position back. If it is more than 1′ (the engine's stillness tolerance)
+from what was sent, the sync is reported as failed: the driver took the call and
+kept something else. A refusal from the driver, including `CanSync` false, is
+reported with the driver's message. Neither failure is a fault; nothing else
+stops.
+
+**One solver, one request.** The solve is hinted with the mount's own position
+and the equipment's scale, exactly as a connected sequence's are (D42). A sync
+is usually wanted when that position is wrong, but a 10° search radius still
+covers a mount that is degrees out. A mount further out than that may not
+solve. ASPS falls back to blind on its own; the others search only the hinted
+area, and D41's retry drops the scale, not the position. A solved scale updates
+the focal length, as any solve does.
+
+**The simulator** keeps a sync as an offset between its belief and its
+mechanics. The camera sees the same field before and after a sync, and later
+slews are placed from the new belief. A real driver's pointing model may be
+richer. The engine relies only on the read-back.
+
+**Cost.** One button, one panel, and one method on `IMount`. Not tried on
+hardware; see docs/DEVICE-COMPATIBILITY.md.

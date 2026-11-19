@@ -125,4 +125,15 @@ public interface IMount : IDisposable
     /// something.
     /// </summary>
     Task HaltAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Tells the mount it is pointing at these J2000 coordinates, without
+    /// moving it, only ever because the user asked (D45). From then on it
+    /// reports them, and slews from them.
+    ///
+    /// Throws when the driver cannot or will not sync, with a message that says
+    /// which. Returning normally does not prove the mount took it: callers read
+    /// the position back.
+    /// </summary>
+    Task SyncToCoordinatesAsync(double raDegrees, double decDegrees, CancellationToken cancellationToken = default);
 }

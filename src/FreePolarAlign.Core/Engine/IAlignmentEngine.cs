@@ -363,6 +363,14 @@ public sealed record CancelSessionCommand : EngineCommand;
 public sealed record AbortSessionCommand(string Reason) : EngineCommand;
 
 /// <summary>
+/// Solve the next frame to start and sync the mount to where it shows the
+/// telescope pointing (D45). Only between sequences, with a camera and a mount
+/// connected: a sync changes the coordinates the mount reports, and a sequence's
+/// samples were taken against the old ones.
+/// </summary>
+public sealed record SolveAndSyncCommand : EngineCommand;
+
+/// <summary>
 /// Base type for everything the engine emits. Events are the only way the
 /// engine communicates state changes outward (D6: "All engine state changes
 /// must be expressible as serialisable events") -- there is no shared mutable
@@ -692,6 +700,45 @@ public sealed record AlignmentWithheldEvent(string Reason) : EngineEvent;
 public sealed record SessionFaultedEvent(string Reason) : EngineEvent;
 
 public sealed record SessionCompletedEvent : EngineEvent;
+
+/// <summary>Which half of a solve-and-sync failed (D45). Either way, the mount was not synced.</summary>
+public enum MountSyncStage
+{
+    /// <summary>The frame could not be solved, so there was nothing to sync to.</summary>
+    Solve,
+
+    /// <summary>The frame solved, but the mount was not synced to it.</summary>
+    Sync,
+}
+
+/// <summary>
+/// A <see cref="SolveAndSyncCommand"/> was accepted: the next frame to start
+/// with the mount still will be solved, and the mount synced to it.
+/// </summary>
+public sealed record MountSyncStartedEvent : EngineEvent;
+
+/// <summary>
+/// The mount now reports the solved position (D45).
+/// </summary>
+/// <param name="RaDegrees">What the mount was synced to, J2000: where the telescope points now.</param>
+/// <param name="CorrectionArcminutes">
+/// How far the mount's report moved: how wrong it was. Worth saying, because a
+/// correction of degrees means the mount's belief was not merely imprecise.
+/// </param>
+/// <param name="Solver">Which solver placed the frame, for the log.</param>
+public sealed record MountSyncedEvent(
+    double RaDegrees,
+    double DecDegrees,
+    double CorrectionArcminutes,
+    string? Solver = null) : EngineEvent;
+
+/// <summary>A solve-and-sync that left the mount as it was (D45).</summary>
+/// <param name="KeptFramePath">For a failed solve, where the frame was kept for diagnosis (D26), or null.</param>
+public sealed record MountSyncFailedEvent(
+    MountSyncStage Stage,
+    string Reason,
+    string? KeptFramePath = null,
+    string? Solver = null) : EngineEvent;
 
 /// <summary>
 /// The message-shaped engine boundary (D6). The UI (or, later, a remote

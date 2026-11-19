@@ -350,6 +350,29 @@ mount. `AscomMount.SetSiteLocationAsync` is compiled but **untested**.
   slew is commanded **[UNKNOWN]**. ASCOM leaves this to the driver. The
   simulator leaves the drive off.
 
+### Syncing the mount to a solve (all three drivers, D45)
+
+`AscomMount.SyncToCoordinatesAsync` reads `CanSync`, converts the J2000
+position to the driver's `EquatorialSystem` as a slew does, calls
+`SyncToCoordinates`, and the engine reads the position back. It is compiled
+but **untested** on any real mount.
+
+- `SyncToCoordinates` and `CanSync` are part of ITelescope **[DOC]**. The
+  application refuses the sync itself when `CanSync` is false or cannot be read.
+- Whether iOptron, EQMOD and SynScan report `CanSync` true **[UNKNOWN]**.
+- Whether any of them refuses a sync with tracking off **[UNKNOWN]**. The
+  application never asks: it syncs only a mount that reports `Tracking` true,
+  so a driver whose `Tracking` read throws cannot be synced at all.
+- Whether any of them refuses a sync too far from where it believes it points
+  **[UNKNOWN]**. That refusal reaches the user as "syncing failed" with the
+  driver's own message. A driver that accepts the call
+  and keeps a different position is caught by the read-back, which must land
+  within 1′ of what was sent.
+- What a sync does to each driver's pointing model **[UNKNOWN]**. One driver
+  may treat it as an offset, another as a point added to an alignment model.
+  This application only needs the read-back to agree. **VERIFY** on each:
+  sync, read back, then slew somewhere nearby and solve.
+
 ### Cameras on the night of 2026-11-05 (native plugins, 0.0.32)
 
 Measured on the failed-solve frames and the session log kept from that night

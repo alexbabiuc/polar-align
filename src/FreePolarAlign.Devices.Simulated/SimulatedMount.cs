@@ -48,6 +48,7 @@ namespace FreePolarAlign.Devices.Simulated;
 /// False for a driver that refuses <c>Tracking = false</c>, so the engine's
 /// report of an abort that could not stop the drive can be exercised (D36).
 /// </param>
+/// <param name="CanSync">False for a driver that refuses every sync (D45).</param>
 public sealed record SimulatedMountOptions(
     GeodeticLocation Site,
     MountMisalignment Misalignment,
@@ -60,7 +61,8 @@ public sealed record SimulatedMountOptions(
     double InitialMechanicalRotationDegrees = 12.0,
     double InitialPoleDistanceDegrees = 22.0,
     SimulatedSiteWrites SiteWrites = SimulatedSiteWrites.Stored,
-    bool CanStopTracking = true);
+    bool CanStopTracking = true,
+    bool CanSync = true);
 
 /// <summary>
 /// The ways a driver answers a client writing a site, as far as D35's reading
@@ -130,6 +132,15 @@ public sealed class SimulatedMount : IMount
     private bool _hasSlewed;
     private Slew? _slew;
     private int _slewGeneration;
+
+    /// <summary>
+    /// What a sync has added to the ideal model's coordinates (D45): belief is
+    /// the ideal coordinates plus these. A plain offset, as the simplest drivers
+    /// keep one; a real pointing model is richer, but the engine only ever
+    /// reads back the position it synced to, which an offset gets exactly.
+    /// </summary>
+    private double _syncRaOffsetDegrees;
+    private double _syncDecOffsetDegrees;
 
     /// <param name="timeProvider">
     /// The simulated sky's clock. A test's fake clock fixes the instant, which
@@ -490,6 +501,48 @@ public sealed class SimulatedMount : IMount
     }
 
     /// <summary>
+    /// Takes the given coordinates as where the mount now points, without
+    /// moving it (D45). The mechanical angles are held exactly: only the offset
+    /// between them and the mount's belief changes, so the camera sees the same
+    /// field before and after, and every later slew is placed from the new belief.
+    /// </summary>
+    public Task SyncToCoordinatesAsync(double raDegrees, double decDegrees, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        RequireConnected();
+
+        if (!Options.CanSync)
+        {
+            throw new NotSupportedException("Method SyncToCoordinates is not implemented in this driver.");
+        }
+
+        lock (_gate)
+        {
+            DateTime now = UtcNow;
+            SettleIfArrived(now);
+            if (_slew is not null)
+            {
+                throw new InvalidOperationException("Cannot sync while the mount is slewing.");
+            }
+
+            (double rotation, double declination) = MechanicsAt(now);
+            (double believedRa, double believedDec) = BeliefFromMechanics(rotation, declination, now);
+            double idealRa = believedRa - _syncRaOffsetDegrees;
+            double idealDec = believedDec - _syncDecOffsetDegrees;
+
+            _syncRaOffsetDegrees = WrapDegrees(raDegrees - idealRa);
+            _syncDecOffsetDegrees = decDegrees - idealDec;
+            _commandedRaDegrees = raDegrees;
+            _commandedDecDegrees = decDegrees;
+            _mechanicalEpochUtc = now;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static double WrapDegrees(double degrees) => degrees - (360.0 * Math.Round(degrees / 360.0));
+
+    /// <summary>
     /// Where the telescope is really aimed at a given instant, in the local
     /// horizon frame. This is the physical truth the camera sees and the
     /// software never learns directly.
@@ -567,7 +620,8 @@ public sealed class SimulatedMount : IMount
     private (double RotationDegrees, double DeclinationDegrees) Decompose(double raDegrees, double decDegrees, DateTime utc)
     {
         HorizontalCoordinates ideal = TopocentricConverter.ToAltAz(
-            raDegrees, decDegrees, utc, _observerSite, AtmosphericConditions.Vacuum);
+            raDegrees - _syncRaOffsetDegrees, decDegrees - _syncDecOffsetDegrees,
+            utc, _observerSite, AtmosphericConditions.Vacuum);
 
         return MountMechanics.Decompose(Options.Site.LatitudeDegrees, ideal);
     }
@@ -582,7 +636,9 @@ public sealed class SimulatedMount : IMount
         HorizontalCoordinates ideal = MountMechanics.Compose(
             Options.Site.LatitudeDegrees, MountMisalignment.Aligned, rotationDegrees, declinationDegrees);
 
-        return TopocentricConverter.FromAltAz(ideal, utc, _observerSite, AtmosphericConditions.Vacuum);
+        (double ra, double dec) = TopocentricConverter.FromAltAz(ideal, utc, _observerSite, AtmosphericConditions.Vacuum);
+        double believedRa = (ra + _syncRaOffsetDegrees) % 360.0;
+        return (believedRa < 0.0 ? believedRa + 360.0 : believedRa, dec + _syncDecOffsetDegrees);
     }
 
     /// <summary>
